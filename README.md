@@ -1,40 +1,27 @@
 # ALPHACORE
 
-Документальная подготовка + **Implementation Kickoff** для backend.
+Персональный помощник-секретарь. PWA на Next.js, PostgreSQL на Yandex Cloud.
 
-## Что уже реализовано
-- FastAPI приложение с endpoint `GET /health`
-- Базовый тест на health-check
-- Локальные команды: lint/test/run
-- CI: Ruff + Pytest + repo checks
+## Стек
+- **Frontend**: Next.js 16 (App Router) + Tailwind CSS
+- **PWA**: manifest.json + Service Worker (offline shell)
+- **DB**: Yandex Cloud Managed PostgreSQL (общий кластер с HEYS/Kinderly)
+- **Deploy**: Yandex Serverless Container (Docker)
+- **CI**: GitHub Actions (lint + type-check + build)
+- **AI**: работает через Codex / VS Code агентов, не встроен в приложение
 
 ## Быстрый старт
 ```bash
-python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
-
-make lint
-make test
-make run
+npm ci
+cp .env.example .env   # заполнить DB_USER, DB_PASSWORD
+npm run dev             # http://localhost:3004
 ```
 
-## Документация
-- [`docs/STACK_BLUEPRINT.md`](docs/STACK_BLUEPRINT.md)
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`docs/DELIVERY_PLAN.md`](docs/DELIVERY_PLAN.md)
-- [`docs/RUNBOOK.md`](docs/RUNBOOK.md)
-- [`docs/WORKFLOW.md`](docs/WORKFLOW.md)
-- [`docs/PROJECTS_REGISTER.md`](docs/PROJECTS_REGISTER.md)
-- [`docs/SECRETARY_HANDBOOK.md`](docs/SECRETARY_HANDBOOK.md)
-- [`docs/PROJECT_UPDATE_TEMPLATE.md`](docs/PROJECT_UPDATE_TEMPLATE.md)
-- [`docs/AGENT_MODES.md`](docs/AGENT_MODES.md)
-- [`docs/NOTES_CONVENTION.md`](docs/NOTES_CONVENTION.md)
-- [`docs/KPI_DASHBOARD.md`](docs/KPI_DASHBOARD.md)
-- [`docs/WEEKLY_REVIEW_TEMPLATE.md`](docs/WEEKLY_REVIEW_TEMPLATE.md)
-- [`docs/WEEKLY_REVIEW_2026-04-02.md`](docs/WEEKLY_REVIEW_2026-04-02.md)
-- [`docs/LOG.md`](docs/LOG.md)
-- [`docs/PERSONAL_NOTES.md`](docs/PERSONAL_NOTES.md)
-- [`docs/BDAY_MINECRAFT_CHECKLIST.md`](docs/BDAY_MINECRAFT_CHECKLIST.md)
-- [`docs/MINECRAFT_QUEST_SCENARIO.md`](docs/MINECRAFT_QUEST_SCENARIO.md)
-- [`docs/BDAY_TIMING_DRAFT.md`](docs/BDAY_TIMING_DRAFT.md)
-- [`docs/WEEKLY_SCHEDULE.md`](docs/WEEKLY_SCHEDULE.md)
+## Команды
+- `npm run dev` — dev server (port 3004)
+- `npm run build` — production build
+- `npm run lint` — ESLint
+- `npm run type-check` — TypeScript check
+
+## Deploy
+Push в main -> GitHub Actions -> Docker build -> YCPush в main -> GitHub Actions -> Docker build -> YCPush мPush в main -> GitHubocs/ — архитектура, workflow, delivery plan, runbook и пр.

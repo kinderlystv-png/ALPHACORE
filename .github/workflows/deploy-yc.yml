@@ -1,0 +1,72 @@
+name: Deploy to YC
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "package*.json"
+      - "next.config.ts"
+      - "Dockerfile"
+      - ".github/workflows/deploy-yc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-yc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: YC Auth
+        uses: yc-actions/yc-iam-token@v1
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+
+      - name: Login to YC Container Registry
+        uses: yc-actions/yc-cr-login@v1
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+
+      - name: Set image tag
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          IMAGE="cr.yandex/${{ secrets.YC_REGISTRY_ID }}/alphacore:${SHORT_SHA}"
+          IMAGE_LATEST="cr.yandex/${{ secrets.YC_REGISTRY_ID }}/alphacore:latest"
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "image_latest=${IMAGE_LATEST}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t "${{ steps.meta.outputs.image }}" \
+            -t "${{ steps.meta.outputs.image_latest }}" \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "${{ steps.meta.outputs.image }}"
+          docker push "${{ steps.meta.outputs.image_latest }}"
+
+      - name: Deploy to Serverless Container
+        run: |
+          yc serverless container revision deploy \
+            --container-id "${{ secrets.YC_CONTAINER_ID }}" \
+            --image "${{ steps.meta.outputs.image }}" \
+            --cores 1 \
+            --memory 512M \
+            --concurrency 4 \
+            --execution-timeout 30s \
+            --service-account-id "${{ secrets.YC_SA_ID }}" \
+            --environment "DB_HOST=${{ secrets.DB_HOST }},DB_PORT=${{ secrets.DB_PORT }},DB_NAME=${{ secrets.DB_NAME }},DB_USER=${{ secrets.DB_USER }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_SSL=true"
