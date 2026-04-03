@@ -15,6 +15,7 @@ type Phase = "focus" | "break";
 const FOCUS_MIN = 25;
 const BREAK_MIN = 5;
 const PREF_KEY = "alphacore_pomodoro";
+const POMODORO_FOCUS_EVENT = "alphacore:pomodoro-focus-task";
 
 function sortPomodoroTasks(tasks: Task[]): Task[] {
   const priorityRank = { p1: 0, p2: 1, p3: 2 };
@@ -68,6 +69,37 @@ export function Pomodoro() {
       if (keys.includes("alphacore_tasks")) refreshTasks();
     });
   }, [refreshTasks]);
+
+  useEffect(() => {
+    const onExternalFocus = (event: Event) => {
+      const customEvent = event as CustomEvent<{ taskId?: string; autoStart?: boolean }>;
+      const taskId = customEvent.detail?.taskId;
+      if (!taskId) return;
+
+      const nextTasks = sortPomodoroTasks(
+        getTasks().filter((task) => task.status === "active" || task.status === "inbox"),
+      );
+      const selectedTask = nextTasks.find((task) => task.id === taskId);
+      if (!selectedTask) return;
+
+      setTasks(nextTasks);
+      setSelectedTaskId(taskId);
+      setFeedback(
+        customEvent.detail?.autoStart
+          ? `Pomodoro запущен для «${selectedTask.title}»`
+          : `В фокусе: «${selectedTask.title}»`,
+      );
+
+      if (customEvent.detail?.autoStart) {
+        setPhase("focus");
+        setSeconds(FOCUS_MIN * 60);
+        setRunning(true);
+      }
+    };
+
+    window.addEventListener(POMODORO_FOCUS_EVENT, onExternalFocus as EventListener);
+    return () => window.removeEventListener(POMODORO_FOCUS_EVENT, onExternalFocus as EventListener);
+  }, []);
 
   useEffect(() => {
     lsSet(PREF_KEY, { selectedTaskId });
