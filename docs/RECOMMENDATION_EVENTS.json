@@ -1,0 +1,85 @@
+[
+  {
+    "recommendation_id": "REC-KINDERLY-NEXT-STEP-001",
+    "action": "copied_prompt",
+    "tags": [
+      "kinderly",
+      "operations"
+    ],
+    "created_at": "2026-04-03"
+  },
+  {
+    "recommendation_id": "REC-HEYS-HEALTH-FLOOR-001",
+    "action": "implemented",
+    "tags": [
+      "heys",
+      "health"
+    ],
+    "created_at": "2026-04-03"
+  },
+  {
+    "recommendation_id": "REC-REVIEW-SHORT-001",
+    "action": "disliked",
+    "tags": [
+      "review",
+      "planning"
+    ],
+    "created_at": "2026-04-03"
+  },
+  {
+    "recommendation_id": "REC-KINDERLY-CRM-003",
+    "action": "implemented",
+    "tags": [
+      "kinderly",
+      "crm",
+      "operations"
+    ],
+    "created_at": "2026-04-02"
+  },
+  {
+    "recommendation_id": "REC-KINDERLY-MESSENGER-004",
+    "action": "copied_prompt",
+    "tags": [
+      "kinderly",
+      "messenger"
+    ],
+    "created_at": "2026-04-01"
+  },
+  {
+    "recommendation_id": "REC-HEYS-PAYMENTS-003",
+    "action": "implemented",
+    "tags": [
+      "heys",
+      "payments",
+      "legal"
+    ],
+    "created_at": "2026-03-31"
+  },
+  {
+    "recommendation_id": "REC-OPS-DECISIONS-002",
+    "action": "disliked",
+    "tags": [
+      "operations",
+      "planning"
+    ],
+    "created_at": "2026-03-30"
+  },
+  {
+    "recommendation_id": "REC-OPS-WEEKLY-PACK-001",
+    "action": "copied_prompt",
+    "tags": [
+      "operations",
+      "weekly"
+    ],
+    "created_at": "2026-03-29"
+  },
+  {
+    "recommendation_id": "REC-HEALTH-SLEEP-002",
+    "action": "implemented",
+    "tags": [
+      "health",
+      "sleep"
+    ],
+    "created_at": "2026-03-28"
+  }
+]

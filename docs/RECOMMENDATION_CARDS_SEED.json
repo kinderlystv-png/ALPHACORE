@@ -1,0 +1,212 @@
+[
+  {
+    "id": "REC-KINDERLY-NEXT-STEP-001",
+    "title": "Защитить следующий шаг по Kinderly",
+    "context": "Нужен ясный next step, чтобы не терять темп по проекту.",
+    "prompt_for_agent": "Разверни следующий рычаг по Kinderly в 3 конкретные задачи: карта воронки, CTA/форма заявки, SLA ответа. Обнови docs и предложи KPI на 7 дней.",
+    "impact": "high",
+    "effort": "M",
+    "tags": [
+      "kinderly",
+      "operations",
+      "funnel"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-HEYS-HEALTH-FLOOR-001",
+    "title": "Не отдавать здоровье на потом",
+    "context": "Нужно стабилизировать базу здоровья, чтобы не проседать по энергии.",
+    "prompt_for_agent": "Собери минимальный health floor на 7 дней: сон, бег (без среды/четверга), утренняя растяжка. Добавь корректировки по самочувствию.",
+    "impact": "high",
+    "effort": "S",
+    "tags": [
+      "heys",
+      "health",
+      "routine"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-REVIEW-SHORT-001",
+    "title": "Сделать короткий агентский review",
+    "context": "Когда много задач, нужен быстрый фокус на главном.",
+    "prompt_for_agent": "Сделай краткий review: что движется, что буксует и какой 1 следующий шаг даст максимальный эффект.",
+    "impact": "medium",
+    "effort": "S",
+    "tags": [
+      "review",
+      "focus",
+      "planning"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-KINDERLY-PRICING-002",
+    "title": "Дотянуть pricing-лендинг до конверсии",
+    "context": "Нужно улучшить переход из интереса в заявку на проверку даты.",
+    "prompt_for_agent": "Предложи 5 улучшений pricing-лендинга Kinderly с приоритетом по влиянию на конверсию visitor->lead.",
+    "impact": "high",
+    "effort": "M",
+    "tags": [
+      "kinderly",
+      "pricing",
+      "conversion"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-HEYS-LANDING-002",
+    "title": "Собрать лендинг HEYS v1",
+    "context": "Нужен первый рабочий лендинг для теста спроса и конверсии.",
+    "prompt_for_agent": "Сделай структуру лендинга HEYS v1: оффер, боли, соцдоказательства, CTA, FAQ и метрики проверки.",
+    "impact": "high",
+    "effort": "M",
+    "tags": [
+      "heys",
+      "landing",
+      "growth"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-KINDERLY-CRM-003",
+    "title": "Внедрить простую CRM-таблицу заявок",
+    "context": "Текущий поток заявок требует прозрачных статусов и SLA.",
+    "prompt_for_agent": "Собери минимальную CRM-модель для Kinderly: стадии заявки, SLA и шаблоны ответов.",
+    "impact": "high",
+    "effort": "S",
+    "tags": [
+      "kinderly",
+      "crm",
+      "operations"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-KINDERLY-MESSENGER-004",
+    "title": "Стандартизировать заявочный шаблон в мессенджере",
+    "context": "Нужен единый формат отправки заявок на проверку даты.",
+    "prompt_for_agent": "Подготовь шаблон сообщения для проверки даты и правила обработки ответов менеджером.",
+    "impact": "medium",
+    "effort": "S",
+    "tags": [
+      "kinderly",
+      "messenger",
+      "conversion"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-KINDERLY-CONTENT-005",
+    "title": "Обновить контент-блок преимуществ",
+    "context": "Нужно усилить аргументы выбора студии на лендинге.",
+    "prompt_for_agent": "Предложи 7 улучшений контента Kinderly: выгоды, кейсы, фото/видео и возражения.",
+    "impact": "medium",
+    "effort": "M",
+    "tags": [
+      "kinderly",
+      "content",
+      "conversion"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-HEYS-PAYMENTS-003",
+    "title": "Подготовить чеклист ЮKassa",
+    "context": "Платежный блок критичен до запуска платного трафика.",
+    "prompt_for_agent": "Собери пошаговый чеклист подключения ЮKassa и критерии готовности к прод-запуску.",
+    "impact": "high",
+    "effort": "M",
+    "tags": [
+      "heys",
+      "payments",
+      "legal"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-HEYS-ONBOARDING-004",
+    "title": "Сделать onboarding-поток для первых клиентов",
+    "context": "Нужно сократить путь от первого захода до первой ценности.",
+    "prompt_for_agent": "Спроектируй onboarding HEYS на первые 24 часа: шаги, сообщения, триггеры и метрики.",
+    "impact": "high",
+    "effort": "M",
+    "tags": [
+      "heys",
+      "onboarding",
+      "growth"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-HEYS-RETENTION-005",
+    "title": "Сформировать гипотезы удержания D7",
+    "context": "Без удержания даже хороший трафик не даст роста.",
+    "prompt_for_agent": "Дай 10 гипотез на рост удержания D7 в HEYS и приоритизируй по ICE.",
+    "impact": "high",
+    "effort": "M",
+    "tags": [
+      "heys",
+      "retention",
+      "analytics"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-HEALTH-SLEEP-002",
+    "title": "Зафиксировать вечерний ритуал сна",
+    "context": "Сон — базовый рычаг энергии для всех проектов.",
+    "prompt_for_agent": "Собери персональный вечерний протокол за 30 минут до сна (до 00:00) с fallback-сценарием.",
+    "impact": "high",
+    "effort": "S",
+    "tags": [
+      "health",
+      "sleep",
+      "routine"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-HEALTH-STRETCH-003",
+    "title": "Собрать программу утренней растяжки v1",
+    "context": "Нужна программа для снижения крепатуры и стабильной мобилизации.",
+    "prompt_for_agent": "Собери программу растяжки на 10–20 минут с уровнями легкий/средний и правилами прогрессии.",
+    "impact": "medium",
+    "effort": "S",
+    "tags": [
+      "health",
+      "stretch",
+      "recovery"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-OPS-WEEKLY-PACK-001",
+    "title": "Собрать weekly pack за 20 минут",
+    "context": "Нужен быстрый управленческий ритуал без бюрократии.",
+    "prompt_for_agent": "Собери weekly pack: review + KPI + register update в одном коротком ритуале.",
+    "impact": "medium",
+    "effort": "S",
+    "tags": [
+      "operations",
+      "weekly",
+      "planning"
+    ],
+    "status": "new"
+  },
+  {
+    "id": "REC-OPS-DECISIONS-002",
+    "title": "Запустить decisions log (ADR-light)",
+    "context": "Ключевые решения теряются без единого журнала.",
+    "prompt_for_agent": "Подготовь ADR-light формат и 5 первых записей по текущим проектным решениям.",
+    "impact": "medium",
+    "effort": "S",
+    "tags": [
+      "operations",
+      "decisions",
+      "planning"
+    ],
+    "status": "new"
+  }
+]
