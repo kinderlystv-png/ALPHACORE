@@ -145,7 +145,10 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
-function buildBundleOrchestrationPrompt(recommendations: AgentRecommendation[]): string {
+function buildBundleOrchestrationPrompt(
+  recommendations: AgentRecommendation[],
+  practicalPlan: AgentPracticalPlan | null,
+): string {
   const titles = recommendations.map((recommendation) => `«${recommendation.title}»`);
   const titleLine =
     titles.length > 0
@@ -158,6 +161,13 @@ function buildBundleOrchestrationPrompt(recommendations: AgentRecommendation[]):
     "Сначала посмотри на готовый synthesis ниже, потом используй сырые сигналы только чтобы уточнить решение.",
     "Не отвечай на них как на отдельные длинные заметки.",
     "Сначала убери дубли и пересечения, потом собери один практический план.",
+    "Перед финальным ответом обязательно сделай task-evaluation pass по живым задачам из ALPHACORE.",
+    "Если хотя бы одна задача требует раскрытия, definition of done, срока, слота или развязки приоритетов — не отвечай сразу.",
+    "Сначала задай до 5 коротких уточняющих вопросов.",
+    "Если среда поддерживает интерактивные вопросы с вариантами выбора и свободным вводом — используй их; иначе задай те же вопросы текстом.",
+    practicalPlan?.clarificationQuestions.length
+      ? `Ниже уже есть suggested question-pass на ${practicalPlan.clarificationQuestions.length} вопрос(а/ов).`
+      : null,
     "",
     "Что мне нужно:",
     "- выбери 1 главный шаг на сегодня;",
@@ -194,6 +204,19 @@ function buildBundleOrchestrationPrompt(recommendations: AgentRecommendation[]):
 function buildPracticalPlanSection(plan: AgentPracticalPlan): string {
   const sections = [
     "### 0. Практический plan ALPHACORE",
+    ...(plan.clarificationQuestions.length > 0
+      ? [
+          "Сначала уточнить у пользователя",
+          "Если среда умеет интерактивные уточнения с вариантами выбора — используй их; свободный ввод не отключай.",
+          ...plan.clarificationQuestions.flatMap((question, index) => [
+            `${index + 1}. ${question.question}`,
+            `   Варианты: ${question.options.join(" · ")}${question.allowFreeform ? " · свой вариант" : ""}`,
+          ]),
+          "",
+          "Ниже — черновой synthesis до ответов на эти вопросы.",
+          "",
+        ]
+      : []),
     ...(plan.mergedThemes.length > 0
       ? [
           "Сшитые пересечения:",
@@ -236,7 +259,7 @@ function buildPromptBundle(
   recommendations: AgentRecommendation[],
   practicalPlan: AgentPracticalPlan | null,
 ): string {
-  const orchestrationPrompt = buildBundleOrchestrationPrompt(recommendations);
+  const orchestrationPrompt = buildBundleOrchestrationPrompt(recommendations, practicalPlan);
   const promptSections = recommendations
     .map((recommendation, index) => [`### ${index + 1}. ${recommendation.title}`, recommendation.prompt].join("\n"))
     .join("\n\n---\n\n");
@@ -630,6 +653,37 @@ function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
         <div className="space-y-4">
+          {plan.clarificationQuestions.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Сначала спросить</p>
+              <ul className="mt-2 space-y-3 text-sm text-zinc-200">
+                {plan.clarificationQuestions.map((question) => (
+                  <li key={question.id} className="rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
+                    <p>{question.question}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {question.options.map((option) => (
+                        <span
+                          key={option}
+                          className="rounded-full border border-sky-500/15 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-100"
+                        >
+                          {option}
+                        </span>
+                      ))}
+                      {question.allowFreeform && (
+                        <span className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
+                          свой вариант
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs text-zinc-500">
+                Если среда умеет интерактивные уточнения с вариантами выбора, сначала прогоняй этот mini-interview, а уже потом давай финальный план.
+              </p>
+            </div>
+          )}
+
           <div>
             <p className="text-[10px] uppercase tracking-widest text-zinc-500">Главное решение сейчас</p>
             <p className="mt-2 text-sm text-zinc-100">{plan.mainDecision}</p>

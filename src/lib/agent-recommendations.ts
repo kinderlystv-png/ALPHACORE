@@ -192,7 +192,25 @@ export type TaskDistributionAnalysis = {
 	totalTasks: number;
 };
 
+export type AgentClarificationQuestionReason =
+	| "definition-of-done"
+	| "timing"
+	| "slotting"
+	| "priority"
+	| "execution-mode";
+
+export type AgentClarificationQuestion = {
+	id: string;
+	taskId: string | null;
+	title: string;
+	question: string;
+	reason: AgentClarificationQuestionReason;
+	options: string[];
+	allowFreeform: boolean;
+};
+
 export type AgentPracticalPlan = {
+	clarificationQuestions: AgentClarificationQuestion[];
 	mergedThemes: string[];
 	mainDecision: string;
 	backupMoves: string[];
@@ -328,6 +346,9 @@ const HEALTH_SIGNAL_TAGS = new Set([
 	"medical",
 	"energy",
 ]);
+
+const BROAD_TASK_PATTERN =
+	/собрать|развернуть|набросать|сделать|подготовить|структур|карта|воронк|план|сценар|skeleton|финализ|стратег|strategy/u;
 
 function nowIso(): string {
 	return new Date().toISOString();
@@ -514,6 +535,188 @@ function filterTaskWindowSuggestionsByTaskIds(
 			};
 		})
 		.filter((window) => window.assignments.length > 0);
+}
+
+function isBroadPlanningTask(task: Task): boolean {
+	const title = task.title.toLowerCase();
+	return BROAD_TASK_PATTERN.test(title) || title.length >= 46;
+}
+
+function buildDoneOptionsForTask(
+	task: Task,
+	leadProject: Project | null,
+): string[] {
+	const track = getTaskTrack(task);
+
+	if (track === "birthday") {
+		return [
+			"черновик / skeleton",
+			"список реквизита / карта",
+			"финальная версия",
+		];
+	}
+
+	if (track === "ops") {
+		return ["сделать первым", "перенести", "удалить / не делать"];
+	}
+
+	if (track === "kinderly" || track === "heys") {
+		return [
+			leadProject ? `черновик по ${leadProject.name}` : "черновик",
+			"структура / карта / список",
+			"финальная версия",
+		];
+	}
+
+	return ["черновик", "структура / список", "финальная версия"];
+}
+
+function formatQuestionWindowOption(window: TaskWindowSuggestion): string {
+	return `${formatDateKeyRu(window.date)} ${window.start}–${window.end} (${clipText(window.label, 26)})`;
+}
+
+function pushClarificationQuestion(
+	questions: AgentClarificationQuestion[],
+	question: AgentClarificationQuestion,
+): void {
+	if (questions.length >= 5) return;
+	if (questions.some((item) => item.id === question.id)) return;
+	questions.push(question);
+}
+
+function buildClarificationQuestions(input: {
+	context: RecommendationRuntimeContext;
+	recommendations: AgentRecommendation[];
+	leadProject: Project | null;
+	leadTask: Task | null;
+	energyConflict: boolean;
+}): AgentClarificationQuestion[] {
+	const { context, recommendations, leadProject, leadTask, energyConflict } = input;
+	const questions: AgentClarificationQuestion[] = [];
+
+	if (context.tasks.actionable.length === 0) return questions;
+
+	const focusTask = leadTask ?? context.tasks.actionable[0] ?? null;
+	const focusTrack = focusTask ? getTaskTrack(focusTask) : null;
+	const liveTaskPool = uniqueTasks([
+		...(focusTask ? [focusTask] : []),
+		...context.tasks.p1,
+		...context.tasks.overdue,
+		...context.tasks.dueSoon,
+		...context.tasks.unscheduled,
+	]).slice(0, 6);
+
+	if (focusTask && (isBroadPlanningTask(focusTask) || !!leadProject)) {
+		pushClarificationQuestion(questions, {
+			id: `clarify-done-${focusTask.id}`,
+			taskId: focusTask.id,
+			title: `Что считать done по ${clipText(focusTask.title, 42)}?`,
+			question: `Что в задаче «${clipText(focusTask.title, 56)}» должно считаться done в этом проходе?`,
+			reason: "definition-of-done",
+			options: buildDoneOptionsForTask(focusTask, leadProject),
+			allowFreeform: true,
+		});
+	}
+
+	const unscheduledTask =
+		(focusTask && !focusTask.dueDate ? focusTask : null) ??
+		context.tasks.unscheduled.find((task) => task.id !== focusTask?.id) ??
+		null;
+
+	if (unscheduledTask) {
+		pushClarificationQuestion(questions, {
+			id: `clarify-timing-${unscheduledTask.id}`,
+			taskId: unscheduledTask.id,
+			title: `Когда это реально нужно?`,
+			question: `Какой реальный горизонт у задачи «${clipText(unscheduledTask.title, 56)}»?`,
+			reason: "timing",
+			options: ["сегодня", "на этой неделе", "без жёсткой даты"],
+			allowFreeform: true,
+		});
+	}
+
+	const slottingTask =
+		context.tasks.distribution.overflowTasks.find((task) => task.id === focusTask?.id) ??
+		context.tasks.distribution.overflowTasks[0] ??
+		context.tasks.unscheduled.find((task) => task.id !== unscheduledTask?.id) ??
+		null;
+
+	if (slottingTask) {
+		const candidateWindows = filterTaskWindowSuggestionsByTaskIds(
+			context.tasks.distribution.suggestions,
+			new Set([slottingTask.id]),
+		).slice(0, 2);
+
+		pushClarificationQuestion(questions, {
+			id: `clarify-slot-${slottingTask.id}`,
+			taskId: slottingTask.id,
+			title: `Куда это класть в календарь?`,
+			question: `Куда логичнее положить задачу «${clipText(slottingTask.title, 56)}» по неделе?`,
+			reason: "slotting",
+			options:
+				candidateWindows.length > 0
+					? candidateWindows.map((window) => formatQuestionWindowOption(window))
+					: [
+						"нужен новый слот на этой неделе",
+						"перенести на следующую неделю",
+						"оставить без слота пока",
+					],
+			allowFreeform: true,
+		});
+	}
+
+	if (focusTask) {
+		const competing = liveTaskPool
+			.filter((task) => task.id !== focusTask.id)
+			.filter((task) => {
+				if (!focusTrack) return true;
+				const track = getTaskTrack(task);
+				return track === focusTrack || track === "general";
+			})
+			.slice(0, 2);
+
+		if (competing.length > 0) {
+			pushClarificationQuestion(questions, {
+				id: `clarify-priority-${focusTask.id}`,
+				taskId: focusTask.id,
+				title: `Что оставить первым?`,
+				question: `Что должно идти первым, если не тащить всё параллельно?`,
+				reason: "priority",
+				options: [
+					clipText(focusTask.title, 42),
+					...competing.map((task) => clipText(task.title, 42)),
+					"сжать всё до минимального черновика",
+				],
+				allowFreeform: true,
+			});
+		}
+	}
+
+	if (
+		energyConflict &&
+		focusTask &&
+		!recommendations.every(
+			(recommendation) =>
+				recommendation.areaKey !== "health" &&
+				recommendation.areaKey !== "recovery",
+		)
+	) {
+		pushClarificationQuestion(questions, {
+			id: `clarify-execution-${focusTask.id}`,
+			taskId: focusTask.id,
+			title: `Насколько глубоко идти сейчас?`,
+			question: `Если энергии меньше обычного, какой режим выполнения выбрать для «${clipText(focusTask.title, 56)}»?`,
+			reason: "execution-mode",
+			options: [
+				"только decision / планирование",
+				"короткий sprint 20–30 минут",
+				"полный слот без сокращений",
+			],
+			allowFreeform: true,
+		});
+	}
+
+	return questions;
 }
 
 function normalizeKeywordStems(text: string): string[] {
@@ -1951,6 +2154,9 @@ function buildPrompt(
 
 	const taskBlock = [
 		"Что нужно от агента:",
+		"- Сначала оцени живые задачи из ALPHACORE и пойми, нужна ли где-то ясность по scope / done / сроку / слоту / приоритету.",
+		"- Если хотя бы одна задача требует раскрытия или планирования — не отвечай сразу: сначала задай до 5 коротких уточняющих вопросов.",
+		"- Если среда поддерживает интерактивные уточнения с вариантами выбора и свободным вводом — используй их; иначе задай те же вопросы текстом.",
 		...taskLines.map((line) => `- ${line}`),
 		"",
 	];
@@ -2088,6 +2294,13 @@ export function buildAgentPracticalPlan(
 	const review = areaSet.has("reflection")
 		? buildReviewSummary(context, leadProject, leadTask)
 		: null;
+	const clarificationQuestions = buildClarificationQuestions({
+		context,
+		recommendations,
+		leadProject,
+		leadTask,
+		energyConflict,
+	});
 	const taskWindows = context.tasks.distribution.suggestions
 		.slice(0, 4)
 		.map((window) => formatTaskWindowSuggestion(window));
@@ -2120,6 +2333,7 @@ export function buildAgentPracticalPlan(
 	]);
 
 	return {
+		clarificationQuestions,
 		mergedThemes,
 		mainDecision,
 		backupMoves,
