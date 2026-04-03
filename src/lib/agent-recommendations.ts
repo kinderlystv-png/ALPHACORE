@@ -9,7 +9,7 @@ import type { Habit } from "./habits";
 import type { JournalEntry } from "./journal";
 import { paramStatus, type MedEntry, type MedParam } from "./medical";
 import type { Project, StatusTone } from "./projects";
-import { timeToMinutes, type ScheduleSlot } from "./schedule";
+import { minutesToTime, timeToMinutes, type ScheduleSlot } from "./schedule";
 import { lsGet, lsSet, uid } from "./storage";
 import { compareTasksByAttention, type Task } from "./tasks";
 
@@ -110,6 +110,7 @@ export type RecommendationRuntimeContext = {
 		flags: RecommendationMedicalFlag[];
 	};
 	schedule: {
+		all: ScheduleSlot[];
 		today: ScheduleSlot[];
 		studio: ScheduleSlot[];
 		cleanup: ScheduleSlot[];
@@ -130,6 +131,14 @@ export type AgentPracticalPlan = {
 		schedule: string;
 		journal: string;
 	};
+};
+
+type RecoveryAnchor = {
+	date: string;
+	start: string;
+	end: string;
+	label: string;
+	mode: "protect" | "convert" | "create";
 };
 
 type RecommendationCandidate = {
@@ -368,6 +377,184 @@ function formatCleanupLoadBrief(slot: ScheduleSlot): string {
 	return `${formatSlotBrief(slot)} · ${loadLabel} · ${durationHours}ч`;
 }
 
+function formatRecoveryAnchorBrief(anchor: RecoveryAnchor): string {
+	return `${formatDateKeyRu(anchor.date)} ${anchor.start}–${anchor.end} · ${clipText(anchor.label, 62)}`;
+}
+
+function normalizeKeywordStems(text: string): string[] {
+	return [...new Set(
+		text
+			.toLowerCase()
+			.replace(/ё/g, "е")
+			.split(/[^a-zа-я0-9]+/iu)
+			.map((token) => token.trim())
+			.filter((token) => token.length >= 4)
+			.map((token) => token.slice(0, 6)),
+	)];
+}
+
+function compressDeliverableForSprint(text: string): string {
+	const lower = text.toLowerCase();
+
+	if (lower.includes("сценар") && lower.includes("квест")) {
+		return "3 квест-блока";
+	}
+
+	if (lower.includes("реквиз")) {
+		return "список недостающего реквизита";
+	}
+
+	if (lower.includes("тайминг")) {
+		return "черновой тайминг";
+	}
+
+	if (lower.includes("торт")) {
+		return "черновик по торту и ингредиентам";
+	}
+
+	return clipText(text, 42);
+}
+
+function pickRelevantDeliverables(project: Project): string[] {
+	const openDeliverables = project.deliverables.filter((item) => !item.done);
+	const nextStepStems = normalizeKeywordStems(project.nextStep);
+
+	const scored = openDeliverables
+		.map((item) => {
+			const text = item.text.toLowerCase();
+			const score = nextStepStems.reduce((sum, stem) => {
+				return sum + (text.includes(stem) ? 1 : 0);
+			}, 0);
+
+			return { item, score };
+		})
+		.sort((left, right) => right.score - left.score || left.item.text.localeCompare(right.item.text, "ru"));
+
+	const matched = scored.filter((entry) => entry.score > 0).map((entry) => entry.item.text);
+	if (matched.length > 0) return matched.slice(0, 2);
+
+	return openDeliverables.slice(0, 2).map((item) => item.text);
+}
+
+function buildProjectFocusLabel(project: Project, energyConstrained: boolean): string {
+	if (!energyConstrained) {
+		return clipText(project.nextStep || "зафиксировать один следующий шаг", 78);
+	}
+
+	const relevant = pickRelevantDeliverables(project).map(compressDeliverableForSprint).slice(0, 2);
+	if (relevant.length >= 2) {
+		return `собрать черновик: ${relevant.join(" + ")}`;
+	}
+
+	if (relevant.length === 1) {
+		return `собрать черновик: ${relevant[0]}`;
+	}
+
+	return clipText(project.nextStep || "зафиксировать один следующий шаг", 78);
+}
+
+function isTrueRecoverySlot(slot: ScheduleSlot): boolean {
+	const title = slot.title.toLowerCase();
+
+	if (
+		slot.tags.includes("drums") ||
+		slot.tags.includes("rehearsal") ||
+		title.includes("барабан") ||
+		title.includes("репети") ||
+		slot.tags.includes("family")
+	) {
+		return false;
+	}
+
+	return (
+		slot.tags.includes("stretch") ||
+		slot.tags.includes("recovery") ||
+		slot.tags.includes("rest") ||
+		title.includes("восстанов") ||
+		title.includes("растяж")
+	);
+}
+
+function clampMinutes(value: number, min: number, max: number): number {
+	return Math.min(Math.max(value, min), max);
+}
+
+function findRecoveryGap(context: RecommendationRuntimeContext): RecoveryAnchor | null {
+	const overloaded = new Set(context.schedule.overloadedDays.map((day) => day.date));
+	const byDate = new Map<string, ScheduleSlot[]>();
+
+	for (const slot of context.schedule.all) {
+		const bucket = byDate.get(slot.date) ?? [];
+		bucket.push(slot);
+		byDate.set(slot.date, bucket);
+	}
+
+	const dayCandidates = [...byDate.entries()]
+		.filter(([date]) => date !== context.today)
+		.map(([date, slots]) => ({
+			date,
+			slots: sortSlots(slots),
+			hasStudio: slots.some(isStudioPressureSlot),
+			hasCleanup: slots.some(isCleanupLoadSlot),
+			load: slots.reduce((sum, slot) => {
+				if (isStudioPressureSlot(slot)) return sum + 3;
+				if (isCleanupLoadSlot(slot)) return sum + 2.5;
+				if (slot.tone === "family") return sum + 1.5;
+				return sum + 1;
+			}, 0),
+		}))
+		.sort((left, right) => {
+			return (
+				Number(overloaded.has(left.date)) - Number(overloaded.has(right.date)) ||
+				Number(left.hasCleanup) - Number(right.hasCleanup) ||
+				Number(left.hasStudio) - Number(right.hasStudio) ||
+				left.load - right.load ||
+				left.date.localeCompare(right.date)
+			);
+		});
+
+	const ranges = [
+		{ start: 12 * 60, end: 14 * 60, preferred: 12 * 60 },
+		{ start: 11 * 60, end: 14 * 60, preferred: 12 * 60 },
+		{ start: 14 * 60, end: 17 * 60, preferred: 15 * 60 },
+		{ start: 9 * 60, end: 17 * 60, preferred: 12 * 60 },
+	];
+	const duration = 60;
+
+	for (const day of dayCandidates) {
+		for (const range of ranges) {
+			const busy = day.slots
+				.map((slot) => ({
+					start: Math.max(timeToMinutes(slot.start), range.start),
+					end: Math.min(timeToMinutes(slot.end), range.end),
+				}))
+				.filter((slot) => slot.end > slot.start)
+				.sort((left, right) => left.start - right.start);
+
+			let cursor = range.start;
+
+			for (const slot of [...busy, { start: range.end, end: range.end }]) {
+				if (slot.start - cursor >= duration) {
+					const latestStart = slot.start - duration;
+					const chosenStart = clampMinutes(range.preferred, cursor, latestStart);
+
+					return {
+						date: day.date,
+						start: minutesToTime(chosenStart),
+						end: minutesToTime(chosenStart + duration),
+						label: "Recovery / stretch + walk",
+						mode: "create",
+					};
+				}
+
+				cursor = Math.max(cursor, slot.end);
+			}
+		}
+	}
+
+	return null;
+}
+
 function isPlanningSlot(slot: ScheduleSlot): boolean {
 	return (
 		(slot.tone === "review" || slot.tone === "work" || slot.tone === "kinderly" || slot.tone === "heys") &&
@@ -389,20 +576,41 @@ function pickPlanningSlot(context: RecommendationRuntimeContext): ScheduleSlot |
 
 function pickRecoveryAnchor(
 	context: RecommendationRuntimeContext,
-): { slot: ScheduleSlot; mode: "protect" | "convert" } | null {
+): RecoveryAnchor | null {
 	const overloaded = new Set(context.schedule.overloadedDays.map((day) => day.date));
 	const pickBest = (slots: ScheduleSlot[]): ScheduleSlot | null => {
 		return slots.find((slot) => !overloaded.has(slot.date)) ?? slots[0] ?? null;
 	};
 
-	const personal = pickBest(context.schedule.personal);
-	if (personal) {
-		return { slot: personal, mode: "protect" };
+	const calmExisting = pickBest(
+		context.schedule.all.filter(
+			(slot) => isTrueRecoverySlot(slot) && slotDurationMinutes(slot) >= 45,
+		),
+	);
+	if (calmExisting) {
+		return {
+			date: calmExisting.date,
+			start: calmExisting.start,
+			end: calmExisting.end,
+			label: calmExisting.title,
+			mode: "protect",
+		};
+	}
+
+	const gap = findRecoveryGap(context);
+	if (gap) {
+		return gap;
 	}
 
 	const review = pickBest(context.schedule.review);
 	if (review) {
-		return { slot: review, mode: "convert" };
+		return {
+			date: review.date,
+			start: review.start,
+			end: review.end,
+			label: "Recovery / stretch + walk",
+			mode: "convert",
+		};
 	}
 
 	return null;
@@ -597,6 +805,7 @@ export function buildRecommendationRuntimeContext(
 			flags,
 		},
 		schedule: {
+			all: upcomingSchedule,
 			today: sortSlots(input.todaySchedule),
 			studio: upcomingSchedule.filter(isStudioPressureSlot).slice(0, 4),
 			cleanup: upcomingSchedule.filter((slot) => slot.tone === "cleanup").slice(0, 4),
@@ -635,6 +844,7 @@ function buildWorkRuntimeData(
 	context: RecommendationRuntimeContext,
 ): CandidateRuntimeData {
 	const leadProject = context.projects.attention[0] ?? null;
+	const energyConstrained = context.schedule.today.some(isCleanupLoadSlot);
 	const leadTask =
 		context.tasks.p1[0] ??
 		context.tasks.overdue[0] ??
@@ -680,15 +890,17 @@ function buildWorkRuntimeData(
 				: undefined,
 		promptLines: [
 			leadProject
-				? `Проект в attention: ${leadProject.name} (${formatProjectStatus(leadProject.status)}), next step: ${leadProject.nextStep}, открытых deliverables: ${projectOpenDeliverables(leadProject)}.`
+				? `Проект в attention: ${leadProject.name} (${formatProjectStatus(leadProject.status)}), next step: ${energyConstrained ? buildProjectFocusLabel(leadProject, true) : leadProject.nextStep}, открытых deliverables: ${projectOpenDeliverables(leadProject)}.`
 				: "Отдельного красного проекта нет — нужен один главный рабочий вектор вместо распыления.",
 			queue.length > 0
 				? `Рабочие задачи под давлением: ${queue.map((task) => formatTaskBrief(task, context.today)).join("; ")}.`
 				: "Явных дедлайнов мало, поэтому агент должен сам выбрать один главный шаг и два вторичных.",
 		],
 		requestLines: [
-			leadProject
-				? "Свяжи план с текущим next step проекта, а не придумывай новый параллельный трек."
+			leadProject && energyConstrained
+				? "Если день тяжёлый по энергии, сузь next step до одного черновика или skeleton, а не до полной финализации."
+				: leadProject
+					? "Свяжи план с текущим next step проекта, а не придумывай новый параллельный трек."
 				: "Если проекта явно не видно, выбери один центр тяжести по задачам.",
 			"Расставь задачи по порядку и объясни, что не делать сегодня.",
 		],
@@ -1032,7 +1244,7 @@ function buildRecoveryRuntimeData(
 	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
 	const cleanupUpcoming = context.schedule.cleanup.slice(0, 2);
 	const betweenPartySupport = cleanupUpcoming.filter(isBetweenPartiesSupportSlot);
-	const nextPersonal = context.schedule.personal[0] ?? null;
+	const nextRecoverySlot = context.schedule.all.find(isTrueRecoverySlot) ?? null;
 	const overloaded = context.schedule.overloadedDays.slice(0, 2);
 	const signals: string[] = [];
 
@@ -1062,8 +1274,8 @@ function buildRecoveryRuntimeData(
 		);
 	}
 
-	if (nextPersonal) {
-		signals.push(`Ближайшее personal-окно: ${formatSlotBrief(nextPersonal)}`);
+	if (nextRecoverySlot) {
+		signals.push(`Ближайшее recovery-окно: ${formatSlotBrief(nextRecoverySlot)}`);
 	}
 
 	const cleanupPriorityLine = cleanupToday.length > 0 || cleanupUpcoming.length > 0
@@ -1088,7 +1300,7 @@ function buildRecoveryRuntimeData(
 					? "Неделя уже местами перегрета — окно отдыха нужно поставить сейчас."
 					: undefined,
 		impact:
-			missingRecovery.length > 0 || overloaded.length > 0 || !nextPersonal || cleanupToday.length > 0 || cleanupUpcoming.length > 0
+			missingRecovery.length > 0 || overloaded.length > 0 || !nextRecoverySlot || cleanupToday.length > 0 || cleanupUpcoming.length > 0
 				? cleanupToday.length > 0 || cleanupUpcoming.length > 0
 					? "Попроси агента выбрать одно recovery-окно на неделю и использовать cleanup-пики как аргумент для защиты этого окна."
 					: "Попроси агента защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
@@ -1099,9 +1311,9 @@ function buildRecoveryRuntimeData(
 				: "Ключевые recovery-привычки сегодня уже частично отмечены.",
 			cleanupPriorityLine
 				? `${cleanupPriorityLine.replace("Считать это полноценной физической нагрузкой.", "Используй это как аргумент для recovery-окна, а не как повтор отдельного cardio-разговора.")}`
-				: (nextPersonal
-				? `Ближайшее personal-окно: ${formatSlotBrief(nextPersonal)}.`
-				: "Ближайшее personal-окно в расписании не видно."),
+				: (nextRecoverySlot
+				? `Ближайшее recovery-окно: ${formatSlotBrief(nextRecoverySlot)}.`
+				: "Ближайшее recovery-окно в расписании не видно."),
 			betweenPartySupport.length > 0
 				? `Между двойными праздниками есть support-слот помочь Саше: ${betweenPartySupport.map((slot) => formatSlotBrief(slot)).join("; ")}.`
 				: overloaded.length > 0
@@ -1123,14 +1335,14 @@ function buildRecoveryRuntimeData(
 			overloaded.length > 0 ? "overload" : null,
 			cleanupToday.length > 0 || cleanupUpcoming.length > 0 ? "cleanup-load" : null,
 			betweenPartySupport.length > 0 ? "between-parties" : null,
-			nextPersonal ? "scheduled-recovery" : "missing-recovery",
+			nextRecoverySlot ? "scheduled-recovery" : "missing-recovery",
 		].filter(Boolean) as string[],
 		weightBoost:
 			(sleepMissing ? 8 : 0) +
 			overloaded.length * 6 +
 			cleanupUpcoming.length * 5 +
 			betweenPartySupport.length * 4 +
-			(nextPersonal ? 0 : 6),
+			(nextRecoverySlot ? 0 : 6),
 	};
 }
 
@@ -1299,7 +1511,7 @@ export function buildAgentPracticalPlan(
 		areaSet.has("health") ||
 		areaSet.has("recovery");
 	const projectTarget = leadProject
-		? `${leadProject.name}: ${clipText(leadProject.nextStep || "зафиксировать один следующий шаг", 78)}`
+		? `${leadProject.name}: ${buildProjectFocusLabel(leadProject, energyConflict)}`
 		: leadTask
 			? clipText(leadTask.title, 78)
 			: "сузить день до одного следующего шага";
@@ -1323,8 +1535,8 @@ export function buildAgentPracticalPlan(
 				: "Если появится короткое окно — использовать его только на одно точечное действие.",
 		recoveryAnchor
 			? recoveryAnchor.mode === "protect"
-				? `Если неделя начнёт съезжать — не трогать ${formatSlotBrief(recoveryAnchor.slot)} и не отдавать его под срочность.`
-				: `Если всё поедет — сначала превратить ${formatSlotBrief(recoveryAnchor.slot)} в recovery-окно, а не в ещё одну рабочую сессию.`
+				? `Если неделя начнёт съезжать — не трогать ${formatRecoveryAnchorBrief(recoveryAnchor)} и не отдавать его под срочность.`
+				: `Если всё поедет — сначала превратить ${formatRecoveryAnchorBrief(recoveryAnchor)} в recovery-окно, а не в ещё одну рабочую сессию.`
 			: "Если сил не хватает — сначала поставить recovery-окно, потом решать, что делать ещё.",
 	]).slice(0, 2);
 
@@ -1354,8 +1566,10 @@ export function buildAgentPracticalPlan(
 
 	const scheduleUpdate = recoveryAnchor
 		? recoveryAnchor.mode === "protect"
-			? `Защитить ${formatSlotBrief(recoveryAnchor.slot)} как recovery без других задач.`
-			: `Перевести ${formatSlotBrief(recoveryAnchor.slot)} в recovery / stretch / walk без рабочих задач.`
+			? `Защитить ${formatRecoveryAnchorBrief(recoveryAnchor)} как recovery без других задач.`
+			: recoveryAnchor.mode === "create"
+				? `Добавить ${formatRecoveryAnchorBrief(recoveryAnchor)} как невыбиваемое recovery-окно.`
+				: `Перевести ${formatRecoveryAnchorBrief(recoveryAnchor)} в recovery / stretch + walk без рабочих задач.`
 		: planningSlot
 			? `Забронировать ${planningSlot.start}–${planningSlot.end} сегодня под decision sprint без новых параллельных задач.`
 			: "Добавить одно recovery-окно на неделе и не смешивать его с работой.";
@@ -1363,11 +1577,11 @@ export function buildAgentPracticalPlan(
 	const journalLineParts = uniquePromptLines([
 		energyConflict ? "Сегодня не форсирую отдельное cardio после cleanup." : "Сегодня режу план до одного главного узла.",
 		leadProject
-			? `Центр тяжести: ${leadProject.name} — ${clipText(leadProject.nextStep || "один следующий шаг", 72)}.`
+			? `Центр тяжести: ${leadProject.name} — ${buildProjectFocusLabel(leadProject, energyConflict)}.`
 			: leadTask
 				? `Первое действие: ${clipText(leadTask.title, 72)}.`
 				: null,
-		recoveryAnchor ? `Recovery-окно: ${formatSlotBrief(recoveryAnchor.slot)}.` : null,
+		recoveryAnchor ? `Recovery-окно: ${formatRecoveryAnchorBrief(recoveryAnchor)}.` : null,
 		review,
 	]);
 
@@ -1382,7 +1596,7 @@ export function buildAgentPracticalPlan(
 		review,
 		updates: {
 			task: leadProject
-				? `${leadProject.name} — ${clipText(leadProject.nextStep || "зафиксировать один следующий шаг", 92)}`
+				? `${leadProject.name} — ${buildProjectFocusLabel(leadProject, energyConflict)}`
 				: leadTask
 					? clipText(leadTask.title, 92)
 					: "Один главный следующий шаг на сегодня",
