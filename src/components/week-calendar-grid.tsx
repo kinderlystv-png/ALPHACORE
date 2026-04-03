@@ -1493,9 +1493,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
             {visibleColumns.map((col) => {
-              const hasSupportLane = col.slots.some((slot) => isSupportLaneSlot(slot));
-              const supportLaneWidth = getSupportLaneWidth(overlayColumnWidth);
-
               return (
                 <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
                   <div
@@ -1503,12 +1500,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       col.isToday ? "bg-sky-400/28" : "bg-zinc-500/42"
                     }`}
                   />
-                  {hasSupportLane && (
-                    <div
-                      className="pointer-events-none absolute inset-y-0 left-0 rounded-l-[22px] bg-linear-to-r from-fuchsia-500/12 via-fuchsia-500/7 to-transparent"
-                      style={{ width: supportLaneWidth + SLOT_SIDE_INSET_PX }}
-                    />
-                  )}
                   <div
                     className={`pointer-events-none absolute inset-y-0 right-0 w-0.5 ${
                       col.isToday
