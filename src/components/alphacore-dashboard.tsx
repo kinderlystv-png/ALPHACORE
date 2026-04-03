@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AgentControlPanel } from "@/components/agent-control-panel";
 import { HabitTracker } from "@/components/habit-tracker";
@@ -26,14 +26,6 @@ import {
   getWeeklyFocusReport,
   weeklyCompletions,
 } from "@/lib/productivity";
-
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 6) return "Доброй ночи";
-  if (h < 12) return "Доброе утро";
-  if (h < 18) return "Добрый день";
-  return "Добрый вечер";
-}
 
 function ProdBars({ data }: { data: DayCompletions[] }) {
   const max = Math.max(...data.map((day) => day.count), 1);
@@ -147,16 +139,6 @@ export function AlphacoreDashboard() {
     };
   }, [refreshDashboard]);
 
-  const dateStr = useMemo(
-    () =>
-      new Intl.DateTimeFormat("ru-RU", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-      }).format(new Date()),
-    [],
-  );
-
   const handleQuickAdd = useCallback(() => {
     const value = quickInput.trim();
     if (!value) return;
@@ -173,32 +155,11 @@ export function AlphacoreDashboard() {
   }, [quickInput, quickMode, refreshDashboard]);
 
   return (
-    <div className="space-y-5 py-5">
-      {/* ── Header ── */}
-      <section className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-50">{greeting()} 👋</h1>
-          <p className="mt-1 text-sm capitalize text-zinc-500">{dateStr}</p>
-        </div>
-        {stats && (
-          <div className="flex gap-3">
-            <span className="rounded-lg border border-sky-500/20 bg-sky-950/10 px-2.5 py-1 text-xs text-sky-300">
-              {stats.inboxCount} inbox
-            </span>
-            <span className="rounded-lg border border-emerald-500/20 bg-emerald-950/10 px-2.5 py-1 text-xs text-emerald-300">
-              {stats.activeCount} в работе
-            </span>
-            <span className="rounded-lg border border-amber-500/20 bg-amber-950/10 px-2.5 py-1 text-xs text-amber-300">
-              {stats.doneThisWeek} готово/нед
-            </span>
-          </div>
-        )}
-      </section>
-
+    <div className="space-y-4 py-3">
       {/* ── Calendar hero + sidebar ── */}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         {/* Main: calendar */}
-        <WeekCalendarGrid />
+        <WeekCalendarGrid stats={stats} />
 
         {/* Sidebar */}
         <aside className="flex flex-col gap-4">

@@ -30,7 +30,7 @@ const HOUR_START = 5; // 05:00
 const HOUR_END = 24; // 00:00 next day
 const TOTAL_HOURS = HOUR_END - HOUR_START; // 19
 const ROW_H = 56; // px per hour row
-const HEADER_H = 88; // column header height (room for task chips)
+const HEADER_H = 66; // compact column header height
 
 /* ── Helpers ── */
 
@@ -77,8 +77,17 @@ type DayColumn = {
   dateLabel: string;
   isToday: boolean;
   isPast: boolean;
+  isWeekend: boolean;
   tasks: Task[];
   slots: ScheduleSlot[];
+};
+
+type WeekCalendarGridProps = {
+  stats?: {
+    inboxCount: number;
+    activeCount: number;
+    doneThisWeek: number;
+  } | null;
 };
 
 type DragState =
@@ -88,7 +97,7 @@ type DragState =
 
 /* ── Component ── */
 
-export function WeekCalendarGrid() {
+export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [version, setVersion] = useState(0);
   const [anchor, setAnchor] = useState(() => {
     const d = new Date();
@@ -130,6 +139,8 @@ export function WeekCalendarGrid() {
       const key = dateStr(date);
       const isToday = key === today;
       const isPast = key < today;
+      const weekday = date.getDay();
+      const isWeekend = weekday === 0 || weekday === 6;
       return {
         key,
         date,
@@ -137,6 +148,7 @@ export function WeekCalendarGrid() {
         dateLabel: new Intl.DateTimeFormat("ru-RU", { day: "numeric" }).format(date),
         isToday,
         isPast,
+        isWeekend,
         tasks: tasks
           .filter((t) => taskBelongsToDay(t, key, today, isToday))
           .sort((a, b) => compareTasksByAttention(a, b, today)),
@@ -221,8 +233,8 @@ export function WeekCalendarGrid() {
   return (
     <section className="flex flex-col rounded-4xl border border-zinc-800/50 bg-zinc-950/40">
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/50 px-5 py-3">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/50 px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => shiftWeek(-1)}
@@ -245,6 +257,20 @@ export function WeekCalendarGrid() {
             →
           </button>
           <span className="ml-2 text-sm font-semibold text-zinc-100">{weekLabel}</span>
+
+          {stats && (
+            <div className="ml-2 flex flex-wrap gap-2">
+              <span className="rounded-lg border border-sky-500/20 bg-sky-950/10 px-2 py-1 text-[11px] text-sky-300">
+                {stats.inboxCount} inbox
+              </span>
+              <span className="rounded-lg border border-emerald-500/20 bg-emerald-950/10 px-2 py-1 text-[11px] text-emerald-300">
+                {stats.activeCount} в работе
+              </span>
+              <span className="rounded-lg border border-amber-500/20 bg-amber-950/10 px-2 py-1 text-[11px] text-amber-300">
+                {stats.doneThisWeek} готово/нед
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Legend */}
@@ -278,21 +304,39 @@ export function WeekCalendarGrid() {
           {columns.map((col) => (
             <div
               key={`head-${col.key}`}
-              className={`sticky top-0 z-20 border-b border-r border-zinc-800/50 px-2 py-2 ${
-                col.isToday ? "bg-zinc-900/95" : "bg-zinc-950/95"
+              className={`sticky top-0 z-20 border-b border-r border-zinc-800/50 px-2 py-1.5 ${
+                col.isPast
+                  ? "bg-zinc-950/95"
+                  : col.isToday
+                    ? "bg-zinc-900/95"
+                    : col.isWeekend
+                      ? "bg-rose-950/20"
+                      : "bg-zinc-950/95"
               } ${col.isPast ? "opacity-40" : ""}`}
               style={{ height: HEADER_H }}
             >
               <p
-                className={`text-center text-[10px] uppercase tracking-[0.2em] ${
-                  col.isToday ? "text-sky-400" : col.isPast ? "text-zinc-600" : "text-zinc-500"
+                className={`text-center text-[9px] uppercase tracking-[0.18em] ${
+                  col.isPast
+                    ? "text-zinc-600"
+                    : col.isToday
+                      ? "text-sky-400"
+                      : col.isWeekend
+                        ? "text-rose-300"
+                        : "text-zinc-500"
                 }`}
               >
                 {col.dayLabel}
               </p>
               <p
-                className={`mt-0.5 text-center text-lg font-bold ${
-                  col.isToday ? "text-sky-300" : col.isPast ? "text-zinc-600" : "text-zinc-200"
+                className={`mt-0.5 text-center text-base font-bold leading-none ${
+                  col.isPast
+                    ? "text-zinc-600"
+                    : col.isToday
+                      ? "text-sky-300"
+                      : col.isWeekend
+                        ? "text-rose-200"
+                        : "text-zinc-200"
                 }`}
               >
                 {col.dateLabel}
@@ -300,8 +344,8 @@ export function WeekCalendarGrid() {
 
               {/* All-day tasks */}
               {col.tasks.length > 0 && (
-                <div className="mt-1 flex flex-col gap-0.5 overflow-hidden" style={{ maxHeight: 36 }}>
-                  {col.tasks.slice(0, 4).map((t) => {
+                <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden" style={{ maxHeight: 22 }}>
+                  {col.tasks.slice(0, 2).map((t) => {
                     const c = taskColor(t);
                     return (
                       <span
@@ -313,7 +357,7 @@ export function WeekCalendarGrid() {
                           onDragStartTask(t.id, col.key);
                         }}
                         onDragEnd={onDragEnd}
-                        className={`truncate rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${
+                        className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-[9px] font-medium ${
                           col.isPast
                             ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
                             : `cursor-grab ${c.border} ${c.bg} ${c.text}`
@@ -324,8 +368,8 @@ export function WeekCalendarGrid() {
                       </span>
                     );
                   })}
-                  {col.tasks.length > 4 && (
-                    <span className="text-[9px] text-zinc-600">+{col.tasks.length - 4}</span>
+                  {col.tasks.length > 2 && (
+                    <span className="text-[9px] text-zinc-600">+{col.tasks.length - 2}</span>
                   )}
                 </div>
               )}
