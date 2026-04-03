@@ -170,6 +170,7 @@ function buildBundleOrchestrationPrompt(
     "Сначала задай до 5 коротких уточняющих вопросов.",
     "Если среда поддерживает интерактивные вопросы с вариантами выбора и свободным вводом — используй их; иначе задай те же вопросы текстом.",
     "После ответов пользователя, если у тебя есть доступ к ALPHACORE CLI/API, сохрани learning-signal из этих ответов и только потом давай финальный synthesis.",
+    practicalPlan?.planningContourSummary ?? null,
     practicalPlan?.clarificationQuestions.length
       ? `Ниже уже есть suggested question-pass на ${practicalPlan.clarificationQuestions.length} вопрос(а/ов).`
       : null,
@@ -209,6 +210,9 @@ function buildBundleOrchestrationPrompt(
 function buildPracticalPlanSection(plan: AgentPracticalPlan): string {
   const sections = [
     "### 0. Практический plan ALPHACORE",
+    ...(plan.planningContourSummary
+      ? ["Единый контур", plan.planningContourSummary, ""]
+      : []),
     ...(plan.clarificationQuestions.length > 0
       ? [
           "Сначала уточнить у пользователя",
@@ -689,6 +693,13 @@ function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
         <div className="space-y-4">
+          {plan.planningContourSummary && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Единый контур</p>
+              <p className="mt-2 text-sm text-zinc-300">{plan.planningContourSummary}</p>
+            </div>
+          )}
+
           {plan.clarificationQuestions.length > 0 && (
             <div>
               <p className="text-[10px] uppercase tracking-widest text-zinc-500">Сначала спросить</p>
@@ -959,7 +970,7 @@ export function AgentControlPanel({
                 <p className="text-sm font-semibold text-zinc-50">🤖 AI prompts для среды разработки</p>
                 <p className="mt-1 text-xs text-zinc-500">
                   {runtimeContext
-                    ? `Карточки уже grounded в живых данных: ${runtimeContext.tasks.actionable.length} задач, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий и ${runtimeContext.journal.recent.length} свежих записей.`
+                    ? `Карточки уже grounded в живых данных: ${runtimeContext.planning.unslottedTasks.length} задач без слота, ${runtimeContext.planning.calendarTasks.length} дел уже стоят в календаре, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий и ${runtimeContext.journal.recent.length} свежих записей.`
                     : "Карточки строятся из текущего контекста ALPHACORE и подстраиваются по copy / dislike / implemented."}
                 </p>
               </div>

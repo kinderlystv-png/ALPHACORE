@@ -139,6 +139,7 @@ export type RecommendationRuntimeContext = {
 		p1: Task[];
 		distribution: TaskDistributionAnalysis;
 	};
+	planning: RecommendationPlanningContour;
 	projects: {
 		attention: Project[];
 		birthday: Project | null;
@@ -191,6 +192,33 @@ export type TaskDistributionAnalysis = {
 	overflowTasks: Task[];
 	candidateWindowCount: number;
 	totalTasks: number;
+};
+
+export type RecommendationPlanningContourItemKind =
+	| "task"
+	| "calendar-task"
+	| "calendar-event";
+
+export type RecommendationPlanningContourItem = {
+	id: string;
+	kind: RecommendationPlanningContourItemKind;
+	title: string;
+	date: string | null;
+	start: string | null;
+	end: string | null;
+	tone: ScheduleTone | null;
+	priority: Task["priority"] | null;
+	status: Task["status"] | null;
+	dueDate: string | null;
+	taskId: string | null;
+	scheduleSlotId: string | null;
+};
+
+export type RecommendationPlanningContour = {
+	all: RecommendationPlanningContourItem[];
+	unslottedTasks: RecommendationPlanningContourItem[];
+	calendarTasks: RecommendationPlanningContourItem[];
+	calendarEvents: RecommendationPlanningContourItem[];
 };
 
 export type AgentClarificationQuestionReason =
@@ -250,6 +278,7 @@ export type AgentClarificationLearningProfile = {
 
 export type AgentPracticalPlan = {
 	clarificationQuestions: AgentClarificationQuestion[];
+	planningContourSummary: string | null;
 	mergedThemes: string[];
 	mainDecision: string;
 	backupMoves: string[];
@@ -503,6 +532,70 @@ function sortSlots(slots: ScheduleSlot[]): ScheduleSlot[] {
 	});
 }
 
+function isCustomScheduleSlot(slot: Pick<ScheduleSlot, "id">): boolean {
+	return slot.id.startsWith("custom-");
+}
+
+function buildPlanningContour(input: {
+	tasks: Task[];
+	upcomingSchedule: ScheduleSlot[];
+}): RecommendationPlanningContour {
+	const unslottedTasks = uniqueTasks(input.tasks).map((task) => ({
+		id: `task-${task.id}`,
+		kind: "task" as const,
+		title: task.title,
+		date: task.dueDate ?? null,
+		start: null,
+		end: null,
+		tone: null,
+		priority: task.priority,
+		status: task.status,
+		dueDate: task.dueDate ?? null,
+		taskId: task.id,
+		scheduleSlotId: null,
+	}));
+	const sortedSchedule = sortSlots(input.upcomingSchedule);
+	const calendarTasks = sortedSchedule
+		.filter(isCustomScheduleSlot)
+		.map((slot) => ({
+			id: `calendar-task-${slot.id}`,
+			kind: "calendar-task" as const,
+			title: slot.title,
+			date: slot.date,
+			start: slot.start,
+			end: slot.end,
+			tone: slot.tone,
+			priority: null,
+			status: null,
+			dueDate: slot.date,
+			taskId: null,
+			scheduleSlotId: slot.id,
+		}));
+	const calendarEvents = sortedSchedule
+		.filter((slot) => !isCustomScheduleSlot(slot))
+		.map((slot) => ({
+			id: `calendar-event-${slot.id}`,
+			kind: "calendar-event" as const,
+			title: slot.title,
+			date: slot.date,
+			start: slot.start,
+			end: slot.end,
+			tone: slot.tone,
+			priority: null,
+			status: null,
+			dueDate: slot.date,
+			taskId: null,
+			scheduleSlotId: slot.id,
+		}));
+
+	return {
+		all: [...unslottedTasks, ...calendarTasks, ...calendarEvents],
+		unslottedTasks,
+		calendarTasks,
+		calendarEvents,
+	};
+}
+
 function projectOpenDeliverables(project: Project): number {
 	return project.deliverables.filter((item) => !item.done).length;
 }
@@ -529,6 +622,40 @@ function formatTaskBrief(task: Task, today: string): string {
 
 function formatSlotBrief(slot: ScheduleSlot): string {
 	return `${formatDateKeyRu(slot.date)} ${slot.start}–${slot.end} · ${clipText(slot.title, 62)}`;
+}
+
+function formatPlanningContourItem(
+	item: RecommendationPlanningContourItem,
+): string {
+	if (item.date && item.start && item.end) {
+		return `${formatDateKeyRu(item.date)} ${item.start}–${item.end} · ${clipText(item.title, 62)}`;
+	}
+
+	if (item.dueDate) {
+		return `${clipText(item.title, 62)} (до ${formatDateKeyRu(item.dueDate)})`;
+	}
+
+	return clipText(item.title, 62);
+}
+
+function buildPlanningContourSummary(
+	contour: RecommendationPlanningContour,
+): string | null {
+	const parts = [
+		contour.unslottedTasks.length > 0
+			? `${contour.unslottedTasks.length} unslotted задач`
+			: null,
+		contour.calendarTasks.length > 0
+			? `${contour.calendarTasks.length} дел уже стоят в календаре`
+			: null,
+		contour.calendarEvents.length > 0
+			? `${contour.calendarEvents.length} фиксированных событий / слотов`
+			: null,
+	].filter(Boolean) as string[];
+
+	if (parts.length === 0) return null;
+
+	return `Единый контур: ${parts.join(", ")} — для анализа это один поток, просто часть задач уже получила слот.`;
 }
 
 function formatPressureDay(day: RecommendationSchedulePressureDay): string {
@@ -1613,6 +1740,10 @@ export function buildRecommendationRuntimeContext(
 		todaySchedule: sortSlots(input.todaySchedule),
 		upcomingSchedule,
 	});
+	const planningContour = buildPlanningContour({
+		tasks: actionable,
+		upcomingSchedule,
+	});
 
 	return {
 		today: input.today,
@@ -1624,6 +1755,7 @@ export function buildRecommendationRuntimeContext(
 			p1,
 			distribution: taskDistribution,
 		},
+		planning: planningContour,
 		projects: {
 			attention: attentionProjects,
 			birthday: birthdayProject,
@@ -2035,6 +2167,7 @@ function buildOperationsRuntimeData(
 	const overflowTasks = context.tasks.distribution.overflowTasks
 		.filter((task) => getTaskTrack(task) === "ops")
 		.slice(0, 3);
+	const calendarTasks = context.planning.calendarTasks.slice(0, 3);
 	const signals: string[] = [];
 
 	if (overdue.length > 0) {
@@ -2051,6 +2184,12 @@ function buildOperationsRuntimeData(
 
 	if (cleanup) {
 		signals.push(`Операционное окно: ${formatSlotBrief(cleanup)}`);
+	}
+
+	if (calendarTasks.length > 0) {
+		signals.push(
+			`В календаре уже стоят дела: ${calendarTasks.map((item) => formatPlanningContourItem(item)).join(" · ")}`,
+		);
 	}
 
 	if (taskWindows.length > 0) {
@@ -2075,7 +2214,7 @@ function buildOperationsRuntimeData(
 					? "Есть задачи без даты — они тихо крадут фокус из рабочего контура."
 					: undefined,
 		impact:
-			overdue.length > 0 || unscheduled.length > 0 || cleanup
+			overdue.length > 0 || unscheduled.length > 0 || cleanup || calendarTasks.length > 0
 				? "Попроси агента сделать triage хвостов и оставить одно первое действие на сегодня."
 				: undefined,
 		replacementAction: taskWindows[0]
@@ -2093,6 +2232,9 @@ function buildOperationsRuntimeData(
 			unscheduled.length > 0
 				? `Без даты висят: ${unscheduled.map((task) => clipText(task.title, 48)).join("; ")}.`
 				: "Почти все живые задачи уже привязаны ко времени.",
+			calendarTasks.length > 0
+				? `Пользовательские дела уже стоят в календаре: ${calendarTasks.map((item) => formatPlanningContourItem(item)).join("; ")}. Считай это тем же task-контуром, а не отдельным миром событий.`
+				: "Отдельных user-added дел в календаре пока не видно.",
 			cleanup
 				? `Операционное окно недели: ${formatSlotBrief(cleanup)}.`
 				: "Отдельного cleanup-окна пока нет.",
@@ -2111,6 +2253,7 @@ function buildOperationsRuntimeData(
 		tags: [
 			overdue.length > 0 ? "overdue" : null,
 			unscheduled.length > 0 ? "unscheduled" : null,
+			calendarTasks.length > 0 ? "calendar-task" : null,
 			cleanup ? "cleanup" : null,
 		].filter(Boolean) as string[],
 		riskReasons: [
@@ -2128,6 +2271,7 @@ function buildOperationsRuntimeData(
 		weightBoost:
 			overdue.length * 7 +
 			unscheduled.length * 3 +
+			calendarTasks.length * 2 +
 			(cleanup ? 4 : 0),
 	};
 }
@@ -2431,6 +2575,7 @@ function buildPrompt(
 
 	const taskBlock = [
 		"Что нужно от агента:",
+		"- Считай задачи без слота и дела, добавленные прямо в календарь, единым контуром: это один поток задач, просто часть уже получила слот.",
 		"- Сначала оцени живые задачи из ALPHACORE и пойми, нужна ли где-то ясность по scope / done / сроку / слоту / приоритету.",
 		"- Если хотя бы одна задача требует раскрытия или планирования — не отвечай сразу: сначала задай до 5 коротких уточняющих вопросов.",
 		"- Если среда поддерживает интерактивные уточнения с вариантами выбора и свободным вводом — используй их; иначе задай те же вопросы текстом.",
@@ -2592,6 +2737,7 @@ export function buildAgentPracticalPlan(
 	const review = areaSet.has("reflection")
 		? buildReviewSummary(context, leadProject, leadTask)
 		: null;
+	const planningContourSummary = buildPlanningContourSummary(context.planning);
 	const clarificationQuestions = buildClarificationQuestions({
 		context,
 		recommendations,
@@ -2633,6 +2779,7 @@ export function buildAgentPracticalPlan(
 
 	return {
 		clarificationQuestions,
+		planningContourSummary,
 		mergedThemes,
 		mainDecision,
 		backupMoves,
