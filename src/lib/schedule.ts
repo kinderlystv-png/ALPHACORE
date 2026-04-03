@@ -1,4 +1,5 @@
 import { lsGet, lsSet } from "./storage";
+import { addTask, deleteTask, getTasks, updateTask, type TaskPriority } from "./tasks";
 
 export type ScheduleTone =
   | "kinderly"
@@ -23,6 +24,8 @@ export type ScheduleSlot = {
   tone: ScheduleTone;
   tags: string[];
   source: ScheduleSource;
+  kind?: "task" | "event";
+  taskId?: string | null;
 };
 
 export type ScheduleOverride = {
@@ -691,6 +694,8 @@ export type CustomEvent = {
   title: string;
   tone: ScheduleTone;
   tags: string[];
+  kind?: "task" | "event";
+  taskId?: string | null;
 };
 
 const CUSTOM_KEY = "alphacore_schedule_custom";
@@ -766,15 +771,66 @@ function saveCustomEvents(events: CustomEvent[]): void {
   lsSet(CUSTOM_KEY, events);
 }
 
+function isTaskLikeCustomEvent(event: Pick<CustomEvent, "kind">): boolean {
+  return event.kind !== "event";
+}
+
+function defaultCustomEventTaskPriority(_event: Pick<CustomEvent, "tone">): TaskPriority {
+  return "p2";
+}
+
+function syncCustomEventTask(event: CustomEvent): CustomEvent {
+  const kind = event.kind ?? "task";
+
+  if (!isTaskLikeCustomEvent({ kind })) {
+    return {
+      ...event,
+      kind,
+      taskId: null,
+    };
+  }
+
+  const nextTaskId = event.taskId ?? event.id;
+  const linkedTask = getTasks().find((task) => task.id === nextTaskId);
+
+  if (!linkedTask) {
+    addTask(event.title, {
+      id: nextTaskId,
+      priority: defaultCustomEventTaskPriority(event),
+      dueDate: event.date,
+      status: "active",
+    });
+  } else {
+    updateTask(linkedTask.id, {
+      title: event.title,
+      dueDate: event.date,
+      status: "active",
+    });
+  }
+
+  return {
+    ...event,
+    kind,
+    taskId: nextTaskId,
+  };
+}
+
 export function getCustomEvents(dateKey?: string): CustomEvent[] {
   const all = loadCustomEvents();
   return dateKey ? all.filter((e) => e.date === dateKey) : all;
 }
 
+export function getScheduledTaskIds(dateKey?: string): string[] {
+  return getCustomEvents(dateKey)
+    .filter(isTaskLikeCustomEvent)
+    .map((event) => event.taskId)
+    .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0);
+}
+
 export function addCustomEvent(event: Omit<CustomEvent, "id">): CustomEvent {
   const events = loadCustomEvents();
   const id = `custom-${Date.now().toString(36)}`;
-  const full: CustomEvent = { id, ...event };
+  const full = syncCustomEventTask({ id, kind: "task", ...event });
   events.push(full);
   saveCustomEvents(events);
   return full;
@@ -784,8 +840,13 @@ export function removeCustomEvent(id: string): boolean {
   const events = loadCustomEvents();
   const idx = events.findIndex((e) => e.id === id);
   if (idx === -1) return false;
-  events.splice(idx, 1);
+  const [removed] = events.splice(idx, 1);
   saveCustomEvents(events);
+
+  if (removed && isTaskLikeCustomEvent(removed) && removed.taskId) {
+    deleteTask(removed.taskId);
+  }
+
   return true;
 }
 
@@ -796,7 +857,14 @@ export function updateCustomEvent(
   const events = loadCustomEvents();
   const idx = events.findIndex((e) => e.id === id);
   if (idx === -1) return null;
-  events[idx] = { ...events[idx], ...patch };
+  const previous = events[idx]!;
+  const next = syncCustomEventTask({ ...previous, ...patch });
+
+  if (!isTaskLikeCustomEvent(next) && previous.taskId) {
+    deleteTask(previous.taskId);
+  }
+
+  events[idx] = next;
   saveCustomEvents(events);
   return events[idx];
 }
@@ -820,6 +888,8 @@ export function updateEditableScheduleSlot(
           title: updated.title,
           tone: updated.tone,
           tags: updated.tags,
+          kind: updated.kind,
+          taskId: updated.taskId,
           source: "derived",
         }
       : null;
@@ -858,6 +928,8 @@ function getCustomSlots(dateKey: string): ScheduleSlot[] {
     title: e.title,
     tone: e.tone,
     tags: e.tags,
+    kind: e.kind ?? "task",
+    taskId: e.taskId ?? null,
     source: "derived" as const,
   }));
 }

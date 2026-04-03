@@ -21,6 +21,10 @@ export type Task = {
   focusHistory?: Record<string, { sessions: number; minutes: number }>;
 };
 
+type AddTaskOptions = Partial<
+  Pick<Task, "id" | "project" | "projectId" | "priority" | "dueDate" | "status">
+>;
+
 const KEY = "alphacore_tasks";
 
 export function getTasks(): Task[] {
@@ -86,16 +90,16 @@ export function getActionableTasks(referenceDate: string = ds(new Date())): Task
 
 export function addTask(
   title: string,
-  opts?: Partial<Pick<Task, "project" | "projectId" | "priority" | "dueDate">>,
+  opts?: AddTaskOptions,
 ): Task {
   const tasks = getTasks();
   const t: Task = {
-    id: uid(),
+    id: opts?.id ?? uid(),
     title,
     project: opts?.project,
     projectId: opts?.projectId,
     priority: opts?.priority ?? "p2",
-    status: "inbox",
+    status: opts?.status ?? "inbox",
     dueDate: opts?.dueDate,
     createdAt: new Date().toISOString(),
   };

@@ -12,6 +12,7 @@ import {
 } from "@/lib/life-areas";
 import {
   addCustomEvent,
+  getScheduledTaskIds,
   isEditableScheduleSlot,
   removeEditableScheduleSlot,
   type ScheduleSlot,
@@ -479,6 +480,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       const isPast = key < today;
       const weekday = date.getDay();
       const isWeekend = weekday === 0 || weekday === 6;
+      const scheduledTaskIds = new Set(getScheduledTaskIds(key));
       return {
         key,
         date,
@@ -488,7 +490,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         isPast,
         isWeekend,
         tasks: tasks
-          .filter((t) => taskBelongsToDay(t, key, today, isToday))
+          .filter((t) => taskBelongsToDay(t, key, today, isToday) && !scheduledTaskIds.has(t.id))
           .sort((a, b) => compareTasksByAttention(a, b, today)),
         slots: getScheduleForDate(key),
       };

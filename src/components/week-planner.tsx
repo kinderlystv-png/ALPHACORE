@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  getScheduledTaskIds,
   type ScheduleSlot,
   SCHEDULE_TONE_CLS,
   getScheduleForDate,
@@ -153,6 +154,7 @@ export function WeekPlanner({
     return buildHorizon(horizonStart).map((date) => {
       const key = dateStr(date);
       const isToday = key === todayKey;
+      const scheduledTaskIds = new Set(getScheduledTaskIds(key));
 
       return {
         key,
@@ -166,7 +168,7 @@ export function WeekPlanner({
         hint: dayHint(key, todayKey),
         isToday,
         tasks: openTasks
-          .filter((task) => taskBelongsToDay(task, key, todayKey, isToday))
+          .filter((task) => taskBelongsToDay(task, key, todayKey, isToday) && !scheduledTaskIds.has(task.id))
           .sort((left, right) => compareTasksByAttention(left, right, todayKey)),
         slots: getScheduleForDate(key),
       };
@@ -200,11 +202,11 @@ export function WeekPlanner({
       </div>
 
       <div className="mt-4 overflow-x-auto pb-2">
-        <div className="grid min-w-[980px] grid-cols-7 gap-3">
+        <div className="grid min-w-245 grid-cols-7 gap-3">
           {days.map((day) => (
             <article
               key={day.key}
-              className={`flex min-h-[30rem] flex-col rounded-[1.5rem] border p-3 ${
+              className={`flex min-h-120 flex-col rounded-3xl border p-3 ${
                 day.isToday
                   ? "border-zinc-50/20 bg-zinc-950/65 shadow-lg shadow-zinc-950/30"
                   : "border-zinc-800/60 bg-zinc-950/30"

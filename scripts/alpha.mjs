@@ -359,6 +359,7 @@ async function medicalAdd(args) {
 // ── Schedule commands ────────────────────────────────────────────────────────
 
 const VALID_TONES = ["kinderly", "heys", "work", "health", "personal", "cleanup", "family", "review"];
+const VALID_PRIORITIES = ["p1", "p2", "p3"];
 const VALID_CLARIFICATION_REASONS = [
   "definition-of-done",
   "timing",
@@ -373,7 +374,7 @@ async function scheduleAdd(args) {
   const title = positional[0];
   if (!title || !flags.date || !flags.start || !flags.end) {
     console.error(
-      'Usage: schedule add "Title" --date YYYY-MM-DD --start HH:MM --end HH:MM [--tone work] [--tags tag1,tag2]',
+      'Usage: schedule add "Title" --date YYYY-MM-DD --start HH:MM --end HH:MM [--tone work] [--tags tag1,tag2] [--priority p1|p2|p3] [--project name] [--event-only]',
     );
     process.exit(1);
   }
@@ -384,7 +385,16 @@ async function scheduleAdd(args) {
     process.exit(1);
   }
 
+  const priority = flags.priority ?? "p2";
+  if (!VALID_PRIORITIES.includes(priority)) {
+    console.error(`❌ Invalid priority: ${priority}. Valid: ${VALID_PRIORITIES.join(", ")}`);
+    process.exit(1);
+  }
+
   const events = (await getKey("alphacore_schedule_custom")) ?? [];
+  const tasks = (await getKey("alphacore_tasks")) ?? [];
+  const isEventOnly = Boolean(flags["event-only"]);
+  const taskId = isEventOnly ? null : `custom-${uid()}`;
   const event = {
     id: `custom-${uid()}`,
     date: flags.date,
@@ -393,10 +403,26 @@ async function scheduleAdd(args) {
     title,
     tone,
     tags: flags.tags ? flags.tags.split(",").map((t) => t.trim().toLowerCase()) : [],
+    kind: isEventOnly ? "event" : "task",
+    taskId,
   };
+
+  if (!isEventOnly) {
+    tasks.unshift({
+      id: taskId,
+      title,
+      project: flags.project ?? undefined,
+      priority,
+      status: "active",
+      dueDate: flags.date,
+      createdAt: new Date().toISOString(),
+    });
+    await putKey("alphacore_tasks", tasks);
+  }
+
   events.push(event);
   await putKey("alphacore_schedule_custom", events);
-  console.info(`✅ Schedule event added: ${title} on ${event.date} ${event.start}–${event.end} (${event.id})`);
+  console.info(`✅ Schedule event added: ${title} on ${event.date} ${event.start}–${event.end} (${event.id})${taskId ? ` → task ${taskId}` : ""}`);
 }
 
 async function scheduleList(args) {
@@ -412,7 +438,8 @@ async function scheduleList(args) {
 
   console.info(`📅 Custom events for ${date}:\n`);
   for (const e of filtered) {
-    console.info(`  ${e.start}–${e.end} ${e.title} [${e.tone}] (${e.id})`);
+    const kind = e.kind === "event" ? "event" : "task";
+    console.info(`  ${e.start}–${e.end} ${e.title} [${e.tone}/${kind}] (${e.id})${e.taskId ? ` → ${e.taskId}` : ""}`);
   }
 }
 
@@ -431,8 +458,15 @@ async function scheduleRemove(args) {
     process.exit(1);
   }
 
+  const tasks = (await getKey("alphacore_tasks")) ?? [];
   const removed = events.splice(idx, 1)[0];
   await putKey("alphacore_schedule_custom", events);
+  if (removed?.taskId) {
+    await putKey(
+      "alphacore_tasks",
+      tasks.filter((task) => task.id !== removed.taskId),
+    );
+  }
   console.info(`✅ Removed: ${removed.title} (${removed.id})`);
 }
 
@@ -654,7 +688,7 @@ Commands:
   habit check <id>
   habit status
   medical add "name" --category blood --date YYYY-MM-DD --params "Name:Val:Unit:Min:Max,..."
-  schedule add "title" --date YYYY-MM-DD --start HH:MM --end HH:MM [--tone work] [--tags t1,t2]
+  schedule add "title" --date YYYY-MM-DD --start HH:MM --end HH:MM [--tone work] [--tags t1,t2] [--priority p1|p2|p3] [--project name] [--event-only]
   schedule list [--date YYYY-MM-DD]
   schedule remove <id>
   clarification add "answer" --reason definition-of-done|timing|slotting|priority|execution-mode [--task <id>] [--question-id <id>] [--freeform "..."] [--context-hash <hash>] [--context-mode normal|energy-conflict|overloaded]

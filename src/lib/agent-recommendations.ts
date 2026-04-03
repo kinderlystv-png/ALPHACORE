@@ -540,7 +540,17 @@ function buildPlanningContour(input: {
 	tasks: Task[];
 	upcomingSchedule: ScheduleSlot[];
 }): RecommendationPlanningContour {
-	const unslottedTasks = uniqueTasks(input.tasks).map((task) => ({
+	const sortedSchedule = sortSlots(input.upcomingSchedule);
+	const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
+	const linkedTaskIds = new Set(
+		sortedSchedule
+			.filter((slot) => isCustomScheduleSlot(slot) && slot.kind !== "event")
+			.map((slot) => slot.taskId)
+			.filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+	);
+	const unslottedTasks = uniqueTasks(input.tasks)
+		.filter((task) => !linkedTaskIds.has(task.id))
+		.map((task) => ({
 		id: `task-${task.id}`,
 		kind: "task" as const,
 		title: task.title,
@@ -554,10 +564,12 @@ function buildPlanningContour(input: {
 		taskId: task.id,
 		scheduleSlotId: null,
 	}));
-	const sortedSchedule = sortSlots(input.upcomingSchedule);
 	const calendarTasks = sortedSchedule
-		.filter(isCustomScheduleSlot)
-		.map((slot) => ({
+		.filter((slot) => isCustomScheduleSlot(slot) && slot.kind !== "event")
+		.map((slot) => {
+			const linkedTask = slot.taskId ? tasksById.get(slot.taskId) ?? null : null;
+
+			return {
 			id: `calendar-task-${slot.id}`,
 			kind: "calendar-task" as const,
 			title: slot.title,
@@ -565,14 +577,15 @@ function buildPlanningContour(input: {
 			start: slot.start,
 			end: slot.end,
 			tone: slot.tone,
-			priority: null,
-			status: null,
+			priority: linkedTask?.priority ?? null,
+			status: linkedTask?.status ?? null,
 			dueDate: slot.date,
-			taskId: null,
+			taskId: slot.taskId ?? null,
 			scheduleSlotId: slot.id,
-		}));
+			};
+		});
 	const calendarEvents = sortedSchedule
-		.filter((slot) => !isCustomScheduleSlot(slot))
+		.filter((slot) => !isCustomScheduleSlot(slot) || slot.kind === "event")
 		.map((slot) => ({
 			id: `calendar-event-${slot.id}`,
 			kind: "calendar-event" as const,
