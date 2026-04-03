@@ -155,6 +155,19 @@ function sameEdgeCue(
   );
 }
 
+function formatDurationDelta(minutes: number): string {
+  if (minutes === 0) return "±0м";
+  const sign = minutes > 0 ? "+" : "−";
+  const abs = Math.abs(minutes);
+  if (abs % 60 === 0) return `${sign}${abs / 60}ч`;
+  if (abs > 60) {
+    const hours = Math.floor(abs / 60);
+    const rest = abs % 60;
+    return `${sign}${hours}ч ${rest}м`;
+  }
+  return `${sign}${abs}м`;
+}
+
 /* ── Types ── */
 
 type DayColumn = {
@@ -1342,12 +1355,20 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
                     activeEdit.blockingSlot.date === slot.date;
-                  const slotPadding = isEditable ? "px-2 py-2" : "px-2 py-1";
+                  const slotPadding = !isEditable
+                    ? "px-2 py-1"
+                    : height >= 96
+                      ? "px-2 pt-5 pb-5"
+                      : height >= 64
+                        ? "px-2 pt-4 pb-4"
+                        : "px-2 pt-3 pb-3";
+                  const handleButtonSize = height >= 64 ? "h-4 w-10" : "h-3 w-8";
+                  const handlePillSize = height >= 64 ? "h-1 w-7" : "h-0.5 w-5";
 
                   return (
                     <div
                       key={slot.id}
-                      className={`pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-xl border ${slotPadding} ${c.border} ${c.bg} ${
+                      className={`group pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-xl border ${slotPadding} ${c.border} ${c.bg} ${
                         isEditable ? "cursor-grab touch-none" : ""
                       } ${
                         isBlockingSlot
@@ -1375,14 +1396,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить начало"
-                          className="absolute inset-x-2 top-1 z-10 flex h-4 cursor-ns-resize items-start justify-center rounded-full bg-transparent"
+                          className={`absolute left-1/2 top-1 z-10 flex -translate-x-1/2 cursor-ns-resize items-start justify-center rounded-full bg-transparent opacity-45 transition-opacity group-hover:opacity-80 ${handleButtonSize}`}
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-start", e, col.key, slot);
                           }}
                         >
-                          <span className="mt-1 h-1 w-12 rounded-full bg-white/40 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]" />
+                          <span className={`mt-0.5 rounded-full bg-white/30 shadow-[0_0_0_1px_rgba(255,255,255,0.06)] ${handlePillSize}`} />
                         </button>
                       )}
                       <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
@@ -1400,14 +1421,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить конец"
-                          className="absolute inset-x-2 bottom-1 z-10 flex h-4 cursor-ns-resize items-end justify-center rounded-full bg-transparent"
+                          className={`absolute left-1/2 bottom-1 z-10 flex -translate-x-1/2 cursor-ns-resize items-end justify-center rounded-full bg-transparent opacity-45 transition-opacity group-hover:opacity-80 ${handleButtonSize}`}
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-end", e, col.key, slot);
                           }}
                         >
-                          <span className="mb-1 h-1 w-12 rounded-full bg-white/40 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]" />
+                          <span className={`mb-0.5 rounded-full bg-white/30 shadow-[0_0_0_1px_rgba(255,255,255,0.06)] ${handlePillSize}`} />
                         </button>
                       )}
                     </div>
@@ -1691,6 +1712,74 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               </button>
             </div>
           </div>
+        );
+      })()}
+
+      {activeEdit && (() => {
+        const startTop = slotTop(activeEdit.draft.start);
+        const endTop = slotTop(activeEdit.draft.end);
+        const startMin = timeToMinutes(activeEdit.draft.start);
+        const endMin = timeToMinutes(activeEdit.draft.end);
+        const baseDuration = timeToMinutes(activeEdit.base.end) - timeToMinutes(activeEdit.base.start);
+        const draftDuration = endMin - startMin;
+        const durationDelta = draftDuration - baseDuration;
+        const tooltipColor = activeEdit.blocked
+          ? "border-rose-400/60 bg-rose-950/92 text-rose-100"
+          : "border-sky-400/35 bg-zinc-950/92 text-zinc-100";
+        const guideColor = activeEdit.blocked ? "border-rose-400/50" : "border-sky-400/35";
+        const pointerX = activePointerClientRef.current.x;
+        const pointerY = activePointerClientRef.current.y;
+        const tooltipWidth = 176;
+        const tooltipHeight = 72;
+        const viewportW = typeof window !== "undefined" ? window.innerWidth : 0;
+        const viewportH = typeof window !== "undefined" ? window.innerHeight : 0;
+        const tooltipLeft = clamp(pointerX + 18, 12, Math.max(12, viewportW - tooltipWidth - 12));
+        const tooltipTop = clamp(pointerY - tooltipHeight - 12, 12, Math.max(12, viewportH - tooltipHeight - 12));
+        const durationMeta =
+          activeEdit.mode === "resize-start" || activeEdit.mode === "resize-end"
+            ? formatDurationDelta(durationDelta)
+            : activeEdit.draft.date !== activeEdit.base.date
+              ? `→ ${activeEdit.draft.date.slice(5)}`
+              : `${draftDuration}м`;
+
+        return (
+          <>
+            <div className="pointer-events-none fixed z-50" style={{ left: tooltipLeft, top: tooltipTop, width: tooltipWidth }}>
+              <div className={`rounded-2xl border px-3 py-2 shadow-[0_14px_30px_rgba(0,0,0,0.28)] backdrop-blur ${tooltipColor}`}>
+                <p className="text-[11px] font-semibold tracking-[0.02em]">
+                  {activeEdit.draft.start}–{activeEdit.draft.end}
+                </p>
+                <div className="mt-1 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em]">
+                  <span className={activeEdit.blocked ? "text-rose-200" : "text-zinc-400"}>
+                    {activeEdit.mode === "move"
+                      ? "Drag"
+                      : activeEdit.mode === "resize-start"
+                        ? "Resize start"
+                        : activeEdit.mode === "resize-end"
+                          ? "Resize end"
+                          : "Create"}
+                  </span>
+                  <span className={activeEdit.blocked ? "text-rose-200" : "text-sky-300"}>{durationMeta}</span>
+                </div>
+                {activeEdit.blocked && (
+                  <p className="mt-1 truncate text-[10px] text-rose-200">
+                    Конфликт: {activeEdit.blockingSlot?.title ?? "занято"}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute inset-0 z-20" style={{ top: HEADER_H, left: 56, width: "calc(100% - 56px)", height: TOTAL_HOURS * ROW_H }}>
+              {[{ top: startTop, label: activeEdit.draft.start }, { top: endTop, label: activeEdit.draft.end }].map((guide) => (
+                <div key={`${guide.label}-${guide.top}`} className="absolute left-0 right-0" style={{ top: guide.top }}>
+                  <div className={`border-t border-dashed ${guideColor}`} />
+                  <span className={`absolute left-2 top-0 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(0,0,0,0.18)] ${tooltipColor}`}>
+                    {guide.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
         );
       })()}
     </section>
