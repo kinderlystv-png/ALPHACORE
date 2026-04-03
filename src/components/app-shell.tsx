@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { DailyTaskCarryoverBanner } from "@/components/daily-task-carryover";
 import { GlobalSearch } from "@/components/global-search";
@@ -29,8 +30,21 @@ function RailTooltip({ label, shortcut }: { label: string; shortcut?: string }) 
   );
 }
 
+function formatTodayLabel(date: Date): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    weekday: "short",
+    day: "numeric",
+    month: "long",
+  }).format(date);
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [todayLabel, setTodayLabel] = useState("");
+
+  useEffect(() => {
+    setTodayLabel(formatTodayLabel(new Date()));
+  }, []);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-50">
@@ -95,12 +109,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
               <div>
                 <p className="text-sm font-semibold">ALPHACORE</p>
-                <p className="text-xs capitalize text-zinc-500">
-                  {new Intl.DateTimeFormat("ru-RU", {
-                    weekday: "short",
-                    day: "numeric",
-                    month: "long",
-                  }).format(new Date())}
+                <p className="text-xs capitalize text-zinc-500" suppressHydrationWarning>
+                  {todayLabel || " "}
                 </p>
               </div>
             </Link>
