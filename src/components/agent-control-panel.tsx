@@ -5,12 +5,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   AGENT_PROMPT_FEEDBACK_KEY,
+  buildAgentPracticalPlan,
   buildAgentRecommendations,
   buildRecommendationProfile,
   buildRecommendationRuntimeContext,
   getRecommendationFeedbackEvents,
   recordRecommendationFeedback,
   type AgentRecommendation,
+  type AgentPracticalPlan,
   type RecommendationFeedbackEvent,
   type RecommendationRuntimeContext,
   type RecommendationStatus,
@@ -147,6 +149,7 @@ function buildBundleOrchestrationPrompt(recommendations: AgentRecommendation[]):
   return [
     "Ниже — пакет рекомендаций из ALPHACORE.",
     titleLine,
+    "Сначала посмотри на готовый synthesis ниже, потом используй сырые сигналы только чтобы уточнить решение.",
     "Не отвечай на них как на отдельные длинные заметки.",
     "Сначала убери дубли и пересечения, потом собери один практический план.",
     "",
@@ -179,13 +182,53 @@ function buildBundleOrchestrationPrompt(recommendations: AgentRecommendation[]):
     .join("\n");
 }
 
-function buildPromptBundle(recommendations: AgentRecommendation[]): string {
+function buildPracticalPlanSection(plan: AgentPracticalPlan): string {
+  const sections = [
+    "### 0. Практический plan ALPHACORE",
+    ...(plan.mergedThemes.length > 0
+      ? [
+          "Сшитые пересечения:",
+          ...plan.mergedThemes.map((theme) => `- ${theme}`),
+          "",
+        ]
+      : []),
+    "Главное решение сейчас",
+    plan.mainDecision,
+    "",
+    "2 запасных хода",
+    ...plan.backupMoves.map((move) => `- ${move}`),
+    "",
+    ...(plan.review
+      ? ["Короткий review", plan.review, ""]
+      : []),
+    "Критерий done",
+    plan.doneCriterion,
+    "",
+    "Что обновить в ALPHACORE:",
+    `- Tasks: ${plan.updates.task}`,
+    `- Calendar / Schedule: ${plan.updates.schedule}`,
+    `- Journal: ${plan.updates.journal}`,
+  ];
+
+  return sections.join("\n");
+}
+
+function buildPromptBundle(
+  recommendations: AgentRecommendation[],
+  practicalPlan: AgentPracticalPlan | null,
+): string {
   const orchestrationPrompt = buildBundleOrchestrationPrompt(recommendations);
   const promptSections = recommendations
     .map((recommendation, index) => [`### ${index + 1}. ${recommendation.title}`, recommendation.prompt].join("\n"))
     .join("\n\n---\n\n");
 
-  return [orchestrationPrompt, promptSections].join("\n\n---\n\n");
+  return [
+    orchestrationPrompt,
+    practicalPlan ? buildPracticalPlanSection(practicalPlan) : null,
+    promptSections,
+  ]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 }
 
 function RadarWheel({ areas, balanceScore }: { areas: AttentionArea[]; balanceScore: number }) {
@@ -482,6 +525,84 @@ function RecommendationCard({
   );
 }
 
+function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
+  return (
+    <section className="rounded-3xl border border-sky-500/20 bg-linear-to-br from-sky-950/20 via-zinc-950/70 to-zinc-950/90 p-4 shadow-lg shadow-black/10">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-50">🎯 One practical plan</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Сначала одно решение, потом уже сырьё карточек. Этот synthesis также попадает в copy-all bundle.
+          </p>
+        </div>
+
+        {plan.mergedThemes.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-1.5">
+            {plan.mergedThemes.map((theme) => (
+              <span
+                key={theme}
+                className="rounded-full border border-sky-500/15 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-100"
+              >
+                {theme}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
+        <div className="space-y-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-zinc-500">Главное решение сейчас</p>
+            <p className="mt-2 text-sm text-zinc-100">{plan.mainDecision}</p>
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-zinc-500">2 запасных хода</p>
+            <ul className="mt-2 space-y-2 text-sm text-zinc-300">
+              {plan.backupMoves.map((move) => (
+                <li key={move} className="flex gap-2">
+                  <span className="mt-0.5 text-zinc-600">•</span>
+                  <span>{move}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {plan.review && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Короткий review</p>
+              <p className="mt-2 text-sm text-zinc-300">{plan.review}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-4 rounded-3xl border border-zinc-800/70 bg-zinc-950/45 p-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-zinc-500">Критерий done</p>
+            <p className="mt-2 text-sm text-zinc-100">{plan.doneCriterion}</p>
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-zinc-500">Что обновить в ALPHACORE</p>
+            <ul className="mt-2 space-y-2 text-sm text-zinc-300">
+              <li>
+                <span className="text-zinc-500">Tasks:</span> {plan.updates.task}
+              </li>
+              <li>
+                <span className="text-zinc-500">Calendar / Schedule:</span> {plan.updates.schedule}
+              </li>
+              <li>
+                <span className="text-zinc-500">Journal:</span> {plan.updates.journal}
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function AgentControlPanel({
   snapshot,
   onFlash,
@@ -522,6 +643,11 @@ export function AgentControlPanel({
   const recommendations = useMemo(
     () => buildAgentRecommendations(snapshot, feedbackEvents, { runtimeContext }),
     [feedbackEvents, runtimeContext, snapshot],
+  );
+
+  const practicalPlan = useMemo(
+    () => buildAgentPracticalPlan(recommendations, runtimeContext),
+    [recommendations, runtimeContext],
   );
 
   const notify = useCallback((payload: FlashPayload) => {
@@ -572,7 +698,7 @@ export function AgentControlPanel({
     if (recommendations.length === 0) return;
 
     try {
-      await copyText(buildPromptBundle(recommendations));
+      await copyText(buildPromptBundle(recommendations, practicalPlan));
 
       for (const recommendation of recommendations) {
         recordRecommendationFeedback({
@@ -583,14 +709,14 @@ export function AgentControlPanel({
       }
 
       setFeedbackEvents(getRecommendationFeedbackEvents());
-      notify({ tone: "success", text: `Скопирован пакет для агента: ${recommendations.length} prompts + orchestration` });
+      notify({ tone: "success", text: `Скопирован пакет для агента: plan + ${recommendations.length} prompts` });
     } catch {
       notify({
         tone: "info",
         text: "Не удалось скопировать bundle prompts. Попробуй ещё раз или копируй по одному.",
       });
     }
-  }, [notify, recommendations]);
+  }, [notify, practicalPlan, recommendations]);
 
   return (
     <section className="rounded-4xl border border-zinc-800/60 bg-linear-to-br from-zinc-900/50 to-zinc-950/90 p-5 shadow-2xl shadow-black/20 sm:p-6">
@@ -653,6 +779,8 @@ export function AgentControlPanel({
           <LearningProfile feedbackEvents={feedbackEvents} />
         </div>
       </div>
+
+      {practicalPlan && <div className="mt-4"><PracticalPlanCard plan={practicalPlan} /></div>}
 
       {recommendations.length > 0 ? (
         <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">

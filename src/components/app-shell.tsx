@@ -18,7 +18,7 @@ const routes = [
 
 function RailTooltip({ label, shortcut }: { label: string; shortcut?: string }) {
   return (
-    <span className="pointer-events-none absolute left-full top-1/2 ml-3 flex -translate-y-1/2 translate-x-1 items-center gap-2 whitespace-nowrap rounded-xl border border-zinc-700/70 bg-zinc-900/96 px-3 py-2 text-xs font-medium text-zinc-100 opacity-0 shadow-[0_14px_34px_rgba(0,0,0,0.32)] backdrop-blur transition duration-150 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100">
+    <span className="pointer-events-none absolute left-full top-1/2 z-[90] ml-3 flex -translate-y-1/2 translate-x-1 items-center gap-2 whitespace-nowrap rounded-xl border border-zinc-700/70 bg-zinc-900/96 px-3 py-2 text-xs font-medium text-zinc-100 opacity-0 shadow-[0_14px_34px_rgba(0,0,0,0.32)] backdrop-blur transition duration-150 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100">
       <span>{label}</span>
       {shortcut && (
         <span className="rounded-lg border border-zinc-700 bg-zinc-800/90 px-1.5 py-0.5 text-[10px] text-zinc-300">
@@ -34,10 +34,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-50">
-      <div className="mx-auto max-w-7xl lg:grid lg:grid-cols-[88px_minmax(0,1fr)]">
+      <div className="mx-auto max-w-7xl lg:grid lg:grid-cols-[88px_minmax(0,1fr)] lg:overflow-visible">
         {/* ── SIDEBAR (desktop) ── */}
-        <aside className="hidden lg:block">
-          <div className="sticky top-0 flex h-screen flex-col items-center gap-3 border-r border-zinc-800/60 px-3 py-4">
+        <aside className="relative z-40 hidden lg:block">
+          <div className="sticky top-0 flex h-screen flex-col items-center gap-3 overflow-visible border-r border-zinc-800/60 px-3 py-4">
             <nav className="flex w-full flex-col items-center gap-1.5">
               {routes.map((r) => {
                 const active = pathname === r.href;
@@ -46,7 +46,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     key={r.href}
                     href={r.href}
                     aria-label={r.label}
-                    className={`group relative flex h-11 w-11 items-center justify-center rounded-2xl text-lg transition ${
+                    className={`group relative z-0 flex h-11 w-11 items-center justify-center rounded-2xl text-lg transition hover:z-20 focus-within:z-20 ${
                       active
                         ? "bg-zinc-800/80 font-medium text-zinc-50"
                         : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-100"
@@ -68,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   window.dispatchEvent(e);
                 }}
                 aria-label="Поиск"
-                className="group relative flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-800 text-base text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-300"
+                className="group relative z-0 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-800 text-base text-zinc-500 transition hover:z-20 focus-within:z-20 hover:border-zinc-700 hover:text-zinc-300"
               >
                 <span>🔍</span>
                 <RailTooltip label="Поиск" shortcut="⌘K" />
@@ -76,7 +76,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 href="/settings"
                 aria-label="Настройки"
-                className="group relative flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-800 text-base text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-300"
+                className="group relative z-0 flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-800 text-base text-zinc-500 transition hover:z-20 focus-within:z-20 hover:border-zinc-700 hover:text-zinc-300"
               >
                 <span>⚙️</span>
                 <RailTooltip label="Настройки" />
@@ -86,7 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* ── MAIN ── */}
-        <main className="min-h-screen pb-20 lg:pb-6">
+        <main className="relative z-0 min-h-screen pb-20 lg:pb-6">
           {/* Mobile header */}
           <header className="flex items-center justify-between px-4 py-4 lg:hidden">
             <Link href="/" className="flex items-center gap-2.5">

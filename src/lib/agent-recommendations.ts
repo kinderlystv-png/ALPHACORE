@@ -29,6 +29,7 @@ export type RecommendationFeedbackEvent = {
 
 export type AgentRecommendation = {
 	id: string;
+	areaKey: AttentionAreaKey;
 	title: string;
 	context: string;
 	impact: string;
@@ -118,8 +119,22 @@ export type RecommendationRuntimeContext = {
 	};
 };
 
+export type AgentPracticalPlan = {
+	mergedThemes: string[];
+	mainDecision: string;
+	backupMoves: string[];
+	doneCriterion: string;
+	review: string | null;
+	updates: {
+		task: string;
+		schedule: string;
+		journal: string;
+	};
+};
+
 type RecommendationCandidate = {
 	id: string;
+	areaKey: AttentionAreaKey;
 	title: string;
 	context: string;
 	impact: string;
@@ -351,6 +366,70 @@ function formatCleanupLoadBrief(slot: ScheduleSlot): string {
 	const durationHours = Math.round((slotDurationMinutes(slot) / 60) * 10) / 10;
 	const loadLabel = isBetweenPartiesSupportSlot(slot) ? "между праздниками" : "cleanup-load";
 	return `${formatSlotBrief(slot)} · ${loadLabel} · ${durationHours}ч`;
+}
+
+function isPlanningSlot(slot: ScheduleSlot): boolean {
+	return (
+		(slot.tone === "review" || slot.tone === "work" || slot.tone === "kinderly" || slot.tone === "heys") &&
+		!isStudioPressureSlot(slot)
+	);
+}
+
+function pickPlanningSlot(context: RecommendationRuntimeContext): ScheduleSlot | null {
+	const cleanupEnd = context.schedule.today
+		.filter(isCleanupLoadSlot)
+		.reduce((max, slot) => Math.max(max, timeToMinutes(slot.end)), 0);
+
+	const primary = context.schedule.today.find(
+		(slot) => isPlanningSlot(slot) && timeToMinutes(slot.start) >= cleanupEnd,
+	);
+
+	return primary ?? context.schedule.today.find(isPlanningSlot) ?? null;
+}
+
+function pickRecoveryAnchor(
+	context: RecommendationRuntimeContext,
+): { slot: ScheduleSlot; mode: "protect" | "convert" } | null {
+	const overloaded = new Set(context.schedule.overloadedDays.map((day) => day.date));
+	const pickBest = (slots: ScheduleSlot[]): ScheduleSlot | null => {
+		return slots.find((slot) => !overloaded.has(slot.date)) ?? slots[0] ?? null;
+	};
+
+	const personal = pickBest(context.schedule.personal);
+	if (personal) {
+		return { slot: personal, mode: "protect" };
+	}
+
+	const review = pickBest(context.schedule.review);
+	if (review) {
+		return { slot: review, mode: "convert" };
+	}
+
+	return null;
+}
+
+function buildReviewSummary(
+	context: RecommendationRuntimeContext,
+	leadProject: Project | null,
+	leadTask: Task | null,
+): string {
+	const moving = context.schedule.cleanup.length > 0 || context.schedule.studio.length > 0
+		? "расписание и студийная логика уже видны"
+		: context.tasks.actionable.length > 0
+			? "контур задач уже собран"
+			: "контекст дня уже собран";
+	const stuck = leadProject
+		? `${leadProject.name} без одного исполнимого узла`
+		: leadTask
+			? clipText(leadTask.title, 52)
+			: "размазанный фокус по нескольким мелким кускам";
+	const main = leadProject
+		? `сузить ${leadProject.name} до одного следующего шага`
+		: leadTask
+			? `довести до конца ${clipText(leadTask.title, 42)}`
+			: "оставить один главный шаг вместо параллельных намерений";
+
+	return `Движется — ${moving}. Буксует — ${stuck}. Главное — ${main}.`;
 }
 
 function buildHotTags(entries: JournalEntry[]): string[] {
@@ -1002,7 +1081,7 @@ function buildRecoveryRuntimeData(
 					: undefined,
 		context:
 			cleanupToday.length > 0
-				? "Сегодня уже есть cleanup-нагрузка, поэтому recovery нужно защищать, а не добивать дополнительным cardio."
+				? "После cleanup-дня recovery надо бронировать на неделе заранее, а не решать постфактум."
 				: sleepMissing
 				? "Сегодня recovery уже проседает на базовом уровне, а не на уровне красивых намерений."
 				: overloaded.length > 0
@@ -1011,14 +1090,16 @@ function buildRecoveryRuntimeData(
 		impact:
 			missingRecovery.length > 0 || overloaded.length > 0 || !nextPersonal || cleanupToday.length > 0 || cleanupUpcoming.length > 0
 				? cleanupToday.length > 0 || cleanupUpcoming.length > 0
-					? "Попроси агента считать cleanup полноценной нагрузкой и заранее защитить recovery до того, как долг усталости накопится."
+					? "Попроси агента выбрать одно recovery-окно на неделю и использовать cleanup-пики как аргумент для защиты этого окна."
 					: "Попроси агента защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
 				: undefined,
 		promptLines: [
 			missingRecovery.length > 0
 				? `Сегодня не закрыты recovery-сигналы: ${missingRecovery.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
 				: "Ключевые recovery-привычки сегодня уже частично отмечены.",
-			cleanupPriorityLine ?? (nextPersonal
+			cleanupPriorityLine
+				? `${cleanupPriorityLine.replace("Считать это полноценной физической нагрузкой.", "Используй это как аргумент для recovery-окна, а не как повтор отдельного cardio-разговора.")}`
+				: (nextPersonal
 				? `Ближайшее personal-окно: ${formatSlotBrief(nextPersonal)}.`
 				: "Ближайшее personal-окно в расписании не видно."),
 			betweenPartySupport.length > 0
@@ -1030,9 +1111,10 @@ function buildRecoveryRuntimeData(
 					: "Перегруженных дней на горизонте недели не найдено.",
 		],
 		requestLines: [
+			"Найди одно невыбиваемое окно восстановления на неделю и привяжи его к текущему графику.",
 			cleanupToday.length > 0 || cleanupUpcoming.length > 0
-				? "Считать cleanup полноценной нагрузкой: recovery-окно важнее дополнительного cardio, если нет отдельной спортивной задачи."
-				: "Предложи одно невыбиваемое окно восстановления и чем его защитить от срочности.",
+				? "Не дублируй health-блок: cleanup здесь нужен как аргумент для recovery-окна и разгрузки недели, а не как второй разговор про cardio."
+				: "Покажи, чем именно защитить recovery-окно от срочности.",
 			"Если день уже перегружен, покажи что именно лучше не делать.",
 		],
 		signals,
@@ -1176,6 +1258,7 @@ function buildCandidates(
 
 		return {
 			id: priority ? `advice-${priority.id}` : `advice-area-${area.key}`,
+			areaKey: area.key,
 			title: runtimeData?.title ?? priority?.title ?? AREA_GENERIC_TITLE[area.key],
 			context: runtimeData?.context ?? priority?.reason ?? area.insight,
 			impact: runtimeData?.impact ?? priority?.action ?? AREA_GENERIC_IMPACT[area.key],
@@ -1192,6 +1275,121 @@ function buildCandidates(
 				(runtimeData?.weightBoost ?? 0),
 		};
 	});
+}
+
+export function buildAgentPracticalPlan(
+	recommendations: AgentRecommendation[],
+	context: RecommendationRuntimeContext | null | undefined,
+): AgentPracticalPlan | null {
+	if (!context || recommendations.length === 0) return null;
+
+	const areaSet = new Set(recommendations.map((recommendation) => recommendation.areaKey));
+	const leadProject = context.projects.attention[0] ?? null;
+	const leadTask =
+		context.tasks.p1[0] ??
+		context.tasks.overdue[0] ??
+		context.tasks.dueSoon[0] ??
+		context.tasks.unscheduled[0] ??
+		null;
+	const planningSlot = pickPlanningSlot(context);
+	const recoveryAnchor = pickRecoveryAnchor(context);
+	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
+	const energyConflict =
+		cleanupToday.length > 0 ||
+		areaSet.has("health") ||
+		areaSet.has("recovery");
+	const projectTarget = leadProject
+		? `${leadProject.name}: ${clipText(leadProject.nextStep || "зафиксировать один следующий шаг", 78)}`
+		: leadTask
+			? clipText(leadTask.title, 78)
+			: "сузить день до одного следующего шага";
+
+	const mainDecision = energyConflict
+		? planningSlot
+			? `В ${planningSlot.start}–${planningSlot.end} сделать один decision sprint по ${projectTarget}; отдельное cardio сегодня не добавлять.`
+			: `Не добавлять отдельное cardio сегодня и сузить работу до одного planning-узла: ${projectTarget}.`
+		: planningSlot
+			? `В ${planningSlot.start}–${planningSlot.end} развернуть один рабочий узел по ${projectTarget}.`
+			: `Оставить на сегодня один главный узел: ${projectTarget}.`;
+
+	const backupMoves = uniquePromptLines([
+		energyConflict
+			? "Если после cleanup энергии мало — ограничиться task + calendar + journal, без второй рабочей волны."
+			: "Если день схлопнется — оставить только один главный узел и убрать всё второстепенное.",
+		leadProject
+			? `Если появится тихое окно 20–25 минут — сделать только skeleton по ${leadProject.name}, без полировки и новых веток.`
+			: leadTask
+				? `Если появится короткое окно — закрыть только ${clipText(leadTask.title, 46)}, остальное перенести.`
+				: "Если появится короткое окно — использовать его только на одно точечное действие.",
+		recoveryAnchor
+			? recoveryAnchor.mode === "protect"
+				? `Если неделя начнёт съезжать — не трогать ${formatSlotBrief(recoveryAnchor.slot)} и не отдавать его под срочность.`
+				: `Если всё поедет — сначала превратить ${formatSlotBrief(recoveryAnchor.slot)} в recovery-окно, а не в ещё одну рабочую сессию.`
+			: "Если сил не хватает — сначала поставить recovery-окно, потом решать, что делать ещё.",
+	]).slice(0, 2);
+
+	const doneParts = uniquePromptLines([
+		energyConflict ? "отдельного cardio не добавлено" : null,
+		leadProject || leadTask ? "один рабочий узел зафиксирован" : null,
+		recoveryAnchor ? "одно recovery-окно стоит в календаре" : null,
+		areaSet.has("reflection") ? "в Journal есть короткий review" : null,
+	]);
+
+	const mergedThemes = uniquePromptLines([
+		areaSet.has("health") && areaSet.has("recovery")
+			? "Здоровье + восстановление → один энергоконтур без дублирования cardio и recovery-советов."
+			: null,
+		areaSet.has("work") && areaSet.has("reflection")
+			? "Работа + review → короткий decision sprint вместо длинной рефлексии."
+			: null,
+		(context.schedule.cleanup.length > 0 || context.schedule.studio.length > 0) &&
+		(areaSet.has("family") || areaSet.has("operations"))
+			? "Студия + операционка → сначала логистика и буферы, потом всё остальное."
+			: null,
+	]);
+
+	const review = areaSet.has("reflection")
+		? buildReviewSummary(context, leadProject, leadTask)
+		: null;
+
+	const scheduleUpdate = recoveryAnchor
+		? recoveryAnchor.mode === "protect"
+			? `Защитить ${formatSlotBrief(recoveryAnchor.slot)} как recovery без других задач.`
+			: `Перевести ${formatSlotBrief(recoveryAnchor.slot)} в recovery / stretch / walk без рабочих задач.`
+		: planningSlot
+			? `Забронировать ${planningSlot.start}–${planningSlot.end} сегодня под decision sprint без новых параллельных задач.`
+			: "Добавить одно recovery-окно на неделе и не смешивать его с работой.";
+
+	const journalLineParts = uniquePromptLines([
+		energyConflict ? "Сегодня не форсирую отдельное cardio после cleanup." : "Сегодня режу план до одного главного узла.",
+		leadProject
+			? `Центр тяжести: ${leadProject.name} — ${clipText(leadProject.nextStep || "один следующий шаг", 72)}.`
+			: leadTask
+				? `Первое действие: ${clipText(leadTask.title, 72)}.`
+				: null,
+		recoveryAnchor ? `Recovery-окно: ${formatSlotBrief(recoveryAnchor.slot)}.` : null,
+		review,
+	]);
+
+	return {
+		mergedThemes,
+		mainDecision,
+		backupMoves,
+		doneCriterion:
+			doneParts.length > 0
+				? `${doneParts.join(", ")}.`
+				: "Есть один главный шаг, один защищённый recovery-контур и нет параллельного раздувания дня.",
+		review,
+		updates: {
+			task: leadProject
+				? `${leadProject.name} — ${clipText(leadProject.nextStep || "зафиксировать один следующий шаг", 92)}`
+				: leadTask
+					? clipText(leadTask.title, 92)
+					: "Один главный следующий шаг на сегодня",
+			schedule: scheduleUpdate,
+			journal: journalLineParts.join(" "),
+		},
+	};
 }
 
 function buildFeedbackCounts(events: RecommendationFeedbackEvent[]): {
