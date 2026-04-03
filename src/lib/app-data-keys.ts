@@ -5,6 +5,7 @@ export const STORAGE_KEYS = [
   "alphacore_medical",
   "alphacore_projects",
   "alphacore_journal",
+  "alphacore_agent_prompt_feedback",
   "alphacore_pomodoro",
   "alphacore_schedule_custom",
 ] as const;
