@@ -20,15 +20,48 @@ import { compareTasksByAttention, type Task } from "./tasks";
 
 export const AGENT_PROMPT_FEEDBACK_KEY = "alphacore_agent_prompt_feedback";
 
+export type RecommendationFeedbackReason =
+	| "timing-stale"
+	| "wrong-scope"
+	| "energy-mismatch"
+	| "duplicate"
+	| "too-broad";
+
 export type RecommendationFeedbackAction = "copied" | "implemented" | "disliked";
-export type RecommendationStatus = "new" | RecommendationFeedbackAction;
+export type RecommendationStatus = "new" | RecommendationFeedbackAction | "stale";
 export type RecommendationEffort = "S" | "M" | "L";
+
+export const FEEDBACK_REASON_ORDER: RecommendationFeedbackReason[] = [
+	"timing-stale",
+	"wrong-scope",
+	"energy-mismatch",
+	"duplicate",
+	"too-broad",
+];
+
+export const FEEDBACK_REASON_LABEL: Record<RecommendationFeedbackReason, string> = {
+	"timing-stale": "тайминг устарел после сдвига расписания",
+	"wrong-scope": "совет попал не в тот контур",
+	"energy-mismatch": "совет не совпал с реальной энергией дня",
+	duplicate: "совет дублирует уже принятое решение",
+	"too-broad": "совет слишком широкий и размазанный",
+};
+
+export const FEEDBACK_REASON_SHORT_LABEL: Record<RecommendationFeedbackReason, string> = {
+	"timing-stale": "тайминг",
+	"wrong-scope": "scope",
+	"energy-mismatch": "энергия",
+	duplicate: "дубль",
+	"too-broad": "широко",
+};
 
 export type RecommendationFeedbackEvent = {
 	id: string;
 	recommendationId: string;
 	action: RecommendationFeedbackAction;
 	tags: string[];
+	reason?: RecommendationFeedbackReason | null;
+	contextHash?: string | null;
 	createdAt: string;
 };
 
@@ -47,6 +80,9 @@ export type AgentRecommendation = {
 	status: RecommendationStatus;
 	score: number;
 	latestActionAt: string | null;
+	latestReason: RecommendationFeedbackReason | null;
+	staleReason: RecommendationFeedbackReason | null;
+	contextHash: string | null;
 	feedback: {
 		copied: number;
 		implemented: number;
@@ -57,6 +93,10 @@ export type AgentRecommendation = {
 export type RecommendationProfile = {
 	preferredTags: string[];
 	avoidedTags: string[];
+	topDislikeReasons: Array<{
+		reason: RecommendationFeedbackReason;
+		count: number;
+	}>;
 	copiedCount: number;
 	implementedCount: number;
 	dislikedCount: number;
@@ -188,6 +228,11 @@ type RecommendationCandidate = {
 	effort: RecommendationEffort;
 	tags: string[];
 	signals: string[];
+	riskReasons: RecommendationFeedbackReason[];
+	contextHash: string | null;
+	projectTrack: TaskTrack | null;
+	leadTaskTrack: TaskTrack | null;
+	strictScope: "project" | "ops" | null;
 	weight: number;
 };
 
@@ -201,6 +246,11 @@ type CandidateRuntimeData = {
 	requestLines: string[];
 	signals: string[];
 	tags: string[];
+	riskReasons?: RecommendationFeedbackReason[];
+	contextHash?: string | null;
+	projectTrack?: TaskTrack | null;
+	leadTaskTrack?: TaskTrack | null;
+	strictScope?: "project" | "ops" | null;
 	weightBoost: number;
 };
 
@@ -208,6 +258,14 @@ const ACTION_WEIGHTS: Record<RecommendationFeedbackAction, number> = {
 	copied: 1.2,
 	implemented: 3.6,
 	disliked: -4.4,
+};
+
+const REASON_WEIGHTS: Record<RecommendationFeedbackReason, number> = {
+	"timing-stale": -4.8,
+	"wrong-scope": -5.2,
+	"energy-mismatch": -4.4,
+	duplicate: -3.8,
+	"too-broad": -3.4,
 };
 
 const BASE_WEIGHT: Record<AttentionLevel, number> = {
@@ -310,6 +368,15 @@ function clipText(text: string, max = 96): string {
 	const clean = text.replace(/\s+/g, " ").trim();
 	if (clean.length <= max) return clean;
 	return `${clean.slice(0, max - 1).trimEnd()}…`;
+}
+
+function buildContextHash(parts: Array<string | null | undefined>): string | null {
+	const normalized = parts
+		.map((part) => part?.trim())
+		.filter(Boolean) as string[];
+
+	if (normalized.length === 0) return null;
+	return normalized.join("|");
 }
 
 function normalizePromptLine(line: string): string {
@@ -426,6 +493,26 @@ function formatTaskWindowSuggestion(window: TaskWindowSuggestion): string {
 	return `${formatDateKeyRu(window.date)} ${window.start}–${window.end} → ${tasks}`;
 }
 
+function filterTaskWindowSuggestionsByTaskIds(
+	suggestions: TaskWindowSuggestion[],
+	taskIds: Set<string>,
+): TaskWindowSuggestion[] {
+	if (taskIds.size === 0) return [];
+
+	return suggestions
+		.map((window) => {
+			const assignments = window.assignments.filter((assignment) => taskIds.has(assignment.taskId));
+			const usedMinutes = assignments.reduce((sum, assignment) => sum + assignment.minutes, 0);
+
+			return {
+				...window,
+				assignments,
+				remainingMinutes: window.remainingMinutes + (window.assignments.length > 0 ? window.assignments.reduce((sum, assignment) => sum + assignment.minutes, 0) - usedMinutes : 0),
+			};
+		})
+		.filter((window) => window.assignments.length > 0);
+}
+
 function normalizeKeywordStems(text: string): string[] {
 	return [...new Set(
 		text
@@ -523,12 +610,12 @@ function estimateTaskMinutes(task: Task): number {
 function getTaskTrack(task: Task): TaskTrack {
 	const haystack = `${task.projectId ?? ""} ${task.project ?? ""} ${task.title}`.toLowerCase();
 
-	if (/heys/u.test(haystack)) return "heys";
 	if (/minecraft|\bдр\b|день рождения|квест|реквизит/u.test(haystack)) return "birthday";
-	if (/kinderly|студи|праздник/u.test(haystack)) return "kinderly";
 	if (/купить|заказать|позвонить|написать|операц|follow-up|хвост|check|швабр|тряпк/u.test(haystack)) {
 		return "ops";
 	}
+	if (/heys/u.test(haystack)) return "heys";
+	if (/kinderly|студи|праздник/u.test(haystack)) return "kinderly";
 
 	return "general";
 }
@@ -558,6 +645,10 @@ function getWindowTracks(slot: ScheduleSlot): TaskTrack[] {
 	}
 
 	return ["general"];
+}
+
+function isProtectedRecoverySlot(slot: ScheduleSlot): boolean {
+	return isTrueRecoverySlot(slot) && slot.tags.includes("protected");
 }
 
 function scoreTaskForWindow(
@@ -818,6 +909,21 @@ function pickRecoveryAnchor(
 		return slots.find((slot) => !overloaded.has(slot.date)) ?? slots[0] ?? null;
 	};
 
+	const protectedExisting = pickBest(
+		context.schedule.all.filter(
+			(slot) => isProtectedRecoverySlot(slot) && slotDurationMinutes(slot) >= 45,
+		),
+	);
+	if (protectedExisting) {
+		return {
+			date: protectedExisting.date,
+			start: protectedExisting.start,
+			end: protectedExisting.end,
+			label: protectedExisting.title,
+			mode: "protect",
+		};
+	}
+
 	const calmExisting = pickBest(
 		context.schedule.all.filter(
 			(slot) => isTrueRecoverySlot(slot) && slotDurationMinutes(slot) >= 45,
@@ -935,6 +1041,8 @@ function isFeedbackEvent(value: unknown): value is RecommendationFeedbackEvent {
 		(candidate.action === "copied" ||
 			candidate.action === "implemented" ||
 			candidate.action === "disliked") &&
+		(candidate.reason == null || FEEDBACK_REASON_ORDER.includes(candidate.reason)) &&
+		(candidate.contextHash == null || typeof candidate.contextHash === "string") &&
 		Array.isArray(candidate.tags)
 	);
 }
@@ -952,12 +1060,16 @@ export function recordRecommendationFeedback(input: {
 	recommendationId: string;
 	action: RecommendationFeedbackAction;
 	tags: string[];
+	reason?: RecommendationFeedbackReason | null;
+	contextHash?: string | null;
 }): RecommendationFeedbackEvent {
 	const event: RecommendationFeedbackEvent = {
 		id: uid(),
 		recommendationId: input.recommendationId,
 		action: input.action,
 		tags: [...new Set(input.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))],
+		reason: input.reason ?? null,
+		contextHash: input.contextHash ?? null,
 		createdAt: nowIso(),
 	};
 
@@ -1088,29 +1200,34 @@ function buildWorkRuntimeData(
 ): CandidateRuntimeData {
 	const leadProject = context.projects.attention[0] ?? null;
 	const energyConstrained = context.schedule.today.some(isCleanupLoadSlot);
-	const taskWindows = context.tasks.distribution.suggestions.slice(0, 3);
-	const overflowTasks = context.tasks.distribution.overflowTasks.slice(0, 2);
+	const planningSlot = pickPlanningSlot(context);
 	const preferredTrack = leadProject ? getProjectTrack(leadProject) : null;
 	const alignedTasks = preferredTrack
 		? context.tasks.actionable.filter((task) => getTaskTrack(task) === preferredTrack)
 		: [];
 	const leadTask =
-		alignedTasks[0] ??
+		(leadProject ? alignedTasks[0] : null) ??
 		context.tasks.p1[0] ??
 		context.tasks.overdue[0] ??
 		context.tasks.dueSoon[0] ??
 		context.tasks.unscheduled[0] ??
 		null;
-	const queue = (
-		alignedTasks.length > 0
-			? alignedTasks
-			: uniqueTasks([
-					...context.tasks.p1,
-					...context.tasks.overdue,
-					...context.tasks.dueSoon,
-					...context.tasks.unscheduled,
-			  ])
+	const queue = (leadProject
+		? alignedTasks
+		: uniqueTasks([
+				...context.tasks.p1,
+				...context.tasks.overdue,
+				...context.tasks.dueSoon,
+				...context.tasks.unscheduled,
+		  ])).slice(0, 3);
+	const workTaskIds = new Set(queue.map((task) => task.id));
+	const taskWindows = filterTaskWindowSuggestionsByTaskIds(
+		context.tasks.distribution.suggestions,
+		workTaskIds,
 	).slice(0, 3);
+	const overflowTasks = context.tasks.distribution.overflowTasks
+		.filter((task) => !leadProject || getTaskTrack(task) === preferredTrack)
+		.slice(0, 2);
 	const signals: string[] = [];
 
 	if (leadProject) {
@@ -1185,6 +1302,23 @@ function buildWorkRuntimeData(
 			leadTask?.dueDate ? "deadline" : null,
 			context.tasks.overdue.length > 0 ? "overdue" : null,
 		].filter(Boolean) as string[],
+		riskReasons: [
+			planningSlot ? "timing-stale" : null,
+			energyConstrained ? "energy-mismatch" : null,
+			queue.length > 1 ? "too-broad" : null,
+		].filter(Boolean) as RecommendationFeedbackReason[],
+		contextHash: buildContextHash([
+			leadProject?.id ?? null,
+			leadTask?.id ?? null,
+			planningSlot ? `${planningSlot.date}:${planningSlot.start}-${planningSlot.end}` : null,
+			context.schedule.today
+				.filter(isCleanupLoadSlot)
+				.map((slot) => `${slot.id}:${slot.start}-${slot.end}`)
+				.join("|"),
+		]),
+		projectTrack: preferredTrack,
+		leadTaskTrack: leadTask ? getTaskTrack(leadTask) : null,
+		strictScope: leadProject ? "project" : null,
 		weightBoost:
 			context.tasks.overdue.length * 5 +
 			context.tasks.p1.length * 4 +
@@ -1385,12 +1519,22 @@ function buildFamilyRuntimeData(
 function buildOperationsRuntimeData(
 	context: RecommendationRuntimeContext,
 ): CandidateRuntimeData {
-	const overdue = context.tasks.overdue.slice(0, 3);
-	const dueSoon = context.tasks.dueSoon.slice(0, 2);
-	const unscheduled = context.tasks.unscheduled.slice(0, 2);
+	const opsTasks = context.tasks.actionable.filter((task) => getTaskTrack(task) === "ops");
+	const overdue = opsTasks.filter((task) => !!task.dueDate && task.dueDate < context.today).slice(0, 3);
+	const dueSoonLimit = shiftDate(context.today, 3);
+	const dueSoon = opsTasks
+		.filter((task) => !!task.dueDate && task.dueDate >= context.today && task.dueDate <= dueSoonLimit)
+		.slice(0, 2);
+	const unscheduled = opsTasks.filter((task) => !task.dueDate).slice(0, 3);
 	const cleanup = context.schedule.cleanup[0] ?? null;
-	const taskWindows = context.tasks.distribution.suggestions.slice(0, 3);
-	const overflowTasks = context.tasks.distribution.overflowTasks.slice(0, 3);
+	const opsTaskIds = new Set(opsTasks.map((task) => task.id));
+	const taskWindows = filterTaskWindowSuggestionsByTaskIds(
+		context.tasks.distribution.suggestions,
+		opsTaskIds,
+	).slice(0, 3);
+	const overflowTasks = context.tasks.distribution.overflowTasks
+		.filter((task) => getTaskTrack(task) === "ops")
+		.slice(0, 3);
 	const signals: string[] = [];
 
 	if (overdue.length > 0) {
@@ -1464,8 +1608,20 @@ function buildOperationsRuntimeData(
 			unscheduled.length > 0 ? "unscheduled" : null,
 			cleanup ? "cleanup" : null,
 		].filter(Boolean) as string[],
+		riskReasons: [
+			cleanup ? "energy-mismatch" : null,
+			opsTasks.length > 3 ? "too-broad" : null,
+		].filter(Boolean) as RecommendationFeedbackReason[],
+		contextHash: buildContextHash([
+			opsTasks.map((task) => task.id).join(","),
+			cleanup ? `${cleanup.id}:${cleanup.start}-${cleanup.end}` : null,
+			taskWindows.map((window) => `${window.date}:${window.start}-${window.end}`).join("|"),
+		]),
+		projectTrack: null,
+		leadTaskTrack: opsTasks[0] ? getTaskTrack(opsTasks[0]) : null,
+		strictScope: "ops",
 		weightBoost:
-			context.tasks.overdue.length * 7 +
+			overdue.length * 7 +
 			unscheduled.length * 3 +
 			(cleanup ? 4 : 0),
 	};
@@ -1534,8 +1690,10 @@ function buildRecoveryRuntimeData(
 	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
 	const cleanupUpcoming = context.schedule.cleanup.slice(0, 2);
 	const betweenPartySupport = cleanupUpcoming.filter(isBetweenPartiesSupportSlot);
+	const protectedRecovery = context.schedule.all.find(isProtectedRecoverySlot) ?? null;
 	const nextRecoverySlot = context.schedule.all.find(isTrueRecoverySlot) ?? null;
 	const overloaded = context.schedule.overloadedDays.slice(0, 2);
+	const recoveryAnchor = pickRecoveryAnchor(context);
 	const signals: string[] = [];
 
 	if (missingRecovery.length > 0) {
@@ -1568,6 +1726,10 @@ function buildRecoveryRuntimeData(
 		signals.push(`Ближайшее recovery-окно: ${formatSlotBrief(nextRecoverySlot)}`);
 	}
 
+	if (protectedRecovery) {
+		signals.push(`Recovery уже защищён: ${formatSlotBrief(protectedRecovery)}`);
+	}
+
 	const cleanupPriorityLine = cleanupToday.length > 0 || cleanupUpcoming.length > 0
 		? `Cleanup-нагрузка: ${(cleanupToday.length > 0 ? cleanupToday : cleanupUpcoming)
 			.map((slot) => formatCleanupLoadBrief(slot))
@@ -1576,13 +1738,17 @@ function buildRecoveryRuntimeData(
 
 	return {
 		title:
-			overloaded.length > 0
+			protectedRecovery
+				? "Не трогать recovery-якорь недели"
+				: overloaded.length > 0
 				? "Выбить окно восстановления в плотной неделе"
 				: sleepMissing
 					? "Не отдать recovery случайной срочности"
 					: undefined,
 		context:
-			cleanupToday.length > 0
+			protectedRecovery
+				? "Recovery-окно уже стоит в календаре — теперь задача не создать новое, а не дать срочности его съесть."
+				: cleanupToday.length > 0
 				? "После cleanup-дня recovery надо бронировать на неделе заранее, а не решать постфактум."
 				: sleepMissing
 				? "Сегодня recovery уже проседает на базовом уровне, а не на уровне красивых намерений."
@@ -1590,7 +1756,9 @@ function buildRecoveryRuntimeData(
 					? "Неделя уже местами перегрета — окно отдыха нужно поставить сейчас."
 					: undefined,
 		impact:
-			missingRecovery.length > 0 || overloaded.length > 0 || !nextRecoverySlot || cleanupToday.length > 0 || cleanupUpcoming.length > 0
+			protectedRecovery
+				? "Попроси агента защищать уже поставленное recovery-окно и не отдавать его под срочные хвосты."
+				: missingRecovery.length > 0 || overloaded.length > 0 || !nextRecoverySlot || cleanupToday.length > 0 || cleanupUpcoming.length > 0
 				? cleanupToday.length > 0 || cleanupUpcoming.length > 0
 					? "Попроси агента выбрать одно recovery-окно на неделю и использовать cleanup-пики как аргумент для защиты этого окна."
 					: "Попроси агента защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
@@ -1613,7 +1781,9 @@ function buildRecoveryRuntimeData(
 					: "Перегруженных дней на горизонте недели не найдено.",
 		],
 		requestLines: [
-			"Найди одно невыбиваемое окно восстановления на неделю и привяжи его к текущему графику.",
+			protectedRecovery
+				? "Не предлагай новое recovery-окно поверх существующего: сначала защити уже зафиксированный слот."
+				: "Найди одно невыбиваемое окно восстановления на неделю и привяжи его к текущему графику.",
 			cleanupToday.length > 0 || cleanupUpcoming.length > 0
 				? "Не дублируй health-блок: cleanup здесь нужен как аргумент для recovery-окна и разгрузки недели, а не как второй разговор про cardio."
 				: "Покажи, чем именно защитить recovery-окно от срочности.",
@@ -1625,14 +1795,30 @@ function buildRecoveryRuntimeData(
 			overloaded.length > 0 ? "overload" : null,
 			cleanupToday.length > 0 || cleanupUpcoming.length > 0 ? "cleanup-load" : null,
 			betweenPartySupport.length > 0 ? "between-parties" : null,
+			protectedRecovery ? "protected-anchor" : null,
 			nextRecoverySlot ? "scheduled-recovery" : "missing-recovery",
 		].filter(Boolean) as string[],
+		riskReasons: [
+			recoveryAnchor ? "timing-stale" : null,
+			protectedRecovery ? "duplicate" : null,
+			cleanupToday.length > 0 ? "energy-mismatch" : null,
+		].filter(Boolean) as RecommendationFeedbackReason[],
+		contextHash: buildContextHash([
+			recoveryAnchor ? `${recoveryAnchor.date}:${recoveryAnchor.start}-${recoveryAnchor.end}:${recoveryAnchor.mode}` : null,
+			protectedRecovery ? `${protectedRecovery.id}:${protectedRecovery.start}-${protectedRecovery.end}` : null,
+			cleanupUpcoming.map((slot) => `${slot.id}:${slot.start}-${slot.end}`).join("|"),
+			overloaded.map((day) => `${day.date}:${Math.round(day.load)}`).join("|"),
+		]),
+		projectTrack: null,
+		leadTaskTrack: null,
+		strictScope: null,
 		weightBoost:
 			(sleepMissing ? 8 : 0) +
 			overloaded.length * 6 +
 			cleanupUpcoming.length * 5 +
 			betweenPartySupport.length * 4 +
-			(nextRecoverySlot ? 0 : 6),
+			(nextRecoverySlot ? 0 : 6) +
+			(protectedRecovery ? -6 : 0),
 	};
 }
 
@@ -1659,6 +1845,11 @@ function buildCandidateRuntimeData(
 				signals: [],
 				promptLines: [],
 				requestLines: [],
+				riskReasons: [],
+				contextHash: null,
+				projectTrack: null,
+				leadTaskTrack: null,
+				strictScope: null,
 				weightBoost: 0,
 			};
 	}
@@ -1772,6 +1963,11 @@ function buildCandidates(
 			effort: AREA_EFFORT[area.key],
 			tags: [...new Set([...baseTags, ...(runtimeData?.tags ?? [])])],
 			signals: runtimeData?.signals.slice(0, 3) ?? [],
+			riskReasons: runtimeData?.riskReasons ?? [],
+			contextHash: runtimeData?.contextHash ?? null,
+			projectTrack: runtimeData?.projectTrack ?? null,
+			leadTaskTrack: runtimeData?.leadTaskTrack ?? null,
+			strictScope: runtimeData?.strictScope ?? null,
 			weight:
 				BASE_WEIGHT[priority?.level ?? area.level] +
 				Math.max(0, Math.round((100 - area.score) / 3)) +
@@ -1923,6 +2119,16 @@ function buildFeedbackCounts(events: RecommendationFeedbackEvent[]): {
 	);
 }
 
+function buildReasonCounts(
+	events: RecommendationFeedbackEvent[],
+): Partial<Record<RecommendationFeedbackReason, number>> {
+	return events.reduce((acc, event) => {
+		if (!event.reason) return acc;
+		acc[event.reason] = (acc[event.reason] ?? 0) + 1;
+		return acc;
+	}, {} as Partial<Record<RecommendationFeedbackReason, number>>);
+}
+
 function buildTagScores(events: RecommendationFeedbackEvent[]): Map<string, number> {
 	const scores = new Map<string, number>();
 
@@ -1937,11 +2143,62 @@ function buildTagScores(events: RecommendationFeedbackEvent[]): Map<string, numb
 	return scores;
 }
 
+function buildReasonScores(events: RecommendationFeedbackEvent[]): Map<RecommendationFeedbackReason, number> {
+	const scores = new Map<RecommendationFeedbackReason, number>();
+
+	for (const event of events) {
+		if (!event.reason) continue;
+
+		const baseWeight = REASON_WEIGHTS[event.reason] ?? 0;
+		const weight = (event.action === "disliked" ? baseWeight : Math.abs(baseWeight) * 0.25) * decay(event.createdAt);
+		scores.set(event.reason, (scores.get(event.reason) ?? 0) + weight);
+	}
+
+	return scores;
+}
+
+function getCoherenceBlockReason(
+	candidate: RecommendationCandidate,
+): RecommendationFeedbackReason | null {
+	if (candidate.strictScope === "project") {
+		if (
+			candidate.projectTrack &&
+			candidate.leadTaskTrack &&
+			candidate.projectTrack !== candidate.leadTaskTrack
+		) {
+			return "wrong-scope";
+		}
+	}
+
+	if (candidate.strictScope === "ops") {
+		if (candidate.leadTaskTrack && candidate.leadTaskTrack !== "ops") {
+			return "wrong-scope";
+		}
+	}
+
+	return null;
+}
+
+function getAutomaticStaleReason(
+	candidate: RecommendationCandidate,
+	latest: RecommendationFeedbackEvent | null,
+): RecommendationFeedbackReason | null {
+	if (!latest || latest.action !== "copied") return null;
+	if (!latest.contextHash || !candidate.contextHash) return null;
+	if (latest.contextHash === candidate.contextHash) return null;
+
+	if (candidate.riskReasons.includes("timing-stale")) return "timing-stale";
+	if (candidate.riskReasons.includes("energy-mismatch")) return "energy-mismatch";
+
+	return null;
+}
+
 export function buildRecommendationProfile(
 	feedbackEvents: RecommendationFeedbackEvent[],
 ): RecommendationProfile {
 	const counts = buildFeedbackCounts(feedbackEvents);
 	const scores = buildTagScores(feedbackEvents);
+	const reasonCounts = buildReasonCounts(feedbackEvents);
 	const entries = [...scores.entries()].sort((a, b) => b[1] - a[1]);
 
 	return {
@@ -1954,6 +2211,11 @@ export function buildRecommendationProfile(
 			.filter(([, score]) => score < -0.85)
 			.slice(0, 3)
 			.map(([tag]) => tag),
+		topDislikeReasons: FEEDBACK_REASON_ORDER
+			.map((reason) => ({ reason, count: reasonCounts[reason] ?? 0 }))
+			.filter((item) => item.count > 0)
+			.sort((left, right) => right.count - left.count)
+			.slice(0, 3),
 		copiedCount: counts.copied,
 		implementedCount: counts.implemented,
 		dislikedCount: counts.disliked,
@@ -1971,9 +2233,12 @@ export function buildAgentRecommendations(
 	const limit = options?.limit ?? 3;
 	const candidates = buildCandidates(snapshot, options?.runtimeContext ?? null);
 	const tagScores = buildTagScores(feedbackEvents);
+	const reasonScores = buildReasonScores(feedbackEvents);
 
 	return candidates
 		.filter((candidate) => {
+			if (getCoherenceBlockReason(candidate)) return false;
+
 			const latest = [...feedbackEvents]
 				.reverse()
 				.find((event) => event.recommendationId === candidate.id);
@@ -1990,6 +2255,7 @@ export function buildAgentRecommendations(
 				(event) => event.recommendationId === candidate.id,
 			);
 			const latest = directEvents[directEvents.length - 1] ?? null;
+			const staleReason = getAutomaticStaleReason(candidate, latest);
 			const directScore = directEvents.reduce((sum, event) => {
 				return sum + ACTION_WEIGHTS[event.action] * decay(event.createdAt);
 			}, 0);
@@ -1998,15 +2264,26 @@ export function buildAgentRecommendations(
 				0,
 			);
 			const counts = buildFeedbackCounts(directEvents);
+			const reasonAffinity = candidate.riskReasons.reduce(
+				(sum, reason) => sum + (reasonScores.get(reason) ?? 0),
+				0,
+			);
 
 			return {
 				...candidate,
 				status:
-					latest && daysSince(latest.createdAt) <= 21 ? latest.action : "new",
+					staleReason
+						? "stale"
+						: latest && daysSince(latest.createdAt) <= 21
+							? latest.action
+							: "new",
 				score:
-					Math.round((candidate.weight + directScore * 6 + tagAffinity * 4) * 10) /
+					Math.round((candidate.weight + directScore * 6 + tagAffinity * 4 + reasonAffinity * 4 + (staleReason ? -18 : 0)) * 10) /
 					10,
 				latestActionAt: latest?.createdAt ?? null,
+				latestReason: latest?.reason ?? null,
+				staleReason,
+				contextHash: candidate.contextHash,
 				feedback: counts,
 			} satisfies AgentRecommendation;
 		})

@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  FEEDBACK_REASON_LABEL,
+  FEEDBACK_REASON_ORDER,
+  FEEDBACK_REASON_SHORT_LABEL,
   AGENT_PROMPT_FEEDBACK_KEY,
   buildAgentPracticalPlan,
   buildAgentRecommendations,
@@ -14,6 +17,7 @@ import {
   type AgentRecommendation,
   type AgentPracticalPlan,
   type RecommendationFeedbackEvent,
+  type RecommendationFeedbackReason,
   type RecommendationRuntimeContext,
   type RecommendationStatus,
 } from "@/lib/agent-recommendations";
@@ -53,6 +57,7 @@ const STATUS_LABEL: Record<RecommendationStatus, string> = {
   copied: "скопировано",
   implemented: "реализовано",
   disliked: "скрыто",
+  stale: "устарело",
 };
 
 const STATUS_CLS: Record<RecommendationStatus, string> = {
@@ -60,6 +65,7 @@ const STATUS_CLS: Record<RecommendationStatus, string> = {
   copied: "border-sky-500/20 bg-sky-500/10 text-sky-200",
   implemented: "border-emerald-500/20 bg-emerald-500/10 text-emerald-200",
   disliked: "border-zinc-800 bg-zinc-950/60 text-zinc-500",
+  stale: "border-amber-500/20 bg-amber-500/10 text-amber-100",
 };
 
 type FlashPayload = {
@@ -175,7 +181,7 @@ function buildBundleOrchestrationPrompt(recommendations: AgentRecommendation[]):
     "- без 10 равновесных советов;",
     "- если видишь конфликт между задачами и энергией — режь план, а не раздувай его;",
     "- если идея из пакета реально внедрена — после этого отметь карточку как «Уже реализовано»;",
-    "- если совет не подошёл или сознательно отвергнут — поставь «Дизлайк»;",
+    "- если совет не подошёл или сознательно отвергнут — поставь «Дизлайк» с причиной: timing-stale / wrong-scope / energy-mismatch / duplicate / too-broad;",
     "- не оставляй сильные сигналы нейтральными: иначе ALPHACORE хуже учится семантике;",
     "- ответ должен помогать действовать сегодня, а не просто красиво анализировать ситуацию.",
     "",
@@ -437,6 +443,25 @@ function LearningProfile({ feedbackEvents }: { feedbackEvents: RecommendationFee
             )}
           </div>
         </div>
+
+        <div className="md:col-span-2">
+          <p className="text-[10px] uppercase tracking-widest text-zinc-600">Почему советы чаще мимо</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {profile.topDislikeReasons.length > 0 ? (
+              profile.topDislikeReasons.map(({ reason, count }) => (
+                <span
+                  key={reason}
+                  className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-100"
+                  title={FEEDBACK_REASON_LABEL[reason]}
+                >
+                  {FEEDBACK_REASON_SHORT_LABEL[reason]} · {count}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-zinc-500">Пока мало reason-coded сигнала.</span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -445,13 +470,17 @@ function LearningProfile({ feedbackEvents }: { feedbackEvents: RecommendationFee
 function RecommendationCard({
   recommendation,
   onCopy,
-  onDislike,
+  onOpenReasonPicker,
+  onDislikeWithReason,
   onImplemented,
+  reasonPickerOpen,
 }: {
   recommendation: AgentRecommendation;
   onCopy: (recommendation: AgentRecommendation) => void;
-  onDislike: (recommendation: AgentRecommendation) => void;
+  onOpenReasonPicker: (recommendation: AgentRecommendation) => void;
+  onDislikeWithReason: (recommendation: AgentRecommendation, reason: RecommendationFeedbackReason) => void;
   onImplemented: (recommendation: AgentRecommendation) => void;
+  reasonPickerOpen: boolean;
 }) {
   return (
     <article className={`flex h-full flex-col rounded-3xl border p-4 shadow-lg shadow-black/10 ${LEVEL_CARD_CLS[recommendation.level]}`}>
@@ -472,6 +501,12 @@ function RecommendationCard({
       </div>
 
       <p className="mt-3 text-sm text-zinc-200">{recommendation.impact}</p>
+
+      {recommendation.staleReason && (
+        <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          Авто-stale: {FEEDBACK_REASON_LABEL[recommendation.staleReason]}.
+        </div>
+      )}
 
       {recommendation.signals.length > 0 && (
         <ul className="mt-3 space-y-1.5 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3 text-xs text-zinc-300">
@@ -512,10 +547,10 @@ function RecommendationCard({
         </button>
         <button
           type="button"
-          onClick={() => onDislike(recommendation)}
+          onClick={() => onOpenReasonPicker(recommendation)}
           className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
         >
-          Дизлайк
+          Почему мимо…
         </button>
         <button
           type="button"
@@ -526,6 +561,22 @@ function RecommendationCard({
         </button>
       </div>
 
+      {reasonPickerOpen && (
+        <div className="mt-3 flex flex-wrap gap-1.5 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
+          {FEEDBACK_REASON_ORDER.map((reason) => (
+            <button
+              key={reason}
+              type="button"
+              onClick={() => onDislikeWithReason(recommendation, reason)}
+              className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] text-amber-100 transition hover:border-amber-400/40"
+              title={FEEDBACK_REASON_LABEL[reason]}
+            >
+              {FEEDBACK_REASON_SHORT_LABEL[reason]}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="mt-auto flex items-center justify-between gap-3 pt-3 text-[10px] text-zinc-500">
         <span>
           copy {recommendation.feedback.copied} · impl {recommendation.feedback.implemented} · dislike {recommendation.feedback.disliked}
@@ -534,6 +585,14 @@ function RecommendationCard({
           открыть источник →
         </Link>
       </div>
+
+      {(recommendation.latestReason || recommendation.staleReason) && (
+        <p className="mt-2 text-[10px] text-zinc-500">
+          {recommendation.latestReason
+            ? `Последняя причина: ${FEEDBACK_REASON_LABEL[recommendation.latestReason]}`
+            : `Stale-сигнал: ${FEEDBACK_REASON_LABEL[recommendation.staleReason!]}`}
+        </p>
+      )}
     </article>
   );
 }
@@ -646,6 +705,7 @@ export function AgentControlPanel({
   const [feedbackEvents, setFeedbackEvents] = useState<RecommendationFeedbackEvent[]>([]);
   const [runtimeContext, setRuntimeContext] = useState<RecommendationRuntimeContext | null>(null);
   const [inlineFlash, setInlineFlash] = useState<FlashPayload | null>(null);
+  const [reasonPickerId, setReasonPickerId] = useState<string | null>(null);
 
   const refreshRuntimeContext = useCallback(() => {
     setRuntimeContext(loadRuntimeContext());
@@ -692,14 +752,21 @@ export function AgentControlPanel({
     setInlineFlash(payload);
   }, [onFlash]);
 
-  const commitFeedback = useCallback((recommendation: AgentRecommendation, action: "copied" | "implemented" | "disliked") => {
+  const commitFeedback = useCallback((
+    recommendation: AgentRecommendation,
+    action: "copied" | "implemented" | "disliked",
+    reason?: RecommendationFeedbackReason,
+  ) => {
     recordRecommendationFeedback({
       recommendationId: recommendation.id,
       action,
       tags: recommendation.tags,
+      reason: reason ?? null,
+      contextHash: recommendation.contextHash,
     });
 
     setFeedbackEvents(getRecommendationFeedbackEvents());
+    setReasonPickerId(null);
 
     if (action === "copied") {
       notify({ tone: "success", text: `Prompt скопирован: ${recommendation.title}` });
@@ -711,7 +778,7 @@ export function AgentControlPanel({
       text:
         action === "implemented"
           ? `Отмечено как реализованное: ${recommendation.title}`
-          : `Скрыто из активных советов: ${recommendation.title}`,
+          : `Скрыто из активных советов: ${recommendation.title}${reason ? ` · ${FEEDBACK_REASON_SHORT_LABEL[reason]}` : ""}`,
     });
   }, [notify]);
 
@@ -738,6 +805,7 @@ export function AgentControlPanel({
           recommendationId: recommendation.id,
           action: "copied",
           tags: recommendation.tags,
+          contextHash: recommendation.contextHash,
         });
       }
 
@@ -822,8 +890,10 @@ export function AgentControlPanel({
               key={recommendation.id}
               recommendation={recommendation}
               onCopy={handleCopy}
-              onDislike={(item) => commitFeedback(item, "disliked")}
+              onOpenReasonPicker={(item) => setReasonPickerId((current) => current === item.id ? null : item.id)}
+              onDislikeWithReason={(item, reason) => commitFeedback(item, "disliked", reason)}
               onImplemented={(item) => commitFeedback(item, "implemented")}
+              reasonPickerOpen={reasonPickerId === recommendation.id}
             />
           ))}
         </div>

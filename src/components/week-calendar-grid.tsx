@@ -415,7 +415,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
       if (!responsiveInitRef.current) {
         responsiveInitRef.current = true;
-        setViewMode(width < 960 ? "compact" : "full");
+        setViewMode("full");
       }
     };
 
