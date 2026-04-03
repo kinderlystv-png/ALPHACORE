@@ -181,17 +181,21 @@ function compareLaneRenderable(left: LaneRenderable, right: LaneRenderable): num
   );
 }
 
+function getSupportLaneWidth(columnWidth: number): number {
+  return clamp(
+    columnWidth * SUPPORT_LANE_RATIO,
+    42,
+    Math.max(42, columnWidth - 52),
+  );
+}
+
 function getLaneMetrics(
   slot: LaneRenderable,
   daySlots: LaneRenderable[],
   columnWidth: number,
 ): LaneMetrics {
   const contentWidth = Math.max(columnWidth - SLOT_SIDE_INSET_PX * 2, 24);
-  const supportWidth = clamp(
-    columnWidth * SUPPORT_LANE_RATIO,
-    42,
-    Math.max(42, columnWidth - 52),
-  );
+  const supportWidth = getSupportLaneWidth(columnWidth);
 
   if (isSupportLaneSlot(slot)) {
     const overlapGroup = daySlots
@@ -1346,7 +1350,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           {visibleColumns.map((col) => (
             <div
               key={`head-${col.key}`}
-              className={`sticky top-0 z-30 border-b border-r border-zinc-800/50 px-2 py-1.5 ${
+              className={`sticky top-0 z-30 border-b border-r border-b-zinc-800/60 px-2 py-1.5 ${
                 col.isPast
                   ? "bg-zinc-950"
                   : col.isToday
@@ -1354,6 +1358,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     : col.isWeekend
                       ? "bg-rose-950/95"
                       : "bg-zinc-950"
+              } ${
+                col.isToday ? "border-r-sky-400/35" : "border-r-zinc-700/70"
               }`}
               style={{ height: HEADER_H }}
             >
@@ -1426,7 +1432,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               <div key={`time-${hour}`} className="contents">
                 {/* Time label */}
                 <div
-                  className="sticky left-0 z-20 border-b border-r border-zinc-800/30 bg-zinc-950 pr-2 text-right"
+                  className="sticky left-0 z-20 border-b border-r border-b-zinc-800/30 border-r-zinc-700/60 bg-zinc-950 pr-2 text-right"
                   style={{ height: ROW_H }}
                 >
                   <span className="relative -top-2 text-[10px] text-zinc-600">
@@ -1438,13 +1444,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 {visibleColumns.map((col) => (
                   <div
                     key={`cell-${col.key}-${hour}`}
-                    className={`relative border-b border-r border-zinc-800/20 transition-colors ${
+                    className={`relative border-b border-r border-b-zinc-800/20 transition-colors ${
                       col.isPast
                         ? "bg-zinc-950/40"
                         : col.isToday
                           ? "bg-zinc-900/15"
                           : ""
-                    } ${!col.isPast && dropTarget === col.key ? "bg-sky-500/5" : ""}`}
+                    } ${!col.isPast && dropTarget === col.key ? "bg-sky-500/5" : ""} ${
+                      col.isToday ? "border-r-sky-400/30" : "border-r-zinc-700/55"
+                    }`}
                     style={{ height: ROW_H }}
                     onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
                     onDragLeave={!col.isPast ? onDragLeave : undefined}
@@ -1476,9 +1484,34 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             className="relative grid h-full"
             style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
-            {visibleColumns.map((col) => (
-              <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
-                {col.slots.map((slot) => {
+            {visibleColumns.map((col) => {
+              const hasSupportLane = col.slots.some((slot) => isSupportLaneSlot(slot));
+              const supportLaneWidth = getSupportLaneWidth(overlayColumnWidth);
+              const supportLaneDividerLeft = Math.min(
+                supportLaneWidth + SLOT_SIDE_INSET_PX + Math.max(SLOT_LANE_GAP_PX / 2, 2),
+                overlayColumnWidth - SLOT_SIDE_INSET_PX,
+              );
+
+              return (
+                <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
+                  <div
+                    className={`pointer-events-none absolute inset-y-0 right-0 w-px ${
+                      col.isToday ? "bg-sky-400/28" : "bg-zinc-500/42"
+                    }`}
+                  />
+                  {hasSupportLane && (
+                    <>
+                      <div
+                        className="pointer-events-none absolute inset-y-0 left-0 rounded-l-[22px] border-r border-fuchsia-400/10 bg-linear-to-r from-fuchsia-500/12 via-fuchsia-500/7 to-transparent"
+                        style={{ width: supportLaneWidth + SLOT_SIDE_INSET_PX }}
+                      />
+                      <div
+                        className="pointer-events-none absolute inset-y-0 w-px bg-fuchsia-300/28"
+                        style={{ left: supportLaneDividerLeft }}
+                      />
+                    </>
+                  )}
+                  {col.slots.map((slot) => {
                   const slotInstanceKey = `${slot.date}:${slot.id}`;
                   if (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date) {
                     return null;
@@ -1682,8 +1715,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
                 {/* Now-line */}
                 {col.isToday && <NowLine />}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
 
           {reboundPreview && (() => {
