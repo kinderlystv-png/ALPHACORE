@@ -183,12 +183,12 @@ const AREA_GENERIC_TITLE: Record<AttentionAreaKey, string> = {
 };
 
 const AREA_GENERIC_IMPACT: Record<AttentionAreaKey, string> = {
-	work: "Получишь один ясный рычаг вместо размазанной фоновой тревоги.",
-	health: "Снизишь энергетическую цену дня и не отдашь здоровье на потом.",
-	family: "Неделя не съест семейную часть через студийную логистику.",
-	operations: "Хвосты перестанут фонить и воровать фокус у главного.",
-	reflection: "Вернётся смысл и иерархия вместо ручного перебора списков.",
-	recovery: "Восстановление перестанет проигрывать случайной срочности.",
+	work: "Попроси агента развернуть текущий next step в 2–3 конкретных действия и выбрать одно главное на сегодня.",
+	health: "Попроси агента зафиксировать минимальный health floor на сегодня: сон, движение и нужный follow-up.",
+	family: "Попроси агента разложить семейные буферы и логистику на 3–7 дней, пока неделя ещё управляема.",
+	operations: "Попроси агента разделить хвосты на удалить / перенести / сделать первым и снять шум с головы.",
+	reflection: "Опиши агенту, что движется, что буксует и какой один следующий шаг сейчас главный.",
+	recovery: "Попроси агента поставить одно невыбиваемое окно восстановления в ритм недели.",
 };
 
 const PROJECT_STATUS_LABEL: Record<StatusTone, string> = {
@@ -550,7 +550,7 @@ function buildWorkRuntimeData(
 			: undefined,
 		impact:
 			queue.length > 0
-				? `Хороший prompt превратит ${queue.length} конкурирующих рабочих куска в одну последовательность на сегодня.`
+				? `Попроси агента превратить ${queue.length} конкурирующих рабочих куска в одну последовательность на сегодня.`
 				: undefined,
 		promptLines: [
 			leadProject
@@ -622,7 +622,7 @@ function buildHealthRuntimeData(
 					: undefined,
 		impact:
 			missing.length > 0 || flags.length > 0
-				? "Агент сможет собрать реалистичный floor без героизма и без потери медицинского контекста."
+				? "Попроси агента зафиксировать реалистичный health floor без героизма и без потери медицинского контекста."
 				: undefined,
 		promptLines: [
 			missing.length > 0
@@ -704,7 +704,7 @@ function buildFamilyRuntimeData(
 					: undefined,
 		impact:
 			studio.length > 0 || birthday
-				? "Агент сможет заранее разложить буферы, логистику и решения, пока неделя ещё не захлопнулась."
+				? "Попроси агента заранее разложить буферы, логистику и решения, пока неделя ещё не захлопнулась."
 				: undefined,
 		promptLines: [
 			studio.length > 0
@@ -774,7 +774,7 @@ function buildOperationsRuntimeData(
 					: undefined,
 		impact:
 			overdue.length > 0 || unscheduled.length > 0 || cleanup
-				? "После triage агент вернёт одно первое действие вместо вязкого списка хвостов."
+				? "Попроси агента сделать triage: убрать вязкий список хвостов и оставить одно первое действие на сегодня."
 				: undefined,
 		promptLines: [
 			overdue.length > 0
@@ -837,7 +837,7 @@ function buildReflectionRuntimeData(
 				: undefined,
 		impact:
 			recent.length > 0 || hotTags.length > 0
-				? "Агент может превратить заметки в решения, а не в ещё один склад наблюдений."
+				? "Опиши агенту, что происходит, что буксует и что важно — пусть он превратит заметки в решения, а не в ещё один склад наблюдений."
 				: undefined,
 		promptLines: [
 			recent.length > 0
@@ -902,7 +902,7 @@ function buildRecoveryRuntimeData(
 					: undefined,
 		impact:
 			missingRecovery.length > 0 || overloaded.length > 0 || !nextPersonal
-				? "Агент поможет защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
+				? "Попроси агента защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
 				: undefined,
 		promptLines: [
 			missingRecovery.length > 0

@@ -143,6 +143,18 @@ function vibrateIfAvailable(pattern: number | number[]) {
   navigator.vibrate(pattern);
 }
 
+function sameEdgeCue(
+  left: { top: number; bottom: number; left: number; right: number },
+  right: { top: number; bottom: number; left: number; right: number },
+) {
+  return (
+    left.top === right.top &&
+    left.bottom === right.bottom &&
+    left.left === right.left &&
+    left.right === right.right
+  );
+}
+
 /* ── Types ── */
 
 type DayColumn = {
@@ -217,6 +229,25 @@ type QuickMenuState = {
   draftTone: ScheduleTone;
 };
 
+type EdgeCueState = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+};
+
+type ReboundPreview = {
+  id: string;
+  slotId: string | null;
+  slotDate: string;
+  from: EditableSlotDraft;
+  to: EditableSlotDraft;
+  stage: "from" | "to";
+  tone: ScheduleTone;
+  title: string;
+  blockedLabel: string | null;
+};
+
 function getCompactStart(columns: DayColumn[], compactCount: number): number {
   if (columns.length <= compactCount) return 0;
   const todayIndex = columns.findIndex((column) => column.isToday);
@@ -235,6 +266,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [activeEdit, setActiveEdit] = useState<ActivePointerEdit | null>(null);
   const [quickMenu, setQuickMenu] = useState<QuickMenuState | null>(null);
+  const [edgeCue, setEdgeCue] = useState<EdgeCueState>({ top: 0, bottom: 0, left: 0, right: 0 });
+  const [reboundPreview, setReboundPreview] = useState<ReboundPreview | null>(null);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
   const [compactStart, setCompactStart] = useState(0);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
@@ -248,6 +281,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const skipNextClickRef = useRef(false);
   const activePointerClientRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const autoScrollFrameRef = useRef<number | null>(null);
+  const reboundTimerRef = useRef<number | null>(null);
+  const reboundFrameRef = useRef<number | null>(null);
   const today = todayKey();
 
   useEffect(() => {
@@ -374,6 +409,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setQuickMenu(null);
   }, []);
 
+  const resetEdgeCue = useCallback(() => {
+    setEdgeCue((current) => (sameEdgeCue(current, { top: 0, bottom: 0, left: 0, right: 0 }) ? current : { top: 0, bottom: 0, left: 0, right: 0 }));
+  }, []);
+
   const toEditableDraft = useCallback((slot: ScheduleSlot): EditableSlotDraft => {
     return {
       id: slot.id,
@@ -416,6 +455,74 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     },
     [],
   );
+
+  const updateEdgeCueFromPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const container = gridRef.current;
+      if (!container) {
+        resetEdgeCue();
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const next: EdgeCueState = {
+        top: Number(clamp((rect.top + AUTO_SCROLL_EDGE_PX - clientY) / AUTO_SCROLL_EDGE_PX, 0, 1).toFixed(2)),
+        bottom: Number(clamp((clientY - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX, 0, 1).toFixed(2)),
+        left: Number(clamp((rect.left + AUTO_SCROLL_EDGE_PX - clientX) / AUTO_SCROLL_EDGE_PX, 0, 1).toFixed(2)),
+        right: Number(clamp((clientX - (rect.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX, 0, 1).toFixed(2)),
+      };
+
+      setEdgeCue((current) => (sameEdgeCue(current, next) ? current : next));
+    },
+    [resetEdgeCue],
+  );
+
+  const getOverlayBoxForDraft = useCallback((draft: EditableSlotDraft) => {
+    const overlayWidth = overlayGridRef.current?.getBoundingClientRect().width;
+    const columns = visibleColumnsRef.current;
+    if (!overlayWidth || columns.length === 0) return null;
+
+    const columnIndex = columns.findIndex((column) => column.key === draft.date);
+    if (columnIndex === -1) return null;
+
+    const columnWidth = overlayWidth / columns.length;
+    return {
+      top: slotTop(draft.start),
+      height: slotHeight(draft.start, draft.end),
+      left: columnIndex * columnWidth + 4,
+      width: Math.max(columnWidth - 8, 24),
+    };
+  }, []);
+
+  const triggerReboundPreview = useCallback((edit: ActivePointerEdit) => {
+    if (reboundTimerRef.current != null) {
+      window.clearTimeout(reboundTimerRef.current);
+    }
+    if (reboundFrameRef.current != null) {
+      window.cancelAnimationFrame(reboundFrameRef.current);
+    }
+
+    const id = `rebound-${Date.now().toString(36)}`;
+    const preview: ReboundPreview = {
+      id,
+      slotId: edit.originalSlot?.id ?? null,
+      slotDate: edit.originalSlot?.date ?? edit.base.date,
+      from: edit.draft,
+      to: edit.base,
+      stage: "from",
+      tone: edit.base.tone,
+      title: edit.base.title,
+      blockedLabel: edit.blockingSlot?.title ?? null,
+    };
+
+    setReboundPreview(preview);
+    reboundFrameRef.current = window.requestAnimationFrame(() => {
+      setReboundPreview((current) => (current?.id === id ? { ...current, stage: "to" } : current));
+    });
+    reboundTimerRef.current = window.setTimeout(() => {
+      setReboundPreview((current) => (current?.id === id ? null : current));
+    }, 240);
+  }, []);
 
   const buildDraftFromPointer = useCallback(
     (edit: ActivePointerEdit, clientX: number, clientY: number): ActivePointerEdit => {
@@ -538,7 +645,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       const blockingSlot = getBlockingSlot(draft, originalSlot);
       if (blockingSlot) {
         vibrateIfAvailable([16, 50, 16]);
-        return;
+        return false;
       }
 
       if (!originalSlot) {
@@ -552,7 +659,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         });
         setVersion((value) => value + 1);
         vibrateIfAvailable(8);
-        return;
+        return true;
       }
 
       updateEditableScheduleSlot(originalSlot, {
@@ -565,6 +672,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       });
       setVersion((value) => value + 1);
       vibrateIfAvailable(8);
+      return true;
     },
     [getBlockingSlot],
   );
@@ -586,6 +694,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
       event.preventDefault();
       activePointerClientRef.current = { x: event.clientX, y: event.clientY };
+      updateEdgeCueFromPointer(event.clientX, event.clientY);
       const next = buildDraftFromPointer(edit, event.clientX, event.clientY);
       activeEditRef.current = next;
       setActiveEdit(next);
@@ -601,11 +710,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       if (!edit || edit.pointerId !== event.pointerId) return;
 
       event.preventDefault();
-      commitPointerEdit(edit);
+      const committed = commitPointerEdit(edit);
       activeEditRef.current = null;
       setActiveEdit(null);
       document.body.style.userSelect = "";
       activePointerClientRef.current = { x: 0, y: 0 };
+      resetEdgeCue();
+      if (!committed) {
+        triggerReboundPreview(edit);
+      }
       window.setTimeout(() => {
         skipNextClickRef.current = false;
       }, 0);
@@ -620,8 +733,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       window.removeEventListener("pointerup", handlePointerFinish);
       window.removeEventListener("pointercancel", handlePointerFinish);
       document.body.style.userSelect = "";
+      resetEdgeCue();
     };
-  }, [buildDraftFromPointer, cancelPendingPointerEdit, commitPointerEdit]);
+  }, [buildDraftFromPointer, cancelPendingPointerEdit, commitPointerEdit, resetEdgeCue, triggerReboundPreview, updateEdgeCueFromPointer]);
 
   useEffect(() => {
     if (!activeEdit) return;
@@ -685,6 +799,17 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         autoScrollFrameRef.current = null;
       }
     };
+
+    useEffect(() => {
+      return () => {
+        if (reboundTimerRef.current != null) {
+          window.clearTimeout(reboundTimerRef.current);
+        }
+        if (reboundFrameRef.current != null) {
+          window.cancelAnimationFrame(reboundFrameRef.current);
+        }
+      };
+    }, []);
   }, [activeEdit, buildDraftFromPointer]);
 
   const queuePointerEdit = useCallback(
@@ -1205,18 +1330,29 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   if (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date) {
                     return null;
                   }
+                  if (reboundPreview?.slotId === slot.id && reboundPreview.slotDate === slot.date) {
+                    return null;
+                  }
 
                   const top = slotTop(slot.start);
                   const height = slotHeight(slot.start, slot.end);
                   const c = toneColor(slot.tone);
                   const isEditable = isEditableScheduleSlot(slot);
+                  const isBlockingSlot =
+                    activeEdit?.blocked &&
+                    activeEdit.blockingSlot?.id === slot.id &&
+                    activeEdit.blockingSlot.date === slot.date;
                   const slotPadding = isEditable ? "px-2 py-2" : "px-2 py-1";
 
                   return (
                     <div
                       key={slot.id}
-                      className={`pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-xl border shadow-[0_6px_18px_rgba(0,0,0,0.18)] ${slotPadding} ${c.border} ${c.bg} ${
+                      className={`pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-xl border ${slotPadding} ${c.border} ${c.bg} ${
                         isEditable ? "cursor-grab touch-none" : ""
+                      } ${
+                        isBlockingSlot
+                          ? "ring-2 ring-rose-400/80 shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_14px_28px_rgba(127,29,29,0.28)]"
+                          : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]"
                       }`}
                       style={{ top, height, minHeight: 20 }}
                       onPointerDown={(e) => {
@@ -1318,7 +1454,57 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               </div>
             ))}
           </div>
+
+          {reboundPreview && (() => {
+            const targetDraft = reboundPreview.stage === "from" ? reboundPreview.from : reboundPreview.to;
+            const box = getOverlayBoxForDraft(targetDraft);
+            if (!box) return null;
+
+            return (
+              <div
+                className="pointer-events-none absolute overflow-hidden rounded-xl border-2 border-rose-400/75 bg-rose-950/35 px-2 py-2 opacity-90 shadow-[0_20px_44px_rgba(0,0,0,0.3)] transition-all duration-200 ease-out"
+                style={{
+                  left: box.left,
+                  top: box.top,
+                  width: box.width,
+                  height: box.height,
+                  minHeight: 20,
+                }}
+              >
+                <p className="text-[10px] font-semibold leading-tight text-rose-100">
+                  {targetDraft.start}–{targetDraft.end}
+                </p>
+                <p className="mt-0.5 truncate text-[11px] font-semibold leading-snug text-rose-100">
+                  {reboundPreview.title}
+                </p>
+                <p className="mt-1 text-[9px] font-medium uppercase tracking-[0.14em] text-rose-200">
+                  Возврат назад{reboundPreview.blockedLabel ? ` · занято: ${reboundPreview.blockedLabel}` : ""}
+                </p>
+              </div>
+            );
+          })()}
         </div>
+
+        {activeEdit && (
+          <>
+            <div
+              className="pointer-events-none absolute inset-x-0 top-0 z-20 h-18 bg-linear-to-b from-sky-400/20 to-transparent transition-opacity duration-150"
+              style={{ opacity: edgeCue.top }}
+            />
+            <div
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-18 bg-linear-to-t from-sky-400/20 to-transparent transition-opacity duration-150"
+              style={{ opacity: edgeCue.bottom }}
+            />
+            <div
+              className="pointer-events-none absolute inset-y-0 left-0 z-20 w-16 bg-linear-to-r from-sky-400/18 to-transparent transition-opacity duration-150"
+              style={{ opacity: edgeCue.left }}
+            />
+            <div
+              className="pointer-events-none absolute inset-y-0 right-0 z-20 w-16 bg-linear-to-l from-sky-400/18 to-transparent transition-opacity duration-150"
+              style={{ opacity: edgeCue.right }}
+            />
+          </>
+        )}
       </div>
 
       {quickMenu && (() => {
