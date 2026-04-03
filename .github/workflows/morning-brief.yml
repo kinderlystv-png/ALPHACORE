@@ -1,0 +1,57 @@
+name: Morning Brief
+
+on:
+  schedule:
+    # Every day at 06:00 MSK (03:00 UTC)
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    env:
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start server and generate brief
+        run: |
+          # Start Next.js in production mode
+          npm run build
+          npm run start &
+          SERVER_PID=$!
+
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "✅ Server ready"
+              break
+            fi
+            sleep 2
+          done
+
+          # Generate brief
+          ALPHACORE_API=http://localhost:3000 node scripts/alpha.mjs brief | tee brief.txt
+
+          # Stop server
+          kill $SERVER_PID 2>/dev/null || true
+
+      - name: Create issue with brief
+        if: success()
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "☀️ Утренний брифинг — ${{ github.event.schedule && 'auto' || 'manual' }}"
+          content-filepath: brief.txt
+          labels: brief,auto

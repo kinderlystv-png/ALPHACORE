@@ -1,0 +1,623 @@
+"use client";
+
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+
+import { AppShell } from "@/components/app-shell";
+import {
+  type Project,
+  type ProjectAccent,
+  type ProjectDeliverable,
+  type ProjectInput,
+  type ProjectKpi,
+  type StatusTone,
+  PROJECT_ACCENT_CLS,
+  addProject,
+  attentionProjects,
+  cycleProjectStatus,
+  deleteProject,
+  getProjects,
+  moveProject,
+  projectProgress,
+  reorderProjects,
+  toggleDeliverable,
+  updateProject,
+} from "@/lib/projects";
+import { subscribeAppDataChange } from "@/lib/storage";
+
+const STATUS_DOT: Record<StatusTone, string> = {
+  green: "bg-emerald-400",
+  yellow: "bg-amber-400",
+  red: "bg-rose-400",
+};
+
+const STATUS_LABEL: Record<StatusTone, string> = {
+  green: "На ходу",
+  yellow: "Нужно внимание",
+  red: "Блокер",
+};
+
+const ACCENT_LABEL: Record<ProjectAccent, string> = {
+  sky: "Sky",
+  orange: "Orange",
+  violet: "Violet",
+  teal: "Teal",
+  rose: "Rose",
+};
+
+type DraftKpi = ProjectKpi;
+type DraftDeliverable = ProjectDeliverable;
+
+type ProjectDraft = {
+  name: string;
+  description: string;
+  status: StatusTone;
+  accent: ProjectAccent;
+  nextStep: string;
+  kpis: DraftKpi[];
+  deliverables: DraftDeliverable[];
+};
+
+type EditorState =
+  | { mode: "create"; draft: ProjectDraft }
+  | { mode: "edit"; projectId: string; draft: ProjectDraft }
+  | null;
+
+function rowId(): string {
+  return Math.random().toString(36).slice(2, 9);
+}
+
+function createDraft(project?: Project): ProjectDraft {
+  if (!project) {
+    return {
+      name: "",
+      description: "",
+      status: "yellow",
+      accent: "sky",
+      nextStep: "",
+      kpis: [
+        { id: rowId(), label: "", value: "" },
+        { id: rowId(), label: "", value: "" },
+      ],
+      deliverables: [{ id: rowId(), text: "", done: false }],
+    };
+  }
+
+  return {
+    name: project.name,
+    description: project.description,
+    status: project.status,
+    accent: project.accent,
+    nextStep: project.nextStep,
+    kpis: project.kpis.map((item) => ({ ...item })),
+    deliverables: project.deliverables.map((item) => ({ ...item })),
+  };
+}
+
+function toInput(draft: ProjectDraft): ProjectInput {
+  return {
+    name: draft.name,
+    description: draft.description,
+    status: draft.status,
+    accent: draft.accent,
+    nextStep: draft.nextStep,
+    kpis: draft.kpis.map((item) => ({ label: item.label, value: item.value })),
+    deliverables: draft.deliverables.map((item) => ({ text: item.text, done: item.done })),
+  };
+}
+
+function ProjectEditor({
+  state,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  state: Exclude<EditorState, null>;
+  onChange: (draft: ProjectDraft) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const { draft } = state;
+
+  const updateKpi = useCallback(
+    (id: string, patch: Partial<DraftKpi>) => {
+      onChange({
+        ...draft,
+        kpis: draft.kpis.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      });
+    },
+    [draft, onChange],
+  );
+
+  const updateDeliverable = useCallback(
+    (id: string, patch: Partial<DraftDeliverable>) => {
+      onChange({
+        ...draft,
+        deliverables: draft.deliverables.map((item) =>
+          item.id === id ? { ...item, ...patch } : item,
+        ),
+      });
+    },
+    [draft, onChange],
+  );
+
+  return (
+    <section className="rounded-[2rem] border border-zinc-800 bg-zinc-900/40 p-5 shadow-2xl shadow-black/20">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-50">
+            {state.mode === "create" ? "Новый проект" : "Редактирование проекта"}
+          </h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Хранится локально и обновляется сразу на дашборде и в поиске.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
+        >
+          Закрыть
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-xs text-zinc-500">Название</label>
+          <input
+            type="text"
+            value={draft.name}
+            onChange={(e) => onChange({ ...draft, name: e.target.value })}
+            placeholder="Например, HEYS Growth"
+            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-zinc-500">Следующий шаг</label>
+          <input
+            type="text"
+            value={draft.nextStep}
+            onChange={(e) => onChange({ ...draft, nextStep: e.target.value })}
+            placeholder="Что должно быть сделано следующим?"
+            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600"
+          />
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <label className="mb-1 block text-xs text-zinc-500">Описание</label>
+        <textarea
+          value={draft.description}
+          onChange={(e) => onChange({ ...draft, description: e.target.value })}
+          rows={3}
+          placeholder="Краткий контекст, цель, зона ответственности..."
+          className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600"
+        />
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-xs text-zinc-500">Статус</label>
+          <select
+            value={draft.status}
+            onChange={(e) => onChange({ ...draft, status: e.target.value as StatusTone })}
+            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100"
+          >
+            {Object.entries(STATUS_LABEL).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-zinc-500">Тон карточки</label>
+          <select
+            value={draft.accent}
+            onChange={(e) => onChange({ ...draft, accent: e.target.value as ProjectAccent })}
+            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100"
+          >
+            {Object.entries(ACCENT_LABEL).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-100">KPI / метрики</h3>
+            <button
+              type="button"
+              onClick={() =>
+                onChange({
+                  ...draft,
+                  kpis: [...draft.kpis, { id: rowId(), label: "", value: "" }],
+                })
+              }
+              className="text-xs text-sky-400 transition hover:text-sky-300"
+            >
+              + KPI
+            </button>
+          </div>
+
+          {draft.kpis.map((item) => (
+            <div key={item.id} className="grid grid-cols-[120px_minmax(0,1fr)_32px] gap-2">
+              <input
+                type="text"
+                value={item.label}
+                onChange={(e) => updateKpi(item.id, { label: e.target.value })}
+                placeholder="CR1"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
+              />
+              <input
+                type="text"
+                value={item.value}
+                onChange={(e) => updateKpi(item.id, { value: e.target.value })}
+                placeholder="lead → confirmed"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...draft,
+                    kpis: draft.kpis.filter((kpi) => kpi.id !== item.id),
+                  })
+                }
+                className="rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-rose-500/30 hover:text-rose-400"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-100">Deliverables</h3>
+            <button
+              type="button"
+              onClick={() =>
+                onChange({
+                  ...draft,
+                  deliverables: [...draft.deliverables, { id: rowId(), text: "", done: false }],
+                })
+              }
+              className="text-xs text-emerald-400 transition hover:text-emerald-300"
+            >
+              + Пункт
+            </button>
+          </div>
+
+          {draft.deliverables.map((item) => (
+            <div key={item.id} className="grid grid-cols-[24px_minmax(0,1fr)_32px] items-center gap-2">
+              <button
+                type="button"
+                onClick={() => updateDeliverable(item.id, { done: !item.done })}
+                className={`flex h-5 w-5 items-center justify-center rounded-md border transition ${
+                  item.done
+                    ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                    : "border-zinc-700 text-zinc-500"
+                }`}
+              >
+                {item.done ? "✓" : ""}
+              </button>
+              <input
+                type="text"
+                value={item.text}
+                onChange={(e) => updateDeliverable(item.id, { text: e.target.value })}
+                placeholder="Что должно быть готово"
+                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...draft,
+                    deliverables: draft.deliverables.filter((d) => d.id !== item.id),
+                  })
+                }
+                className="rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-rose-500/30 hover:text-rose-400"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 flex gap-2">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={!draft.name.trim()}
+          className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {state.mode === "create" ? "Создать проект" : "Сохранить изменения"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border border-zinc-800 px-4 py-2.5 text-sm text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+        >
+          Отмена
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ProjectsPageContent() {
+  const searchParams = useSearchParams();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [editor, setEditor] = useState<EditorState>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    setProjects(getProjects());
+  }, []);
+
+  useEffect(() => {
+    reload();
+    return subscribeAppDataChange((keys) => {
+      if (keys.includes("alphacore_projects")) reload();
+    });
+  }, [reload]);
+
+  useEffect(() => {
+    const requestedOpen = searchParams.get("open");
+    if (requestedOpen) setOpenId(requestedOpen);
+  }, [searchParams]);
+
+  const attentionCount = useMemo(() => attentionProjects(projects).length, [projects]);
+
+  const handleSaveEditor = useCallback(() => {
+    if (!editor) return;
+    if (editor.mode === "create") {
+      const created = addProject(toInput(editor.draft));
+      setOpenId(created.id);
+    } else {
+      updateProject(editor.projectId, toInput(editor.draft));
+      setOpenId(editor.projectId);
+    }
+    reload();
+    setEditor(null);
+  }, [editor, reload]);
+
+  const handleReorder = useCallback(
+    (activeId: string, targetId: string) => {
+      reorderProjects(activeId, targetId);
+      reload();
+    },
+    [reload],
+  );
+
+  return (
+    <AppShell>
+      <div className="space-y-5 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold">📁 Проекты</h1>
+            <p className="mt-1 text-sm text-zinc-500">
+              {projects.length} проектов · {attentionCount} требуют внимания
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setEditor({ mode: "create", draft: createDraft() })}
+            className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
+          >
+            + Проект
+          </button>
+        </div>
+
+        {editor && (
+          <ProjectEditor
+            state={editor}
+            onChange={(draft) => setEditor((prev) => (prev ? { ...prev, draft } : prev))}
+            onSave={handleSaveEditor}
+            onCancel={() => setEditor(null)}
+          />
+        )}
+
+        <div className="space-y-4">
+          {projects.length === 0 && (
+            <div className="rounded-[2rem] border border-zinc-800 bg-zinc-900/30 p-8 text-center">
+              <p className="text-sm text-zinc-500">Проектов пока нет</p>
+            </div>
+          )}
+
+          {projects.map((project, index) => {
+            const isOpen = openId === project.id;
+            const pct = projectProgress(project);
+
+            return (
+              <article
+                key={project.id}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  if (draggedId && draggedId !== project.id) {
+                    handleReorder(draggedId, project.id);
+                  }
+                  setDraggedId(null);
+                }}
+                className={`rounded-[2rem] border p-5 shadow-2xl shadow-black/20 ${PROJECT_ACCENT_CLS[project.accent]} ${
+                  draggedId === project.id ? "opacity-60" : "opacity-100"
+                }`}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                  <button
+                    type="button"
+                    onClick={() => setOpenId(isOpen ? null : project.id)}
+                    className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="truncate text-lg font-semibold text-zinc-100">{project.name}</h2>
+                        <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                          {project.kpis.length} KPI
+                        </span>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-sm text-zinc-400">{project.description}</p>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-zinc-500">{pct}%</span>
+                      <span className={`text-zinc-500 transition ${isOpen ? "rotate-180" : ""}`}>▾</span>
+                    </div>
+                  </button>
+
+                  <div className="flex shrink-0 items-center gap-2 self-start">
+                    <button
+                      type="button"
+                      draggable
+                      onDragStart={() => setDraggedId(project.id)}
+                      onDragEnd={() => setDraggedId(null)}
+                      className="cursor-grab rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-500 transition hover:border-zinc-500 hover:text-zinc-200 active:cursor-grabbing"
+                      title="Перетащить для приоритизации"
+                    >
+                      ⋮⋮
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        moveProject(project.id, -1);
+                        reload();
+                      }}
+                      disabled={index === 0}
+                      className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
+                      title="Поднять выше"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        moveProject(project.id, 1);
+                        reload();
+                      }}
+                      disabled={index === projects.length - 1}
+                      className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
+                      title="Опустить ниже"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => cycleProjectStatus(project.id)}
+                      className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500"
+                    >
+                      <span className={`h-2 w-2 rounded-full ${STATUS_DOT[project.status]}`} />
+                      {STATUS_LABEL[project.status]}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project) })}
+                      className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+                    >
+                      ✎
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 h-1.5 rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-emerald-400 transition-all duration-500"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+
+                {isOpen && (
+                  <div className="mt-5 space-y-4">
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      {project.kpis.map((kpi) => (
+                        <div
+                          key={kpi.id}
+                          className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3"
+                        >
+                          <p className="text-[10px] uppercase tracking-widest text-zinc-500">{kpi.label}</p>
+                          <p className="mt-1 text-sm text-zinc-200">{kpi.value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div>
+                      <p className="mb-2 text-[11px] uppercase tracking-widest text-zinc-500">Deliverables</p>
+                      <div className="space-y-1.5">
+                        {project.deliverables.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => toggleDeliverable(project.id, item.id)}
+                            className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
+                              item.done
+                                ? "border-emerald-500/20 bg-emerald-500/5"
+                                : "border-zinc-800/60 bg-zinc-900/20 hover:border-zinc-700"
+                            }`}
+                          >
+                            <div
+                              className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border transition ${
+                                item.done
+                                  ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                                  : "border-zinc-600"
+                              }`}
+                            >
+                              {item.done ? "✓" : ""}
+                            </div>
+                            <span className={`text-sm ${item.done ? "text-zinc-500 line-through" : "text-zinc-200"}`}>
+                              {item.text}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3">
+                      <p className="text-[10px] uppercase tracking-widest text-zinc-500">Следующий шаг</p>
+                      <p className="mt-1.5 text-sm font-medium text-zinc-200">{project.nextStep}</p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project) })}
+                        className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                      >
+                        Редактировать
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!confirm(`Удалить проект «${project.name}»?`)) return;
+                          deleteProject(project.id);
+                          if (openId === project.id) setOpenId(null);
+                          reload();
+                        }}
+                        className="rounded-xl border border-rose-500/20 px-3 py-2 text-xs text-rose-300 transition hover:bg-rose-500/10"
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </AppShell>
+  );
+}
+
+export default function ProjectsPage() {
+  return (
+    <Suspense fallback={<AppShell><div className="py-8 text-sm text-zinc-600">Загрузка проектов…</div></AppShell>}>
+      <ProjectsPageContent />
+    </Suspense>
+  );
+}
