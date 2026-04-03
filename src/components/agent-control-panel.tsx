@@ -7,10 +7,12 @@ import {
   AGENT_PROMPT_FEEDBACK_KEY,
   buildAgentRecommendations,
   buildRecommendationProfile,
+  buildRecommendationRuntimeContext,
   getRecommendationFeedbackEvents,
   recordRecommendationFeedback,
   type AgentRecommendation,
   type RecommendationFeedbackEvent,
+  type RecommendationRuntimeContext,
   type RecommendationStatus,
 } from "@/lib/agent-recommendations";
 import {
@@ -18,7 +20,13 @@ import {
   type AttentionArea,
   type AttentionLevel,
 } from "@/lib/agent-control";
+import { activeHabits, getChecks, streak, todayStr } from "@/lib/habits";
+import { getJournalEntries } from "@/lib/journal";
+import { getEntries as getMedicalEntries } from "@/lib/medical";
+import { getProjects } from "@/lib/projects";
+import { getScheduleForDate } from "@/lib/schedule";
 import { subscribeAppDataChange } from "@/lib/storage";
+import { getTasks } from "@/lib/tasks";
 
 const LEVEL_LABEL: Record<AttentionLevel, string> = {
   good: "под контролем",
@@ -56,6 +64,52 @@ type FlashPayload = {
   tone: "success" | "info";
   text: string;
 };
+
+const RUNTIME_CONTEXT_KEYS = new Set([
+  "alphacore_tasks",
+  "alphacore_projects",
+  "alphacore_journal",
+  "alphacore_habits",
+  "alphacore_medical",
+  "alphacore_schedule_custom",
+  "alphacore_schedule_overrides",
+]);
+
+function dateFromKey(dateKey: string): Date {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1);
+}
+
+function collectUpcomingSchedule(today: string, days = 7) {
+  const start = dateFromKey(today);
+  const slots = [] as ReturnType<typeof getScheduleForDate>;
+
+  for (let index = 0; index < days; index += 1) {
+    const next = new Date(start);
+    next.setDate(start.getDate() + index);
+    slots.push(...getScheduleForDate(next));
+  }
+
+  return slots;
+}
+
+function loadRuntimeContext(): RecommendationRuntimeContext {
+  const today = todayStr();
+  const todayDate = dateFromKey(today);
+
+  return buildRecommendationRuntimeContext({
+    today,
+    tasks: getTasks(),
+    projects: getProjects(),
+    journalEntries: getJournalEntries(),
+    activeHabitsToday: activeHabits(todayDate),
+    habitChecksToday: getChecks(today),
+    habitStreak: streak(),
+    medicalEntries: getMedicalEntries(),
+    todaySchedule: getScheduleForDate(today),
+    upcomingSchedule: collectUpcomingSchedule(today, 7),
+  });
+}
 
 async function copyText(text: string): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -312,6 +366,17 @@ function RecommendationCard({
 
       <p className="mt-3 text-sm text-zinc-200">{recommendation.impact}</p>
 
+      {recommendation.signals.length > 0 && (
+        <ul className="mt-3 space-y-1.5 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3 text-xs text-zinc-300">
+          {recommendation.signals.map((signal) => (
+            <li key={signal} className="flex gap-2">
+              <span className="mt-0.5 text-zinc-600">•</span>
+              <span>{signal}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div className="mt-3 flex flex-wrap gap-1.5">
         <span className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
           effort {recommendation.effort}
@@ -374,17 +439,27 @@ export function AgentControlPanel({
   onFlash?: (payload: FlashPayload) => void;
 }) {
   const [feedbackEvents, setFeedbackEvents] = useState<RecommendationFeedbackEvent[]>([]);
+  const [runtimeContext, setRuntimeContext] = useState<RecommendationRuntimeContext | null>(null);
   const [inlineFlash, setInlineFlash] = useState<FlashPayload | null>(null);
+
+  const refreshRuntimeContext = useCallback(() => {
+    setRuntimeContext(loadRuntimeContext());
+  }, []);
 
   useEffect(() => {
     setFeedbackEvents(getRecommendationFeedbackEvents());
+    refreshRuntimeContext();
 
     return subscribeAppDataChange((keys) => {
       if (keys.includes(AGENT_PROMPT_FEEDBACK_KEY)) {
         setFeedbackEvents(getRecommendationFeedbackEvents());
       }
+
+      if (keys.some((key) => RUNTIME_CONTEXT_KEYS.has(key))) {
+        refreshRuntimeContext();
+      }
     });
-  }, []);
+  }, [refreshRuntimeContext]);
 
   useEffect(() => {
     if (!inlineFlash) return;
@@ -394,8 +469,8 @@ export function AgentControlPanel({
   }, [inlineFlash]);
 
   const recommendations = useMemo(
-    () => buildAgentRecommendations(snapshot, feedbackEvents),
-    [feedbackEvents, snapshot],
+    () => buildAgentRecommendations(snapshot, feedbackEvents, { runtimeContext }),
+    [feedbackEvents, runtimeContext, snapshot],
   );
 
   const notify = useCallback((payload: FlashPayload) => {
@@ -479,7 +554,9 @@ export function AgentControlPanel({
               <div>
                 <p className="text-sm font-semibold text-zinc-50">🤖 AI prompts для среды разработки</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Карточки строятся из текущего контекста ALPHACORE и подстраиваются по copy / dislike / implemented.
+                  {runtimeContext
+                    ? `Карточки уже grounded в живых данных: ${runtimeContext.tasks.actionable.length} задач, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий и ${runtimeContext.journal.recent.length} свежих записей.`
+                    : "Карточки строятся из текущего контекста ALPHACORE и подстраиваются по copy / dislike / implemented."}
                 </p>
               </div>
               <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
