@@ -905,6 +905,15 @@ function buildClarificationQuestions(input: {
 
 	const focusTask = leadTask ?? context.tasks.actionable[0] ?? null;
 	const focusTrack = focusTask ? getTaskTrack(focusTask) : null;
+	const leadProjectTrack = leadProject ? getProjectTrack(leadProject) : null;
+	const projectFocusTask = leadProjectTrack
+		? context.tasks.actionable.find((task) => getTaskTrack(task) === leadProjectTrack) ?? null
+		: null;
+	const doneClarificationTask =
+		(projectFocusTask && isBroadPlanningTask(projectFocusTask)
+			? projectFocusTask
+			: null) ??
+		(focusTask && isBroadPlanningTask(focusTask) ? focusTask : null);
 	const liveTaskPool = uniqueTasks([
 		...(focusTask ? [focusTask] : []),
 		...context.tasks.p1,
@@ -913,14 +922,14 @@ function buildClarificationQuestions(input: {
 		...context.tasks.unscheduled,
 	]).slice(0, 6);
 
-	if (focusTask && (isBroadPlanningTask(focusTask) || !!leadProject)) {
+	if (doneClarificationTask) {
 		pushClarificationQuestion(questions, {
-			id: `clarify-done-${focusTask.id}`,
-			taskId: focusTask.id,
-			title: `Что считать done по ${clipText(focusTask.title, 42)}?`,
-			question: `Что в задаче «${clipText(focusTask.title, 56)}» должно считаться done в этом проходе?`,
+			id: `clarify-done-${doneClarificationTask.id}`,
+			taskId: doneClarificationTask.id,
+			title: `Что считать done по ${clipText(doneClarificationTask.title, 42)}?`,
+			question: `Что в задаче «${clipText(doneClarificationTask.title, 56)}» должно считаться done в этом проходе?`,
 			reason: "definition-of-done",
-			options: buildDoneOptionsForTask(focusTask, leadProject),
+			options: buildDoneOptionsForTask(doneClarificationTask, leadProject),
 			allowFreeform: true,
 		});
 	}
