@@ -137,10 +137,55 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
+function buildBundleOrchestrationPrompt(recommendations: AgentRecommendation[]): string {
+  const titles = recommendations.map((recommendation) => `«${recommendation.title}»`);
+  const titleLine =
+    titles.length > 0
+      ? `Фокус текущего пакета: ${titles.join(", ")}.`
+      : null;
+
+  return [
+    "Ниже — пакет рекомендаций из ALPHACORE.",
+    titleLine,
+    "Не отвечай на них как на отдельные длинные заметки.",
+    "Сначала убери дубли и пересечения, потом собери один практический план.",
+    "",
+    "Что мне нужно:",
+    "- выбери 1 главный шаг на сегодня;",
+    "- если один из блоков про восстановление — выбери 1 невыбиваемое окно восстановления на неделю;",
+    "- если один из блоков про review / осмысление — собери 1 короткий review: что движется, что буксует, что сейчас главное;",
+    "- если блоки пересекаются — объедини их, а не дублируй;",
+    "- не пересказывай контекст обратно, используй его только для решения.",
+    "",
+    "Формат ответа:",
+    "- Главное решение сейчас",
+    "- 2 запасных хода",
+    "- Критерий done",
+    "- Что обновить в ALPHACORE:",
+    "  - 1 запись в Tasks",
+    "  - 1 изменение в Calendar / Schedule",
+    "  - 1 запись в Journal",
+    "",
+    "Важно:",
+    "- без коучинговой воды;",
+    "- без повторов между блоками;",
+    "- без 10 равновесных советов;",
+    "- если видишь конфликт между задачами и энергией — режь план, а не раздувай его;",
+    "- ответ должен помогать действовать сегодня, а не просто красиво анализировать ситуацию.",
+    "",
+    "Ниже сами сигналы из ALPHACORE:",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function buildPromptBundle(recommendations: AgentRecommendation[]): string {
-  return recommendations
+  const orchestrationPrompt = buildBundleOrchestrationPrompt(recommendations);
+  const promptSections = recommendations
     .map((recommendation, index) => [`### ${index + 1}. ${recommendation.title}`, recommendation.prompt].join("\n"))
     .join("\n\n---\n\n");
+
+  return [orchestrationPrompt, promptSections].join("\n\n---\n\n");
 }
 
 function RadarWheel({ areas, balanceScore }: { areas: AttentionArea[]; balanceScore: number }) {
@@ -538,7 +583,7 @@ export function AgentControlPanel({
       }
 
       setFeedbackEvents(getRecommendationFeedbackEvents());
-      notify({ tone: "success", text: `Скопированы все prompts: ${recommendations.length}` });
+      notify({ tone: "success", text: `Скопирован пакет для агента: ${recommendations.length} prompts + orchestration` });
     } catch {
       notify({
         tone: "info",
@@ -596,7 +641,7 @@ export function AgentControlPanel({
                   disabled={recommendations.length === 0}
                   className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-[11px] font-medium text-sky-100 transition hover:border-sky-400/40 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900/60 disabled:text-zinc-500"
                 >
-                  Скопировать все prompts
+                  Скопировать пакет prompts
                 </button>
                 <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
                   {recommendations.length} активных

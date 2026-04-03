@@ -281,6 +281,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [quickMenu, setQuickMenu] = useState<QuickMenuState | null>(null);
   const [edgeCue, setEdgeCue] = useState<EdgeCueState>({ top: 0, bottom: 0, left: 0, right: 0 });
   const [reboundPreview, setReboundPreview] = useState<ReboundPreview | null>(null);
+  const [hoveredSlotKey, setHoveredSlotKey] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
   const [compactStart, setCompactStart] = useState(0);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
@@ -400,6 +401,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   }, [activeEdit]);
 
   const visibleGridWidth = 56 + Math.max(visibleColumns.length, 1) * 120;
+  const isMobileGripMode = viewportWidth != null && viewportWidth < 640;
 
   const visibleWindowLabel = useMemo(() => {
     if (visibleColumns.length === 0) return "";
@@ -866,6 +868,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     const desktopHalfWidth = 192;
     const maxTop = Math.max(12, window.innerHeight - QUICK_MENU_ESTIMATED_HEIGHT - 12);
 
+    setHoveredSlotKey(null);
     setQuickMenu({
       slot,
       top: clamp(rect.top + Math.min(rect.height, 28) + 10, 12, maxTop),
@@ -1340,6 +1343,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             {visibleColumns.map((col) => (
               <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
                 {col.slots.map((slot) => {
+                  const slotInstanceKey = `${slot.date}:${slot.id}`;
                   if (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date) {
                     return null;
                   }
@@ -1355,9 +1359,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
                     activeEdit.blockingSlot.date === slot.date;
-                  const isSelectedSlot =
-                    (quickMenu?.slot.id === slot.id && quickMenu.slot.date === slot.date) ||
-                    (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date);
+                  const isQuickMenuSlot = quickMenu?.slot.id === slot.id && quickMenu.slot.date === slot.date;
+                  const isActiveSlot =
+                    activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date;
+                  const isSelectedSlot = isQuickMenuSlot || isActiveSlot;
+                  const isHoveredSlot = hoveredSlotKey === slotInstanceKey;
                   const slotPadding = !isEditable
                     ? "px-2 py-1"
                     : height >= 96
@@ -1367,9 +1373,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         : "px-2 pt-3 pb-3";
                   const handleButtonHeight = height >= 64 ? "h-5" : "h-4";
                   const handleGripSize = height >= 64 ? "h-1 w-4" : "h-0.5 w-3";
-                  const handleOpacity = isSelectedSlot
+                  const handleOpacity = isActiveSlot
                     ? "opacity-90"
-                    : "opacity-0 group-hover:opacity-70 group-focus-within:opacity-70";
+                    : isMobileGripMode
+                      ? isQuickMenuSlot
+                        ? "opacity-80"
+                        : "opacity-0"
+                      : isHoveredSlot
+                        ? "opacity-70"
+                        : "opacity-0";
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
 
                   return (
@@ -1389,6 +1401,17 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         if (!isEditable) return;
                         e.stopPropagation();
                         queuePointerEdit("move", e, col.key, slot);
+                      }}
+                      onPointerMove={() => {
+                        if (isMobileGripMode) return;
+                        if (hoveredSlotKey !== slotInstanceKey) {
+                          setHoveredSlotKey(slotInstanceKey);
+                        }
+                      }}
+                      onPointerLeave={() => {
+                        if (hoveredSlotKey === slotInstanceKey) {
+                          setHoveredSlotKey(null);
+                        }
                       }}
                       onClick={(e) => {
                         if (!isEditable) return;
