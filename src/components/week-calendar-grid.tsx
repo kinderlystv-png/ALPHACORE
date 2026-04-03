@@ -289,7 +289,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           </div>
         </div>
 
-        <div className="h-[75vh] min-h-[640px] animate-pulse bg-zinc-950/20" />
+        <div className="h-[75vh] min-h-160 animate-pulse bg-zinc-950/20" />
       </section>
     );
   }
@@ -362,21 +362,21 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         >
           {/* ── Column headers ── */}
           <div
-            className="sticky top-0 z-20 border-b border-r border-zinc-800/50 bg-zinc-950/95"
+            className="sticky top-0 z-30 border-b border-r border-zinc-800/50 bg-zinc-950"
             style={{ height: HEADER_H }}
           />
           {columns.map((col) => (
             <div
               key={`head-${col.key}`}
-              className={`sticky top-0 z-20 border-b border-r border-zinc-800/50 px-2 py-1.5 ${
+              className={`sticky top-0 z-30 border-b border-r border-zinc-800/50 px-2 py-1.5 ${
                 col.isPast
-                  ? "bg-zinc-950/95"
+                  ? "bg-zinc-950"
                   : col.isToday
-                    ? "bg-zinc-900/95"
+                    ? "bg-zinc-900"
                     : col.isWeekend
-                      ? "bg-rose-950/20"
-                      : "bg-zinc-950/95"
-              } ${col.isPast ? "opacity-40" : ""}`}
+                      ? "bg-rose-950/95"
+                      : "bg-zinc-950"
+              }`}
               style={{ height: HEADER_H }}
             >
               <p
@@ -447,7 +447,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               <div key={`time-${hour}`} className="contents">
                 {/* Time label */}
                 <div
-                  className="sticky left-0 z-10 border-b border-r border-zinc-800/30 bg-zinc-950/90 pr-2 text-right"
+                  className="sticky left-0 z-20 border-b border-r border-zinc-800/30 bg-zinc-950 pr-2 text-right"
                   style={{ height: ROW_H }}
                 >
                   <span className="relative -top-2 text-[10px] text-zinc-600">
@@ -479,7 +479,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
         {/* ── Positioned slot blocks ── */}
         <div
-          className="pointer-events-none absolute"
+          className="pointer-events-none absolute z-10 overflow-hidden"
           style={{
             top: HEADER_H,
             left: 56,
