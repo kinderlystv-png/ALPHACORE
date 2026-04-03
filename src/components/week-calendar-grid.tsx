@@ -30,7 +30,7 @@ const HOUR_START = 5; // 05:00
 const HOUR_END = 24; // 00:00 next day
 const TOTAL_HOURS = HOUR_END - HOUR_START; // 19
 const ROW_H = 56; // px per hour row
-const HEADER_H = 72; // column header height
+const HEADER_H = 88; // column header height (room for task chips)
 
 /* ── Helpers ── */
 
@@ -38,14 +38,12 @@ function todayKey() {
   return dateStr();
 }
 
-function buildWeek(anchor: Date): Date[] {
-  const monday = new Date(anchor);
-  const day = monday.getDay();
-  monday.setDate(monday.getDate() - ((day + 6) % 7));
-  monday.setHours(0, 0, 0, 0);
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
+function buildWindow(anchor: Date): Date[] {
+  const start = new Date(anchor);
+  start.setHours(0, 0, 0, 0);
+  return Array.from({ length: 8 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
     return d;
   });
 }
@@ -78,6 +76,7 @@ type DayColumn = {
   dayLabel: string;
   dateLabel: string;
   isToday: boolean;
+  isPast: boolean;
   tasks: Task[];
   slots: ScheduleSlot[];
 };
@@ -91,7 +90,12 @@ type DragState =
 
 export function WeekCalendarGrid() {
   const [version, setVersion] = useState(0);
-  const [anchor, setAnchor] = useState(() => new Date());
+  const [anchor, setAnchor] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
   const [drag, setDrag] = useState<DragState>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -118,19 +122,21 @@ export function WeekCalendarGrid() {
     }
   }, []);
 
-  const week = useMemo(() => buildWeek(anchor), [anchor]);
+  const days = useMemo(() => buildWindow(anchor), [anchor]);
 
   const columns = useMemo<DayColumn[]>(() => {
     const tasks = getActionableTasks(today);
-    return week.map((date) => {
+    return days.map((date) => {
       const key = dateStr(date);
       const isToday = key === today;
+      const isPast = key < today;
       return {
         key,
         date,
         dayLabel: new Intl.DateTimeFormat("ru-RU", { weekday: "short" }).format(date),
         dateLabel: new Intl.DateTimeFormat("ru-RU", { day: "numeric" }).format(date),
         isToday,
+        isPast,
         tasks: tasks
           .filter((t) => taskBelongsToDay(t, key, today, isToday))
           .sort((a, b) => compareTasksByAttention(a, b, today)),
@@ -138,7 +144,7 @@ export function WeekCalendarGrid() {
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [week, today, version]);
+  }, [days, today, version]);
 
   // navigation
   const shiftWeek = useCallback(
@@ -152,7 +158,12 @@ export function WeekCalendarGrid() {
     [],
   );
 
-  const goToday = useCallback(() => setAnchor(new Date()), []);
+  const goToday = useCallback(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    d.setHours(0, 0, 0, 0);
+    setAnchor(d);
+  }, []);
 
   // drag handlers
   const onDragStartTask = useCallback((taskId: string, originDay: string) => {
@@ -201,11 +212,11 @@ export function WeekCalendarGrid() {
 
   // week label
   const weekLabel = useMemo(() => {
-    const first = week[0];
-    const last = week[6];
+    const first = days[0];
+    const last = days[days.length - 1];
     const fmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
     return `${fmt.format(first)} — ${fmt.format(last)}`;
-  }, [week]);
+  }, [days]);
 
   return (
     <section className="flex flex-col rounded-4xl border border-zinc-800/50 bg-zinc-950/40">
@@ -255,7 +266,7 @@ export function WeekCalendarGrid() {
         <div
           className="relative grid"
           style={{
-            gridTemplateColumns: "56px repeat(7, minmax(140px, 1fr))",
+            gridTemplateColumns: "56px repeat(8, minmax(120px, 1fr))",
             minWidth: "1080px",
           }}
         >
@@ -269,47 +280,52 @@ export function WeekCalendarGrid() {
               key={`head-${col.key}`}
               className={`sticky top-0 z-20 border-b border-r border-zinc-800/50 px-2 py-2 ${
                 col.isToday ? "bg-zinc-900/95" : "bg-zinc-950/95"
-              }`}
+              } ${col.isPast ? "opacity-40" : ""}`}
               style={{ height: HEADER_H }}
             >
               <p
                 className={`text-center text-[10px] uppercase tracking-[0.2em] ${
-                  col.isToday ? "text-sky-400" : "text-zinc-500"
+                  col.isToday ? "text-sky-400" : col.isPast ? "text-zinc-600" : "text-zinc-500"
                 }`}
               >
                 {col.dayLabel}
               </p>
               <p
                 className={`mt-0.5 text-center text-lg font-bold ${
-                  col.isToday ? "text-sky-300" : "text-zinc-200"
+                  col.isToday ? "text-sky-300" : col.isPast ? "text-zinc-600" : "text-zinc-200"
                 }`}
               >
                 {col.dateLabel}
               </p>
 
-              {/* All-day tasks (compact) */}
+              {/* All-day tasks */}
               {col.tasks.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1 overflow-hidden" style={{ maxHeight: 22 }}>
-                  {col.tasks.slice(0, 3).map((t) => {
+                <div className="mt-1 flex flex-col gap-0.5 overflow-hidden" style={{ maxHeight: 36 }}>
+                  {col.tasks.slice(0, 4).map((t) => {
                     const c = taskColor(t);
                     return (
                       <span
                         key={t.id}
-                        draggable
+                        draggable={!col.isPast}
                         onDragStart={(e) => {
+                          if (col.isPast) return;
                           e.dataTransfer.effectAllowed = "move";
                           onDragStartTask(t.id, col.key);
                         }}
                         onDragEnd={onDragEnd}
-                        className={`cursor-grab truncate rounded-md border px-1 py-0.5 text-[9px] font-medium ${c.border} ${c.bg} ${c.text}`}
+                        className={`truncate rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${
+                          col.isPast
+                            ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
+                            : `cursor-grab ${c.border} ${c.bg} ${c.text}`
+                        }`}
                         title={t.title}
                       >
-                        {t.title.slice(0, 14)}
+                        {t.title}
                       </span>
                     );
                   })}
-                  {col.tasks.length > 3 && (
-                    <span className="text-[9px] text-zinc-600">+{col.tasks.length - 3}</span>
+                  {col.tasks.length > 4 && (
+                    <span className="text-[9px] text-zinc-600">+{col.tasks.length - 4}</span>
                   )}
                 </div>
               )}
@@ -336,12 +352,16 @@ export function WeekCalendarGrid() {
                   <div
                     key={`cell-${col.key}-${hour}`}
                     className={`relative border-b border-r border-zinc-800/20 transition-colors ${
-                      col.isToday ? "bg-zinc-900/15" : ""
-                    } ${dropTarget === col.key ? "bg-sky-500/5" : ""}`}
+                      col.isPast
+                        ? "bg-zinc-950/40"
+                        : col.isToday
+                          ? "bg-zinc-900/15"
+                          : ""
+                    } ${!col.isPast && dropTarget === col.key ? "bg-sky-500/5" : ""}`}
                     style={{ height: ROW_H }}
-                    onDragOver={(e) => onDragOver(e, col.key)}
-                    onDragLeave={onDragLeave}
-                    onDrop={(e) => onDrop(e, col.key)}
+                    onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
+                    onDragLeave={!col.isPast ? onDragLeave : undefined}
+                    onDrop={(e) => !col.isPast && onDrop(e, col.key)}
                   />
                 ))}
               </div>
@@ -362,10 +382,10 @@ export function WeekCalendarGrid() {
         >
           <div
             className="relative grid h-full"
-            style={{ gridTemplateColumns: "repeat(7, minmax(140px, 1fr))" }}
+            style={{ gridTemplateColumns: "repeat(8, minmax(120px, 1fr))" }}
           >
             {columns.map((col, colIdx) => (
-              <div key={`overlay-${col.key}`} className="relative">
+              <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
                 {col.slots.map((slot) => {
                   const top = slotTop(slot.start);
                   const height = slotHeight(slot.start, slot.end);
