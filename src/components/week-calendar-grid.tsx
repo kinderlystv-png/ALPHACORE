@@ -42,6 +42,9 @@ const DEFAULT_CUSTOM_DURATION_MIN = 60;
 const MOUSE_HOLD_MS = 110;
 const TOUCH_HOLD_MS = 240;
 const POINTER_SLOP_PX = 10;
+const AUTO_SCROLL_EDGE_PX = 72;
+const AUTO_SCROLL_MAX_STEP = 24;
+const QUICK_MENU_ESTIMATED_HEIGHT = 560;
 
 const QUICK_TONE_OPTIONS: Array<{ value: ScheduleTone; label: string }> = [
   { value: "work", label: "💼 Работа" },
@@ -125,6 +128,21 @@ function copyTitle(title: string): string {
   return `${trimmed} (копия)`;
 }
 
+function slotsOverlap(
+  left: Pick<EditableSlotDraft, "start" | "end">,
+  right: Pick<ScheduleSlot, "start" | "end">,
+): boolean {
+  return (
+    timeToMinutes(left.start) < timeToMinutes(right.end) &&
+    timeToMinutes(left.end) > timeToMinutes(right.start)
+  );
+}
+
+function vibrateIfAvailable(pattern: number | number[]) {
+  if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return;
+  navigator.vibrate(pattern);
+}
+
 /* ── Types ── */
 
 type DayColumn = {
@@ -186,6 +204,8 @@ type ActivePointerEdit = {
   base: EditableSlotDraft;
   draft: EditableSlotDraft;
   hasMoved: boolean;
+  blocked: boolean;
+  blockingSlot: ScheduleSlot | null;
 };
 
 type QuickMenuState = {
@@ -226,6 +246,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const visibleColumnsRef = useRef<DayColumn[]>([]);
   const quickMenuRef = useRef<HTMLDivElement>(null);
   const skipNextClickRef = useRef(false);
+  const activePointerClientRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const autoScrollFrameRef = useRef<number | null>(null);
   const today = todayKey();
 
   useEffect(() => {
@@ -387,6 +409,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return clamp(snapMinutes(rawMinutes), HOUR_START * 60, HOUR_END * 60);
   }, []);
 
+  const getBlockingSlot = useCallback(
+    (draft: EditableSlotDraft, originalSlot: ScheduleSlot | null): ScheduleSlot | null => {
+      const siblings = getScheduleForDate(draft.date).filter((slot) => slot.id !== originalSlot?.id);
+      return siblings.find((slot) => slotsOverlap(draft, slot)) ?? null;
+    },
+    [],
+  );
+
   const buildDraftFromPointer = useCallback(
     (edit: ActivePointerEdit, clientX: number, clientY: number): ActivePointerEdit => {
       const baseStartMin = timeToMinutes(edit.base.start);
@@ -437,9 +467,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         };
       }
 
+      const blockingSlot = getBlockingSlot(draft, edit.originalSlot);
+
       return {
         ...edit,
         draft,
+        blocked: Boolean(blockingSlot),
+        blockingSlot,
         hasMoved:
           edit.hasMoved ||
           Math.abs(clientX - edit.originClientX) > POINTER_SLOP_PX ||
@@ -449,7 +483,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           draft.end !== edit.base.end,
       };
     },
-    [getPointerDayKey, getSnappedMinutesFromClientY],
+    [getBlockingSlot, getPointerDayKey, getSnappedMinutesFromClientY],
   );
 
   const activatePendingPointerEdit = useCallback(
@@ -481,6 +515,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         base,
         draft: base,
         hasMoved: false,
+        blocked: Boolean(getBlockingSlot(base, pending.slot)),
+        blockingSlot: getBlockingSlot(base, pending.slot),
       };
 
       skipNextClickRef.current = true;
@@ -488,14 +524,22 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       activeEditRef.current = next;
       setActiveEdit(next);
       document.body.style.userSelect = "none";
+      activePointerClientRef.current = { x: pending.startX, y: pending.startY };
+      vibrateIfAvailable(10);
     },
-    [getSnappedMinutesFromClientY, toEditableDraft],
+    [getBlockingSlot, getSnappedMinutesFromClientY, toEditableDraft],
   );
 
   const commitPointerEdit = useCallback(
     (edit: ActivePointerEdit) => {
       const { draft, originalSlot } = edit;
       setQuickMenu(null);
+
+      const blockingSlot = getBlockingSlot(draft, originalSlot);
+      if (blockingSlot) {
+        vibrateIfAvailable([16, 50, 16]);
+        return;
+      }
 
       if (!originalSlot) {
         addCustomEvent({
@@ -507,6 +551,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           tags: draft.tags,
         });
         setVersion((value) => value + 1);
+        vibrateIfAvailable(8);
         return;
       }
 
@@ -519,8 +564,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         tags: draft.tags,
       });
       setVersion((value) => value + 1);
+      vibrateIfAvailable(8);
     },
-    [],
+    [getBlockingSlot],
   );
 
   useEffect(() => {
@@ -539,6 +585,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       if (!edit || edit.pointerId !== event.pointerId) return;
 
       event.preventDefault();
+      activePointerClientRef.current = { x: event.clientX, y: event.clientY };
       const next = buildDraftFromPointer(edit, event.clientX, event.clientY);
       activeEditRef.current = next;
       setActiveEdit(next);
@@ -558,6 +605,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       activeEditRef.current = null;
       setActiveEdit(null);
       document.body.style.userSelect = "";
+      activePointerClientRef.current = { x: 0, y: 0 };
       window.setTimeout(() => {
         skipNextClickRef.current = false;
       }, 0);
@@ -574,6 +622,70 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       document.body.style.userSelect = "";
     };
   }, [buildDraftFromPointer, cancelPendingPointerEdit, commitPointerEdit]);
+
+  useEffect(() => {
+    if (!activeEdit) return;
+
+    const tick = () => {
+      const container = gridRef.current;
+      const edit = activeEditRef.current;
+      if (!container || !edit) {
+        autoScrollFrameRef.current = null;
+        return;
+      }
+
+      const { x, y } = activePointerClientRef.current;
+      const rect = container.getBoundingClientRect();
+
+      let deltaY = 0;
+      let deltaX = 0;
+
+      if (y < rect.top + AUTO_SCROLL_EDGE_PX) {
+        deltaY = -Math.ceil(((rect.top + AUTO_SCROLL_EDGE_PX - y) / AUTO_SCROLL_EDGE_PX) * AUTO_SCROLL_MAX_STEP);
+      } else if (y > rect.bottom - AUTO_SCROLL_EDGE_PX) {
+        deltaY = Math.ceil(((y - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX) * AUTO_SCROLL_MAX_STEP);
+      }
+
+      if (x < rect.left + AUTO_SCROLL_EDGE_PX) {
+        deltaX = -Math.ceil(((rect.left + AUTO_SCROLL_EDGE_PX - x) / AUTO_SCROLL_EDGE_PX) * AUTO_SCROLL_MAX_STEP);
+      } else if (x > rect.right - AUTO_SCROLL_EDGE_PX) {
+        deltaX = Math.ceil(((x - (rect.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX) * AUTO_SCROLL_MAX_STEP);
+      }
+
+      if (deltaY !== 0 || deltaX !== 0) {
+        const prevTop = container.scrollTop;
+        const prevLeft = container.scrollLeft;
+
+        container.scrollTop = clamp(
+          prevTop + deltaY,
+          0,
+          Math.max(container.scrollHeight - container.clientHeight, 0),
+        );
+        container.scrollLeft = clamp(
+          prevLeft + deltaX,
+          0,
+          Math.max(container.scrollWidth - container.clientWidth, 0),
+        );
+
+        if (container.scrollTop !== prevTop || container.scrollLeft !== prevLeft) {
+          const next = buildDraftFromPointer(edit, x, y);
+          activeEditRef.current = next;
+          setActiveEdit(next);
+        }
+      }
+
+      autoScrollFrameRef.current = window.requestAnimationFrame(tick);
+    };
+
+    autoScrollFrameRef.current = window.requestAnimationFrame(tick);
+
+    return () => {
+      if (autoScrollFrameRef.current != null) {
+        window.cancelAnimationFrame(autoScrollFrameRef.current);
+        autoScrollFrameRef.current = null;
+      }
+    };
+  }, [activeEdit, buildDraftFromPointer]);
 
   const queuePointerEdit = useCallback(
     (
@@ -612,12 +724,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const openQuickMenu = useCallback((element: HTMLElement, slot: ScheduleSlot) => {
     const rect = element.getBoundingClientRect();
-    const mobile = window.innerWidth < 640;
-    const desktopHalfWidth = 112;
+    const mobile = window.innerWidth < 820 || window.innerHeight < 860;
+    const desktopHalfWidth = 192;
+    const maxTop = Math.max(12, window.innerHeight - QUICK_MENU_ESTIMATED_HEIGHT - 12);
 
     setQuickMenu({
       slot,
-      top: clamp(rect.top + Math.min(rect.height, 28) + 10, 12, window.innerHeight - 12),
+      top: clamp(rect.top + Math.min(rect.height, 28) + 10, 12, maxTop),
       left: clamp(rect.left + rect.width / 2, 16 + desktopHalfWidth, window.innerWidth - 16 - desktopHalfWidth),
       mobile,
       draftTitle: slot.title,
@@ -1097,11 +1210,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const height = slotHeight(slot.start, slot.end);
                   const c = toneColor(slot.tone);
                   const isEditable = isEditableScheduleSlot(slot);
+                  const slotPadding = isEditable ? "px-2 py-2" : "px-2 py-1";
 
                   return (
                     <div
                       key={slot.id}
-                      className={`pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-lg border px-2 py-1 ${c.border} ${c.bg} ${
+                      className={`pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-xl border shadow-[0_6px_18px_rgba(0,0,0,0.18)] ${slotPadding} ${c.border} ${c.bg} ${
                         isEditable ? "cursor-grab touch-none" : ""
                       }`}
                       style={{ top, height, minHeight: 20 }}
@@ -1125,13 +1239,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить начало"
-                          className="absolute inset-x-1 top-0 h-2 cursor-ns-resize rounded-t-md bg-transparent"
+                          className="absolute inset-x-2 top-1 z-10 flex h-4 cursor-ns-resize items-start justify-center rounded-full bg-transparent"
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-start", e, col.key, slot);
                           }}
-                        />
+                        >
+                          <span className="mt-1 h-1 w-12 rounded-full bg-white/40 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]" />
+                        </button>
                       )}
                       <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
                         {slot.start}–{slot.end}
@@ -1148,13 +1264,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить конец"
-                          className="absolute inset-x-1 bottom-0 h-2 cursor-ns-resize rounded-b-md bg-transparent"
+                          className="absolute inset-x-2 bottom-1 z-10 flex h-4 cursor-ns-resize items-end justify-center rounded-full bg-transparent"
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-end", e, col.key, slot);
                           }}
-                        />
+                        >
+                          <span className="mb-1 h-1 w-12 rounded-full bg-white/40 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]" />
+                        </button>
                       )}
                     </div>
                   );
@@ -1164,25 +1282,32 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const draftTop = slotTop(activeEdit.draft.start);
                   const draftHeight = slotHeight(activeEdit.draft.start, activeEdit.draft.end);
                   const draftColor = toneColor(activeEdit.draft.tone);
+                  const previewClass = activeEdit.blocked
+                    ? "border-rose-400/80 bg-rose-950/45 text-rose-100"
+                    : `${draftColor.border} ${draftColor.bg}`;
                   return (
                     <div
-                      className={`pointer-events-none absolute left-1 right-1 overflow-hidden rounded-lg border-2 px-2 py-1 shadow-[0_0_0_1px_rgba(255,255,255,0.05)] ${draftColor.border} ${draftColor.bg}`}
+                      className={`pointer-events-none absolute left-1 right-1 overflow-hidden rounded-xl border-2 border-dashed px-2 py-2 shadow-[0_18px_42px_rgba(0,0,0,0.28)] ${previewClass} ${
+                        activeEdit.blocked ? "opacity-95" : "opacity-90"
+                      }`}
                       style={{ top: draftTop, height: draftHeight, minHeight: 20 }}
                     >
-                      <p className={`text-[10px] font-semibold leading-tight ${draftColor.text}`}>
+                      <p className={`text-[10px] font-semibold leading-tight ${activeEdit.blocked ? "text-rose-100" : draftColor.text}`}>
                         {activeEdit.draft.start}–{activeEdit.draft.end}
                       </p>
-                      <p className={`mt-0.5 truncate text-[11px] font-semibold leading-snug ${draftColor.text}`}>
+                      <p className={`mt-0.5 truncate text-[11px] font-semibold leading-snug ${activeEdit.blocked ? "text-rose-100" : draftColor.text}`}>
                         {activeEdit.originalSlot ? activeEdit.draft.title : "Новый слот"}
                       </p>
-                      <p className="mt-1 text-[9px] font-medium uppercase tracking-[0.14em] text-zinc-400">
-                        {activeEdit.mode === "move"
-                          ? "Перемещение"
-                          : activeEdit.mode === "resize-start"
-                            ? "Старт"
-                            : activeEdit.mode === "resize-end"
-                              ? "Финиш"
-                              : "Создание"}
+                      <p className={`mt-1 text-[9px] font-medium uppercase tracking-[0.14em] ${activeEdit.blocked ? "text-rose-200" : "text-zinc-300"}`}>
+                        {activeEdit.blocked
+                          ? `Нельзя · ${activeEdit.blockingSlot?.title ?? "занято"}`
+                          : activeEdit.mode === "move"
+                            ? "Ghost · перемещение"
+                            : activeEdit.mode === "resize-start"
+                              ? "Ghost · старт"
+                              : activeEdit.mode === "resize-end"
+                                ? "Ghost · финиш"
+                                : "Ghost · создание"}
                       </p>
                     </div>
                   );
@@ -1217,10 +1342,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         return (
           <div
             ref={quickMenuRef}
-            className={quickMenu.mobile ? "fixed inset-x-3 bottom-24 z-50" : "fixed z-50 w-56 -translate-x-1/2"}
+            className={quickMenu.mobile ? "fixed inset-x-3 bottom-24 z-50" : "fixed z-50 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2"}
             style={quickMenu.mobile ? undefined : { top: quickMenu.top, left: quickMenu.left }}
           >
-            <div className="rounded-3xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur">
+            <div className="max-h-[min(72vh,38rem)] overflow-y-auto overscroll-contain rounded-3xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur">
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-[11px] uppercase tracking-[0.16em] text-zinc-500">Быстрые команды</p>
