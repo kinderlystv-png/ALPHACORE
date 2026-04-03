@@ -36,9 +36,7 @@ export function Pomodoro() {
   const [seconds, setSeconds] = useState(FOCUS_MIN * 60);
   const [sessions, setSessions] = useState(0);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [selectedTaskId, setSelectedTaskId] = useState<string>(() => {
-    return lsGet<{ selectedTaskId?: string }>(PREF_KEY, {}).selectedTaskId ?? "";
-  });
+  const [selectedTaskId, setSelectedTaskId] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -49,9 +47,11 @@ export function Pomodoro() {
     const next = sortPomodoroTasks(
       getTasks().filter((task) => task.status === "active" || task.status === "inbox"),
     );
+    const savedTaskId = lsGet<{ selectedTaskId?: string }>(PREF_KEY, {}).selectedTaskId ?? "";
     setTasks(next);
     setSelectedTaskId((current) => {
-      if (current && next.some((task) => task.id === current)) return current;
+      const preferred = current || savedTaskId;
+      if (preferred && next.some((task) => task.id === preferred)) return preferred;
       return next[0]?.id ?? "";
     });
   }, []);
@@ -120,10 +120,10 @@ export function Pomodoro() {
 
   return (
     <section
-      className={`rounded-[2rem] border p-5 shadow-2xl shadow-black/20 transition-colors ${
+      className={`rounded-4xl border p-5 shadow-2xl shadow-black/20 transition-colors ${
         phase === "focus"
-          ? "border-rose-500/20 bg-gradient-to-br from-rose-950/10 to-zinc-950"
-          : "border-emerald-500/20 bg-gradient-to-br from-emerald-950/10 to-zinc-950"
+          ? "border-rose-500/20 bg-linear-to-br from-rose-950/10 to-zinc-950"
+          : "border-emerald-500/20 bg-linear-to-br from-emerald-950/10 to-zinc-950"
       }`}
     >
       <div className="flex items-center justify-between gap-3">

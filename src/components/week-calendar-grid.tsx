@@ -38,6 +38,13 @@ function todayKey() {
   return dateStr();
 }
 
+function getTodayWindowAnchor() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 function buildWindow(anchor: Date): Date[] {
   const start = new Date(anchor);
   start.setHours(0, 0, 0, 0);
@@ -99,17 +106,17 @@ type DragState =
 
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [version, setVersion] = useState(0);
-  const [anchor, setAnchor] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
+  const [anchor, setAnchor] = useState<Date | null>(null);
   const [shouldCenterNow, setShouldCenterNow] = useState(true);
   const [drag, setDrag] = useState<DragState>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const today = todayKey();
+
+  useEffect(() => {
+    setAnchor(getTodayWindowAnchor());
+    setShouldCenterNow(true);
+  }, []);
 
   // subscribe to data changes
   useEffect(() => {
@@ -124,7 +131,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     });
   }, []);
 
-  const days = useMemo(() => buildWindow(anchor), [anchor]);
+  const days = useMemo(() => (anchor ? buildWindow(anchor) : []), [anchor]);
 
   // center current-time line on first render / when returning to today
   useEffect(() => {
@@ -170,6 +177,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const shiftWeek = useCallback(
     (delta: number) => {
       setAnchor((prev) => {
+        if (!prev) return getTodayWindowAnchor();
         const next = new Date(prev);
         next.setDate(prev.getDate() + delta * 7);
         return next;
@@ -179,10 +187,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   );
 
   const goToday = useCallback(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    d.setHours(0, 0, 0, 0);
-    setAnchor(d);
+    setAnchor(getTodayWindowAnchor());
     setShouldCenterNow(true);
   }, []);
 
@@ -233,11 +238,61 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   // week label
   const weekLabel = useMemo(() => {
+    if (days.length === 0) return "";
     const first = days[0];
     const last = days[days.length - 1];
     const fmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
     return `${fmt.format(first)} — ${fmt.format(last)}`;
   }, [days]);
+
+  if (!anchor) {
+    return (
+      <section className="flex flex-col rounded-4xl border border-zinc-800/50 bg-zinc-950/40">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/50 px-4 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-700">
+              ←
+            </span>
+            <span className="rounded-xl border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-600">
+              Сегодня
+            </span>
+            <span className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-700">
+              →
+            </span>
+            <span className="ml-2 text-sm font-semibold text-zinc-700">Загрузка…</span>
+
+            {stats && (
+              <div className="ml-2 flex flex-wrap gap-2">
+                <span className="rounded-lg border border-sky-500/10 bg-sky-950/5 px-2 py-1 text-[11px] text-sky-400/60">
+                  {stats.inboxCount} inbox
+                </span>
+                <span className="rounded-lg border border-emerald-500/10 bg-emerald-950/5 px-2 py-1 text-[11px] text-emerald-400/60">
+                  {stats.activeCount} в работе
+                </span>
+                <span className="rounded-lg border border-amber-500/10 bg-amber-950/5 px-2 py-1 text-[11px] text-amber-400/60">
+                  {stats.doneThisWeek} готово/нед
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {AREA_LEGEND.map((a) => (
+              <span
+                key={a.key}
+                className="flex items-center gap-1.5 text-[10px] text-zinc-600"
+              >
+                <span className={`inline-block h-2 w-2 rounded-full ${AREA_COLOR[a.key].dot}`} />
+                {a.emoji} {a.label}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="h-[75vh] min-h-[640px] animate-pulse bg-zinc-950/20" />
+      </section>
+    );
+  }
 
   return (
     <section className="flex flex-col rounded-4xl border border-zinc-800/50 bg-zinc-950/40">
