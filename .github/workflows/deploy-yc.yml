@@ -75,4 +75,4 @@ jobs:
             --concurrency 4 \
             --execution-timeout 30s \
             --service-account-id "${{ secrets.YC_SA_ID }}" \
-            --environment "DB_HOST=${{ secrets.DB_HOST }},DB_PORT=${{ secrets.DB_PORT }},DB_NAME=${{ secrets.DB_NAME }},DB_USER=${{ secrets.DB_USER }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_SSL=true"
+            --environment "PORT=8080,HOSTNAME=0.0.0.0,DB_HOST=${{ secrets.DB_HOST }},DB_PORT=${{ secrets.DB_PORT }},DB_NAME=${{ secrets.DB_NAME }},DB_USER=${{ secrets.DB_USER }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_SSL=true"
