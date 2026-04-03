@@ -165,10 +165,19 @@ function slotsOverlap(
   return rangesOverlap(left, right);
 }
 
+function isChildcareBackgroundSlot(
+  slot: Pick<ScheduleSlot, "source" | "tags"> | LaneRenderable,
+): boolean {
+  return (
+    slot.source === "derived" &&
+    (slot.tags.includes("childcare-window") ||
+      (slot.tags.includes("admin") && slot.tags.includes("danya")))
+  );
+}
+
 function isSupportLaneSlot(slot: Pick<ScheduleSlot, "source" | "tags"> | LaneRenderable): boolean {
   return (
     slot.source === "studio" ||
-    slot.tags.includes("admin") ||
     (slot.tags.includes("party") && slot.tags.includes("studio"))
   );
 }
@@ -187,6 +196,14 @@ function getSupportLaneWidth(columnWidth: number): number {
     42,
     Math.max(42, columnWidth - 52),
   );
+}
+
+function getBackgroundSlotMetrics(columnWidth: number): LaneMetrics {
+  return {
+    left: SLOT_SIDE_INSET_PX,
+    width: Math.max(columnWidth - SLOT_SIDE_INSET_PX * 2, 24),
+    isSupportLane: false,
+  };
 }
 
 function getLaneMetrics(
@@ -573,11 +590,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const getBlockingSlot = useCallback(
     (draft: EditableSlotDraft, originalSlot: ScheduleSlot | null): ScheduleSlot | null => {
-      const draftIsSupport = originalSlot ? isSupportLaneSlot(originalSlot) : false;
+      const draftIsAmbient = originalSlot
+        ? isSupportLaneSlot(originalSlot) || isChildcareBackgroundSlot(originalSlot)
+        : false;
       const siblings = getScheduleForDate(draft.date).filter((slot) => {
         if (slot.id === originalSlot?.id) return false;
         if (isSupportLaneSlot(slot)) return false;
-        if (draftIsSupport) return false;
+        if (isChildcareBackgroundSlot(slot)) return false;
+        if (draftIsAmbient) return false;
         return true;
       });
       return siblings.find((slot) => slotsOverlap(draft, slot)) ?? null;
@@ -1518,23 +1538,26 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
                   const top = slotTop(slot.start);
                   const height = slotHeight(slot.start, slot.end);
-                  const laneMetrics = getLaneMetrics(
-                    {
-                      id: slot.id,
-                      start: slot.start,
-                      end: slot.end,
-                      source: slot.source,
-                      tags: slot.tags,
-                    },
-                    col.slots.map((candidate) => ({
-                      id: candidate.id,
-                      start: candidate.start,
-                      end: candidate.end,
-                      source: candidate.source,
-                      tags: candidate.tags,
-                    })),
-                    overlayColumnWidth,
-                  );
+                  const isChildcareBackground = isChildcareBackgroundSlot(slot);
+                  const laneMetrics = isChildcareBackground
+                    ? getBackgroundSlotMetrics(overlayColumnWidth)
+                    : getLaneMetrics(
+                        {
+                          id: slot.id,
+                          start: slot.start,
+                          end: slot.end,
+                          source: slot.source,
+                          tags: slot.tags,
+                        },
+                        col.slots.map((candidate) => ({
+                          id: candidate.id,
+                          start: candidate.start,
+                          end: candidate.end,
+                          source: candidate.source,
+                          tags: candidate.tags,
+                        })),
+                        overlayColumnWidth,
+                      );
                   const c = toneColor(slot.tone);
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
@@ -1547,17 +1570,21 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date;
                   const isSelectedSlot = isQuickMenuSlot || isActiveSlot;
                   const isHoveredSlot = hoveredSlotKey === slotInstanceKey;
-                  const slotPadding = isSupportSlot
+                  const slotPadding = isChildcareBackground
                     ? height >= 88
-                      ? "px-1.5 py-1.5"
-                      : "px-1 py-1"
-                    : !isEditable
-                    ? "px-2 py-1"
-                    : height >= 96
-                      ? "px-2 pt-5 pb-5"
-                      : height >= 64
-                        ? "px-2 pt-4 pb-4"
-                        : "px-2 pt-3 pb-3";
+                      ? "px-3 py-2.5"
+                      : "px-2.5 py-2"
+                    : isSupportSlot
+                      ? height >= 88
+                        ? "px-1.5 py-1.5"
+                        : "px-1 py-1"
+                      : !isEditable
+                        ? "px-2 py-1"
+                        : height >= 96
+                          ? "px-2 pt-5 pb-5"
+                          : height >= 64
+                            ? "px-2 pt-4 pb-4"
+                            : "px-2 pt-3 pb-3";
                   const handleButtonHeight = height >= 64 ? "h-5" : "h-4";
                   const handleGripSize = height >= 64 ? "h-1 w-4" : "h-0.5 w-3";
                   const handleOpacity = isActiveSlot
@@ -1570,20 +1597,25 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         ? "opacity-70"
                         : "opacity-0";
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
+                  const shellTone = isChildcareBackground
+                    ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
+                    : `${c.border} ${c.bg}`;
+                  const shellDepth = isChildcareBackground
+                    ? "shadow-none"
+                    : isBlockingSlot
+                      ? "ring-2 ring-rose-400/80 shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_14px_28px_rgba(127,29,29,0.28)]"
+                      : isSelectedSlot
+                        ? "ring-1 ring-white/12 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_10px_24px_rgba(0,0,0,0.22)]"
+                        : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]";
+                  const slotZIndex = isChildcareBackground ? 0 : isSelectedSlot ? 14 : isSupportSlot ? 11 : 12;
 
                   return (
                     <div
                       key={slot.id}
-                      className={`group pointer-events-auto absolute overflow-hidden rounded-xl border ${slotPadding} ${c.border} ${c.bg} ${
-                        isEditable ? "cursor-grab touch-none" : ""
-                      } ${
-                        isBlockingSlot
-                          ? "ring-2 ring-rose-400/80 shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_14px_28px_rgba(127,29,29,0.28)]"
-                          : isSelectedSlot
-                            ? "ring-1 ring-white/12 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_10px_24px_rgba(0,0,0,0.22)]"
-                          : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]"
-                      }`}
-                      style={{ top, left: laneMetrics.left, width: laneMetrics.width, height, minHeight: 20 }}
+                      className={`group absolute overflow-hidden rounded-xl border ${slotPadding} ${shellTone} ${
+                        isChildcareBackground ? "pointer-events-none" : "pointer-events-auto"
+                      } ${isEditable ? "cursor-grab touch-none" : ""} ${shellDepth}`}
+                      style={{ top, left: laneMetrics.left, width: laneMetrics.width, height, minHeight: 20, zIndex: slotZIndex }}
                       onPointerDown={(e) => {
                         if (!isEditable) return;
                         e.stopPropagation();
@@ -1611,46 +1643,70 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       }}
                       title={`${slot.start}–${slot.end} ${slot.title}`}
                     >
-                      {isEditable && (
-                        <button
-                          type="button"
-                          aria-label="Изменить начало"
-                          className={`absolute inset-x-0 top-0 z-10 flex cursor-ns-resize items-start justify-between ${isSupportSlot ? "px-1.5" : "px-3"} bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
-                          onClick={(e) => e.stopPropagation()}
-                          onPointerDown={(e) => {
-                            e.stopPropagation();
-                            queuePointerEdit("resize-start", e, col.key, slot);
-                          }}
-                        >
-                          <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
-                          <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
-                        </button>
-                      )}
-                      <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
-                        {slot.start}–{slot.end}
-                      </p>
-                      <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
-                        {slot.title}
-                      </p>
-                      {!isSupportSlot && height > 40 && slot.subtitle && (
-                        <p className="mt-0.5 line-clamp-2 text-[9px] leading-tight text-zinc-500">
-                          {slot.subtitle}
-                        </p>
-                      )}
-                      {isEditable && (
-                        <button
-                          type="button"
-                          aria-label="Изменить конец"
-                          className={`absolute inset-x-0 bottom-0 z-10 flex cursor-ns-resize items-end justify-between ${isSupportSlot ? "px-1.5" : "px-3"} bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
-                          onClick={(e) => e.stopPropagation()}
-                          onPointerDown={(e) => {
-                            e.stopPropagation();
-                            queuePointerEdit("resize-end", e, col.key, slot);
-                          }}
-                        >
-                          <span className={`mb-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
-                          <span className={`mb-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
-                        </button>
+                      {isChildcareBackground ? (
+                        <>
+                          <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-amber-400/10 via-orange-400/6 to-transparent" />
+                          <div className="relative">
+                            <p className="text-[9px] font-medium uppercase tracking-[0.18em] text-amber-200/65">
+                              С Даней · фоновое окно
+                            </p>
+                            <p className="mt-1 text-[10px] font-semibold leading-tight text-amber-50/80">
+                              {slot.start}–{slot.end}
+                            </p>
+                            <p className={`mt-0.5 font-semibold leading-snug text-amber-50/82 ${height >= 72 ? "line-clamp-4 text-[11px]" : "truncate text-[10px]"}`}>
+                              {slot.title}
+                            </p>
+                            {height > 64 && (
+                              <p className="mt-1 line-clamp-2 text-[9px] leading-tight text-amber-100/55">
+                                Саша на админке, ты с Даней.
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {isEditable && (
+                            <button
+                              type="button"
+                              aria-label="Изменить начало"
+                              className={`absolute inset-x-0 top-0 z-10 flex cursor-ns-resize items-start justify-between ${isSupportSlot ? "px-1.5" : "px-3"} bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => {
+                                e.stopPropagation();
+                                queuePointerEdit("resize-start", e, col.key, slot);
+                              }}
+                            >
+                              <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
+                              <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
+                            </button>
+                          )}
+                          <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
+                            {slot.start}–{slot.end}
+                          </p>
+                          <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
+                            {slot.title}
+                          </p>
+                          {!isSupportSlot && height > 40 && slot.subtitle && (
+                            <p className="mt-0.5 line-clamp-2 text-[9px] leading-tight text-zinc-500">
+                              {slot.subtitle}
+                            </p>
+                          )}
+                          {isEditable && (
+                            <button
+                              type="button"
+                              aria-label="Изменить конец"
+                              className={`absolute inset-x-0 bottom-0 z-10 flex cursor-ns-resize items-end justify-between ${isSupportSlot ? "px-1.5" : "px-3"} bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => {
+                                e.stopPropagation();
+                                queuePointerEdit("resize-end", e, col.key, slot);
+                              }}
+                            >
+                              <span className={`mb-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
+                              <span className={`mb-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   );

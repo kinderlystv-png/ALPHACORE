@@ -626,6 +626,7 @@ function buildCoverageSlots(dateKey: string, todayEvents: ScheduleSlot[]): Sched
         "family",
         "danya",
         "admin",
+        "childcare-window",
         "vibe-coding",
         "studio",
         ...(isWednesdayEvening ? ["grandma", "rehearsal"] : []),

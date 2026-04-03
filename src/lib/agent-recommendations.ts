@@ -19,6 +19,7 @@ import { lsGet, lsSet, uid } from "./storage";
 import { compareTasksByAttention, type Task } from "./tasks";
 
 export const AGENT_PROMPT_FEEDBACK_KEY = "alphacore_agent_prompt_feedback";
+export const AGENT_CLARIFICATION_FEEDBACK_KEY = "alphacore_agent_clarification_feedback";
 
 export type RecommendationFeedbackReason =
 	| "timing-stale"
@@ -209,6 +210,44 @@ export type AgentClarificationQuestion = {
 	allowFreeform: boolean;
 };
 
+export type AgentClarificationAnswerEvent = {
+	id: string;
+	questionId: string;
+	taskId: string | null;
+	reason: AgentClarificationQuestionReason;
+	answer: string;
+	freeform: string | null;
+	contextHash: string | null;
+	contextMode: "normal" | "energy-conflict" | "overloaded";
+	createdAt: string;
+};
+
+type ClarificationLearningSignal =
+	| "draft-first"
+	| "structure-first"
+	| "finish-first"
+	| "today-first"
+	| "week-first"
+	| "flexible-timing"
+	| "slot-first"
+	| "defer-slot"
+	| "decision-first"
+	| "mini-sprint"
+	| "full-slot";
+
+export type AgentClarificationLearningProfile = {
+	totalAnswers: number;
+	preferredDoneStyle: "draft-first" | "structure-first" | "finish-first" | null;
+	preferredTimingStyle: "today-first" | "week-first" | "flexible-timing" | null;
+	preferredSlotStyle: "slot-first" | "defer-slot" | null;
+	preferredExecutionStyle: "decision-first" | "mini-sprint" | "full-slot" | null;
+	topSignals: Array<{
+		signal: ClarificationLearningSignal;
+		label: string;
+		count: number;
+	}>;
+};
+
 export type AgentPracticalPlan = {
 	clarificationQuestions: AgentClarificationQuestion[];
 	mergedThemes: string[];
@@ -349,6 +388,20 @@ const HEALTH_SIGNAL_TAGS = new Set([
 
 const BROAD_TASK_PATTERN =
 	/собрать|развернуть|набросать|сделать|подготовить|структур|карта|воронк|план|сценар|skeleton|финализ|стратег|strategy/u;
+
+const CLARIFICATION_SIGNAL_LABEL: Record<ClarificationLearningSignal, string> = {
+	"draft-first": "обычно выбираешь черновик / skeleton",
+	"structure-first": "часто выбираешь структуру / список / карту",
+	"finish-first": "чаще идёшь в финальную версию",
+	"today-first": "чаще решаешь это сегодня",
+	"week-first": "обычно планируешь в пределах недели",
+	"flexible-timing": "часто оставляешь без жёсткой даты",
+	"slot-first": "любишь сначала выбрать слот, потом делать",
+	"defer-slot": "готов не слотировать сразу",
+	"decision-first": "при перегрузе сначала делаешь decision / planning",
+	"mini-sprint": "при перегрузе чаще режешь до mini-sprint",
+	"full-slot": "чаще идёшь в полный слот без урезания",
+};
 
 function nowIso(): string {
 	return new Date().toISOString();
