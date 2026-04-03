@@ -13,6 +13,7 @@ import {
 import {
   addCustomEvent,
   isEditableScheduleSlot,
+  removeEditableScheduleSlot,
   type ScheduleSlot,
   type ScheduleTone,
   getScheduleForDate,
@@ -164,6 +165,13 @@ type ActivePointerEdit = {
   hasMoved: boolean;
 };
 
+type QuickMenuState = {
+  slot: ScheduleSlot;
+  top: number;
+  left: number;
+  mobile: boolean;
+};
+
 function getCompactStart(columns: DayColumn[], compactCount: number): number {
   if (columns.length <= compactCount) return 0;
   const todayIndex = columns.findIndex((column) => column.isToday);
@@ -181,6 +189,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [drag, setDrag] = useState<DragState>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [activeEdit, setActiveEdit] = useState<ActivePointerEdit | null>(null);
+  const [quickMenu, setQuickMenu] = useState<QuickMenuState | null>(null);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
   const [compactStart, setCompactStart] = useState(0);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
@@ -190,6 +199,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const pendingEditRef = useRef<{ data: PendingPointerEdit; timerId: number } | null>(null);
   const activeEditRef = useRef<ActivePointerEdit | null>(null);
   const visibleColumnsRef = useRef<DayColumn[]>([]);
+  const quickMenuRef = useRef<HTMLDivElement>(null);
+  const skipNextClickRef = useRef(false);
   const today = todayKey();
 
   useEffect(() => {
@@ -310,6 +321,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     if (!pendingEditRef.current) return;
     window.clearTimeout(pendingEditRef.current.timerId);
     pendingEditRef.current = null;
+  }, []);
+
+  const closeQuickMenu = useCallback(() => {
+    setQuickMenu(null);
   }, []);
 
   const toEditableDraft = useCallback((slot: ScheduleSlot): EditableSlotDraft => {
@@ -443,6 +458,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         hasMoved: false,
       };
 
+      skipNextClickRef.current = true;
+      setQuickMenu(null);
       activeEditRef.current = next;
       setActiveEdit(next);
       document.body.style.userSelect = "none";
@@ -453,6 +470,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const commitPointerEdit = useCallback(
     (edit: ActivePointerEdit) => {
       const { draft, originalSlot } = edit;
+      setQuickMenu(null);
 
       if (!originalSlot) {
         addCustomEvent({
@@ -540,6 +558,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       if (slot && !isEditableScheduleSlot(slot)) return;
       if (!slot && dayKey < today) return;
 
+      setQuickMenu(null);
       cancelPendingPointerEdit();
 
       const data: PendingPointerEdit = {
@@ -562,6 +581,64 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     },
     [activatePendingPointerEdit, cancelPendingPointerEdit, today],
   );
+
+  const openQuickMenu = useCallback((element: HTMLElement, slot: ScheduleSlot) => {
+    const rect = element.getBoundingClientRect();
+    const mobile = window.innerWidth < 640;
+    const desktopHalfWidth = 112;
+
+    setQuickMenu({
+      slot,
+      top: clamp(rect.top + Math.min(rect.height, 28) + 10, 12, window.innerHeight - 12),
+      left: clamp(rect.left + rect.width / 2, 16 + desktopHalfWidth, window.innerWidth - 16 - desktopHalfWidth),
+      mobile,
+    });
+  }, []);
+
+  const applyQuickSlotPatch = useCallback((slot: ScheduleSlot, patch: Partial<EditableSlotDraft>) => {
+    updateEditableScheduleSlot(slot, {
+      date: patch.date,
+      start: patch.start,
+      end: patch.end,
+      title: patch.title,
+      tone: patch.tone,
+      tags: patch.tags,
+    });
+    setVersion((value) => value + 1);
+    setQuickMenu(null);
+  }, []);
+
+  const deleteQuickSlot = useCallback((slot: ScheduleSlot) => {
+    removeEditableScheduleSlot(slot);
+    setVersion((value) => value + 1);
+    setQuickMenu(null);
+  }, []);
+
+  useEffect(() => {
+    if (!quickMenu) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && quickMenuRef.current?.contains(target)) return;
+      setQuickMenu(null);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setQuickMenu(null);
+    };
+
+    const handleScroll = () => setQuickMenu(null);
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    gridRef.current?.addEventListener("scroll", handleScroll);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      gridRef.current?.removeEventListener("scroll", handleScroll);
+    };
+  }, [quickMenu]);
 
   // navigation
   const shiftWeek = useCallback(
@@ -954,6 +1031,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         e.stopPropagation();
                         queuePointerEdit("move", e, col.key, slot);
                       }}
+                      onClick={(e) => {
+                        if (!isEditable) return;
+                        if (skipNextClickRef.current) {
+                          skipNextClickRef.current = false;
+                          return;
+                        }
+                        e.stopPropagation();
+                        openQuickMenu(e.currentTarget, slot);
+                      }}
                       title={`${slot.start}–${slot.end} ${slot.title}`}
                     >
                       {isEditable && (
@@ -961,6 +1047,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           type="button"
                           aria-label="Изменить начало"
                           className="absolute inset-x-1 top-0 h-2 cursor-ns-resize rounded-t-md bg-transparent"
+                          onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-start", e, col.key, slot);
@@ -983,6 +1070,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           type="button"
                           aria-label="Изменить конец"
                           className="absolute inset-x-1 bottom-0 h-2 cursor-ns-resize rounded-b-md bg-transparent"
+                          onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-end", e, col.key, slot);
@@ -1028,6 +1116,127 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           </div>
         </div>
       </div>
+
+      {quickMenu && (() => {
+        const slot = quickMenu.slot;
+        const startMin = timeToMinutes(slot.start);
+        const endMin = timeToMinutes(slot.end);
+        const durationMin = endMin - startMin;
+        const earlierDisabled = startMin <= HOUR_START * 60;
+        const laterDisabled = endMin >= HOUR_END * 60;
+        const shorterDisabled = durationMin <= MIN_SLOT_MIN;
+        const longerDisabled = endMin + STEP_MIN > HOUR_END * 60;
+        const dayIndex = columns.findIndex((column) => column.key === slot.date);
+        const prevDay = dayIndex > 0 ? columns[dayIndex - 1]?.key : null;
+        const nextDay = dayIndex >= 0 && dayIndex < columns.length - 1 ? columns[dayIndex + 1]?.key : null;
+
+        const actionBtnCls =
+          "rounded-2xl border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-left text-[12px] font-medium text-zinc-200 transition hover:border-zinc-600 hover:text-zinc-50 disabled:cursor-not-allowed disabled:opacity-40";
+
+        return (
+          <div
+            ref={quickMenuRef}
+            className={quickMenu.mobile ? "fixed inset-x-3 bottom-24 z-50" : "fixed z-50 w-56 -translate-x-1/2"}
+            style={quickMenu.mobile ? undefined : { top: quickMenu.top, left: quickMenu.left }}
+          >
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] uppercase tracking-[0.16em] text-zinc-500">Быстрые команды</p>
+                  <p className="truncate text-sm font-semibold text-zinc-100">{slot.title}</p>
+                  <p className="mt-0.5 text-[11px] text-zinc-400">{slot.start}–{slot.end}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeQuickMenu}
+                  className="rounded-full border border-zinc-800 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-100"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  className={actionBtnCls}
+                  disabled={earlierDisabled}
+                  onClick={() =>
+                    applyQuickSlotPatch(slot, {
+                      start: minutesToCalendarTime(startMin - STEP_MIN),
+                      end: minutesToCalendarTime(endMin - STEP_MIN),
+                    })
+                  }
+                >
+                  ↑ раньше 30м
+                </button>
+                <button
+                  type="button"
+                  className={actionBtnCls}
+                  disabled={laterDisabled}
+                  onClick={() =>
+                    applyQuickSlotPatch(slot, {
+                      start: minutesToCalendarTime(startMin + STEP_MIN),
+                      end: minutesToCalendarTime(endMin + STEP_MIN),
+                    })
+                  }
+                >
+                  ↓ позже 30м
+                </button>
+
+                <button
+                  type="button"
+                  className={actionBtnCls}
+                  disabled={!prevDay}
+                  onClick={() => prevDay && applyQuickSlotPatch(slot, { date: prevDay })}
+                >
+                  ← на день
+                </button>
+                <button
+                  type="button"
+                  className={actionBtnCls}
+                  disabled={!nextDay}
+                  onClick={() => nextDay && applyQuickSlotPatch(slot, { date: nextDay })}
+                >
+                  → на день
+                </button>
+
+                <button
+                  type="button"
+                  className={actionBtnCls}
+                  disabled={shorterDisabled}
+                  onClick={() =>
+                    applyQuickSlotPatch(slot, {
+                      end: minutesToCalendarTime(endMin - STEP_MIN),
+                    })
+                  }
+                >
+                  − длительность
+                </button>
+                <button
+                  type="button"
+                  className={actionBtnCls}
+                  disabled={longerDisabled}
+                  onClick={() =>
+                    applyQuickSlotPatch(slot, {
+                      end: minutesToCalendarTime(endMin + STEP_MIN),
+                    })
+                  }
+                >
+                  + длительность
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => deleteQuickSlot(slot)}
+                className="mt-3 w-full rounded-2xl border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:border-rose-400/50 hover:bg-rose-950/50"
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </section>
   );
 }

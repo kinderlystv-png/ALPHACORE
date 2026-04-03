@@ -801,15 +801,13 @@ export function AlphacoreDashboard() {
         </div>
       )}
 
-      {/* ── Calendar hero + sidebar ── */}
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-        {/* Main: calendar */}
+      {/* ── Calendar hero + widgets grid ── */}
+      <div className="space-y-5">
         <WeekCalendarGrid stats={stats} />
 
-        {/* Sidebar */}
-        <aside className="flex flex-col gap-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-12">
           {/* Quick input */}
-          <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
+          <div className="md:col-span-2 xl:col-span-5 rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
             <div className="mb-2 flex items-center gap-2">
               {(["task", "note"] as const).map((mode) => (
                 <button
@@ -886,7 +884,7 @@ export function AlphacoreDashboard() {
             </div>
           </div>
 
-          <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
+          <section className="md:col-span-1 xl:col-span-4 rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-zinc-50">🧹 Inbox triage</h3>
@@ -965,7 +963,7 @@ export function AlphacoreDashboard() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
+          <section className="md:col-span-1 xl:col-span-3 rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-zinc-50">🪄 Drop desk</h3>
@@ -1012,15 +1010,19 @@ export function AlphacoreDashboard() {
           </section>
 
           {/* Habits */}
-          <HabitTracker />
+          <div className="xl:col-span-7">
+            <HabitTracker />
+          </div>
 
           {/* Pomodoro */}
-          <Pomodoro />
+          <div className="xl:col-span-5">
+            <Pomodoro />
+          </div>
 
           {/* Journal preview */}
           <Link
             href="/journal"
-            className="block rounded-2xl border border-fuchsia-500/15 bg-linear-to-br from-fuchsia-950/10 to-zinc-950 p-3 transition hover:border-fuchsia-400/30"
+            className="md:col-span-1 xl:col-span-4 block h-full rounded-2xl border border-fuchsia-500/15 bg-linear-to-br from-fuchsia-950/10 to-zinc-950 p-3 transition hover:border-fuchsia-400/30"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-50">💬 Дневник</h3>
@@ -1050,18 +1052,17 @@ export function AlphacoreDashboard() {
             </div>
           </Link>
 
-          {/* Agent control */}
-          {agentControl && <AgentControlPanel snapshot={agentControl} />}
-
           {/* Productivity bars */}
           {completions.length > 0 && (
-            <div className="rounded-2xl border border-sky-500/15 bg-linear-to-br from-sky-950/10 to-zinc-950 p-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-50">📊 Продуктивность</h3>
-                <span className="text-[10px] text-zinc-500">нед</span>
-              </div>
-              <div className="mt-3 flex justify-center">
-                <ProdBars data={completions} />
+            <div className="md:col-span-1 xl:col-span-4">
+              <div className="h-full rounded-2xl border border-sky-500/15 bg-linear-to-br from-sky-950/10 to-zinc-950 p-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-zinc-50">📊 Продуктивность</h3>
+                  <span className="text-[10px] text-zinc-500">нед</span>
+                </div>
+                <div className="mt-3 flex justify-center">
+                  <ProdBars data={completions} />
+                </div>
               </div>
             </div>
           )}
@@ -1069,7 +1070,7 @@ export function AlphacoreDashboard() {
           {/* Medical */}
           <Link
             href="/medical"
-            className="block rounded-2xl border border-teal-500/15 bg-linear-to-br from-teal-950/15 to-zinc-950 p-3 transition hover:border-teal-400/30"
+            className="md:col-span-1 xl:col-span-4 block h-full rounded-2xl border border-teal-500/15 bg-linear-to-br from-teal-950/15 to-zinc-950 p-3 transition hover:border-teal-400/30"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-50">🏥 Показатели</h3>
@@ -1105,7 +1106,14 @@ export function AlphacoreDashboard() {
               </div>
             )}
           </Link>
-        </aside>
+
+          {/* Agent control */}
+          {agentControl && (
+            <div className="md:col-span-2 xl:col-span-12">
+              <AgentControlPanel snapshot={agentControl} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Below-fold sections ── */}

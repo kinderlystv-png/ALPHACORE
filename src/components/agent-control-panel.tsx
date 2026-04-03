@@ -347,14 +347,14 @@ function RecommendationCard({
   onImplemented: (recommendation: AgentRecommendation) => void;
 }) {
   return (
-    <article className={`rounded-3xl border p-4 shadow-lg shadow-black/10 ${LEVEL_CARD_CLS[recommendation.level]}`}>
+    <article className={`flex h-full flex-col rounded-3xl border p-4 shadow-lg shadow-black/10 ${LEVEL_CARD_CLS[recommendation.level]}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-zinc-50">{recommendation.title}</p>
           <p className="mt-2 text-xs text-zinc-400">{recommendation.context}</p>
         </div>
 
-        <div className="flex shrink-0 flex-col items-end gap-2">
+        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
           <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${LEVEL_PILL_CLS[recommendation.level]}`}>
             {LEVEL_LABEL[recommendation.level]}
           </span>
@@ -419,7 +419,7 @@ function RecommendationCard({
         </button>
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-zinc-500">
+      <div className="mt-auto flex items-center justify-between gap-3 pt-3 text-[10px] text-zinc-500">
         <span>
           copy {recommendation.feedback.copied} · impl {recommendation.feedback.implemented} · dislike {recommendation.feedback.disliked}
         </span>
@@ -545,7 +545,7 @@ export function AgentControlPanel({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+      <div className="mt-5 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
         <RadarWheel areas={snapshot.areas} balanceScore={snapshot.balanceScore} />
 
         <div className="space-y-3">
@@ -565,27 +565,27 @@ export function AgentControlPanel({
             </div>
           </div>
 
-          {recommendations.length > 0 ? (
-            <div className="grid gap-3 md:grid-cols-3">
-              {recommendations.map((recommendation) => (
-                <RecommendationCard
-                  key={recommendation.id}
-                  recommendation={recommendation}
-                  onCopy={handleCopy}
-                  onDislike={(item) => commitFeedback(item, "disliked")}
-                  onImplemented={(item) => commitFeedback(item, "implemented")}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/30 p-6 text-sm text-zinc-500">
-              Активные советы скрыты твоим недавним feedback. Как только контекст поменяется или появятся новые сигналы, блок предложит следующую волну prompts.
-            </div>
-          )}
-
           <LearningProfile feedbackEvents={feedbackEvents} />
         </div>
       </div>
+
+      {recommendations.length > 0 ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {recommendations.map((recommendation) => (
+            <RecommendationCard
+              key={recommendation.id}
+              recommendation={recommendation}
+              onCopy={handleCopy}
+              onDislike={(item) => commitFeedback(item, "disliked")}
+              onImplemented={(item) => commitFeedback(item, "implemented")}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/30 p-6 text-sm text-zinc-500">
+          Активные советы скрыты твоим недавним feedback. Как только контекст поменяется или появятся новые сигналы, блок предложит следующую волну prompts.
+        </div>
+      )}
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {snapshot.areas.map((area) => (

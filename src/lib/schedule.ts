@@ -35,6 +35,7 @@ export type ScheduleOverride = {
   subtitle?: string;
   tone: ScheduleTone;
   tags: string[];
+  hidden?: boolean;
 };
 
 type StudioEvent = {
@@ -671,7 +672,7 @@ function applyOverrides(
     .filter((slot) => !overrideMap.has(slot.id))
     .concat(
       overrides
-        .filter((override) => override.date === dateKey)
+        .filter((override) => override.date === dateKey && !override.hidden)
         .map((override) => ({
           id: override.originalId,
           date: override.date,
@@ -688,7 +689,10 @@ function applyOverrides(
   return slots;
 }
 
-function upsertOverride(slot: ScheduleSlot, patch: Partial<Omit<ScheduleOverride, "originalId" | "originalSource">>): ScheduleOverride | null {
+function upsertOverride(
+  slot: ScheduleSlot,
+  patch: Partial<Omit<ScheduleOverride, "originalId" | "originalSource">>,
+): ScheduleOverride | null {
   if (slot.source === "derived") return null;
 
   const overrides = loadOverrides();
@@ -702,6 +706,7 @@ function upsertOverride(slot: ScheduleSlot, patch: Partial<Omit<ScheduleOverride
     subtitle: patch.subtitle ?? slot.subtitle,
     tone: patch.tone ?? slot.tone,
     tags: patch.tags ?? slot.tags,
+    hidden: patch.hidden ?? false,
   };
 
   const index = overrides.findIndex((override) => override.originalId === slot.id);
@@ -792,6 +797,14 @@ export function updateEditableScheduleSlot(
         source: override.originalSource,
       }
     : null;
+}
+
+export function removeEditableScheduleSlot(slot: ScheduleSlot): boolean {
+  if (slot.id.startsWith("custom-")) {
+    return removeCustomEvent(slot.id);
+  }
+
+  return upsertOverride(slot, { hidden: true }) !== null;
 }
 
 function getCustomSlots(dateKey: string): ScheduleSlot[] {
