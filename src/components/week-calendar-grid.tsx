@@ -15,6 +15,7 @@ import {
   isEditableScheduleSlot,
   removeEditableScheduleSlot,
   type ScheduleSlot,
+  type ScheduleSource,
   type ScheduleTone,
   getScheduleForDate,
   timeToMinutes,
@@ -45,6 +46,9 @@ const POINTER_SLOP_PX = 10;
 const AUTO_SCROLL_EDGE_PX = 72;
 const AUTO_SCROLL_MAX_STEP = 24;
 const QUICK_MENU_ESTIMATED_HEIGHT = 560;
+const SUPPORT_LANE_RATIO = 0.36;
+const SLOT_SIDE_INSET_PX = 4;
+const SLOT_LANE_GAP_PX = 6;
 
 const QUICK_TONE_OPTIONS: Array<{ value: ScheduleTone; label: string }> = [
   { value: "work", label: "💼 Работа" },
@@ -128,14 +132,108 @@ function copyTitle(title: string): string {
   return `${trimmed} (копия)`;
 }
 
-function slotsOverlap(
-  left: Pick<EditableSlotDraft, "start" | "end">,
-  right: Pick<ScheduleSlot, "start" | "end">,
-): boolean {
+type TimeRange = {
+  start: string;
+  end: string;
+};
+
+type LaneRenderable = {
+  id: string;
+  start: string;
+  end: string;
+  source: ScheduleSource;
+  tags: string[];
+};
+
+type LaneMetrics = {
+  left: number;
+  width: number;
+  isSupportLane: boolean;
+};
+
+function rangesOverlap(left: TimeRange, right: TimeRange): boolean {
   return (
     timeToMinutes(left.start) < timeToMinutes(right.end) &&
     timeToMinutes(left.end) > timeToMinutes(right.start)
   );
+}
+
+function slotsOverlap(
+  left: Pick<EditableSlotDraft, "start" | "end">,
+  right: Pick<ScheduleSlot, "start" | "end">,
+): boolean {
+  return rangesOverlap(left, right);
+}
+
+function isSupportLaneSlot(slot: Pick<ScheduleSlot, "source" | "tags"> | LaneRenderable): boolean {
+  return (
+    slot.source === "studio" ||
+    slot.tags.includes("admin") ||
+    (slot.tags.includes("party") && slot.tags.includes("studio"))
+  );
+}
+
+function compareLaneRenderable(left: LaneRenderable, right: LaneRenderable): number {
+  return (
+    timeToMinutes(left.start) - timeToMinutes(right.start) ||
+    timeToMinutes(left.end) - timeToMinutes(right.end) ||
+    left.id.localeCompare(right.id, "ru")
+  );
+}
+
+function getLaneMetrics(
+  slot: LaneRenderable,
+  daySlots: LaneRenderable[],
+  columnWidth: number,
+): LaneMetrics {
+  const contentWidth = Math.max(columnWidth - SLOT_SIDE_INSET_PX * 2, 24);
+  const supportWidth = clamp(
+    columnWidth * SUPPORT_LANE_RATIO,
+    42,
+    Math.max(42, columnWidth - 52),
+  );
+
+  if (isSupportLaneSlot(slot)) {
+    const overlapGroup = daySlots
+      .filter((candidate) => isSupportLaneSlot(candidate) && rangesOverlap(candidate, slot))
+      .sort(compareLaneRenderable);
+
+    const laneCount = Math.max(overlapGroup.length, 1);
+    const laneIndex = Math.max(
+      overlapGroup.findIndex((candidate) => candidate.id === slot.id),
+      0,
+    );
+    const available = Math.max(
+      supportWidth - SLOT_SIDE_INSET_PX * 2 - SLOT_LANE_GAP_PX * (laneCount - 1),
+      24,
+    );
+    const width = Math.max(available / laneCount, 22);
+
+    return {
+      left: SLOT_SIDE_INSET_PX + laneIndex * (width + SLOT_LANE_GAP_PX),
+      width,
+      isSupportLane: true,
+    };
+  }
+
+  const hasSupportOverlap = daySlots.some(
+    (candidate) => isSupportLaneSlot(candidate) && rangesOverlap(candidate, slot),
+  );
+
+  if (!hasSupportOverlap) {
+    return {
+      left: SLOT_SIDE_INSET_PX,
+      width: contentWidth,
+      isSupportLane: false,
+    };
+  }
+
+  const left = SLOT_SIDE_INSET_PX + supportWidth + SLOT_LANE_GAP_PX;
+  return {
+    left,
+    width: Math.max(columnWidth - left - SLOT_SIDE_INSET_PX, 24),
+    isSupportLane: false,
+  };
 }
 
 function vibrateIfAvailable(pattern: number | number[]) {
@@ -256,6 +354,8 @@ type ReboundPreview = {
   from: EditableSlotDraft;
   to: EditableSlotDraft;
   stage: "from" | "to";
+  source: ScheduleSource;
+  tags: string[];
   tone: ScheduleTone;
   title: string;
   blockedLabel: string | null;
@@ -402,6 +502,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const visibleGridWidth = 56 + Math.max(visibleColumns.length, 1) * 120;
   const isMobileGripMode = viewportWidth != null && viewportWidth < 640;
+  const overlayWidth =
+    overlayGridRef.current?.getBoundingClientRect().width ??
+    Math.max(visibleGridWidth - 56, visibleColumns.length * 120);
+  const overlayColumnWidth = visibleColumns.length > 0 ? overlayWidth / visibleColumns.length : 120;
 
   const visibleWindowLabel = useMemo(() => {
     if (visibleColumns.length === 0) return "";
@@ -465,7 +569,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const getBlockingSlot = useCallback(
     (draft: EditableSlotDraft, originalSlot: ScheduleSlot | null): ScheduleSlot | null => {
-      const siblings = getScheduleForDate(draft.date).filter((slot) => slot.id !== originalSlot?.id);
+      const draftIsSupport = originalSlot ? isSupportLaneSlot(originalSlot) : false;
+      const siblings = getScheduleForDate(draft.date).filter((slot) => {
+        if (slot.id === originalSlot?.id) return false;
+        if (isSupportLaneSlot(slot)) return false;
+        if (draftIsSupport) return false;
+        return true;
+      });
       return siblings.find((slot) => slotsOverlap(draft, slot)) ?? null;
     },
     [],
@@ -492,7 +602,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     [resetEdgeCue],
   );
 
-  const getOverlayBoxForDraft = useCallback((draft: EditableSlotDraft) => {
+  const getOverlayBoxForDraft = useCallback((
+    draft: EditableSlotDraft,
+    laneMeta: Pick<LaneRenderable, "id" | "source" | "tags">,
+    originalSlotId?: string | null,
+  ) => {
     const overlayWidth = overlayGridRef.current?.getBoundingClientRect().width;
     const columns = visibleColumnsRef.current;
     if (!overlayWidth || columns.length === 0) return null;
@@ -501,11 +615,31 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     if (columnIndex === -1) return null;
 
     const columnWidth = overlayWidth / columns.length;
+    const daySlots = columns[columnIndex]?.slots ?? [];
+    const laneSlot: LaneRenderable = {
+      id: laneMeta.id,
+      start: draft.start,
+      end: draft.end,
+      source: laneMeta.source,
+      tags: laneMeta.tags,
+    };
+    const lanePool: LaneRenderable[] = daySlots
+      .filter((slot) => slot.id !== originalSlotId)
+      .map((slot) => ({
+        id: slot.id,
+        start: slot.start,
+        end: slot.end,
+        source: slot.source,
+        tags: slot.tags,
+      }))
+      .concat(laneSlot);
+    const laneMetrics = getLaneMetrics(laneSlot, lanePool, columnWidth);
+
     return {
       top: slotTop(draft.start),
       height: slotHeight(draft.start, draft.end),
-      left: columnIndex * columnWidth + 4,
-      width: Math.max(columnWidth - 8, 24),
+      left: columnIndex * columnWidth + laneMetrics.left,
+      width: laneMetrics.width,
     };
   }, []);
 
@@ -525,6 +659,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       from: edit.draft,
       to: edit.base,
       stage: "from",
+      source: edit.originalSlot?.source ?? "derived",
+      tags: edit.originalSlot?.tags ?? edit.base.tags,
       tone: edit.base.tone,
       title: edit.base.title,
       blockedLabel: edit.blockingSlot?.title ?? null,
@@ -1353,8 +1489,26 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
                   const top = slotTop(slot.start);
                   const height = slotHeight(slot.start, slot.end);
+                  const laneMetrics = getLaneMetrics(
+                    {
+                      id: slot.id,
+                      start: slot.start,
+                      end: slot.end,
+                      source: slot.source,
+                      tags: slot.tags,
+                    },
+                    col.slots.map((candidate) => ({
+                      id: candidate.id,
+                      start: candidate.start,
+                      end: candidate.end,
+                      source: candidate.source,
+                      tags: candidate.tags,
+                    })),
+                    overlayColumnWidth,
+                  );
                   const c = toneColor(slot.tone);
                   const isEditable = isEditableScheduleSlot(slot);
+                  const isSupportSlot = laneMetrics.isSupportLane;
                   const isBlockingSlot =
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
@@ -1364,7 +1518,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date;
                   const isSelectedSlot = isQuickMenuSlot || isActiveSlot;
                   const isHoveredSlot = hoveredSlotKey === slotInstanceKey;
-                  const slotPadding = !isEditable
+                  const slotPadding = isSupportSlot
+                    ? height >= 88
+                      ? "px-1.5 py-1.5"
+                      : "px-1 py-1"
+                    : !isEditable
                     ? "px-2 py-1"
                     : height >= 96
                       ? "px-2 pt-5 pb-5"
@@ -1387,7 +1545,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   return (
                     <div
                       key={slot.id}
-                      className={`group pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-xl border ${slotPadding} ${c.border} ${c.bg} ${
+                      className={`group pointer-events-auto absolute overflow-hidden rounded-xl border ${slotPadding} ${c.border} ${c.bg} ${
                         isEditable ? "cursor-grab touch-none" : ""
                       } ${
                         isBlockingSlot
@@ -1396,7 +1554,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                             ? "ring-1 ring-white/12 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_10px_24px_rgba(0,0,0,0.22)]"
                           : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]"
                       }`}
-                      style={{ top, height, minHeight: 20 }}
+                      style={{ top, left: laneMetrics.left, width: laneMetrics.width, height, minHeight: 20 }}
                       onPointerDown={(e) => {
                         if (!isEditable) return;
                         e.stopPropagation();
@@ -1428,7 +1586,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить начало"
-                          className={`absolute inset-x-0 top-0 z-10 flex cursor-ns-resize items-start justify-between px-3 bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
+                          className={`absolute inset-x-0 top-0 z-10 flex cursor-ns-resize items-start justify-between ${isSupportSlot ? "px-1.5" : "px-3"} bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
@@ -1442,10 +1600,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
                         {slot.start}–{slot.end}
                       </p>
-                      <p className={`mt-0.5 truncate text-[11px] font-medium leading-snug ${c.text}`}>
+                      <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
                         {slot.title}
                       </p>
-                      {height > 40 && slot.subtitle && (
+                      {!isSupportSlot && height > 40 && slot.subtitle && (
                         <p className="mt-0.5 line-clamp-2 text-[9px] leading-tight text-zinc-500">
                           {slot.subtitle}
                         </p>
@@ -1454,7 +1612,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить конец"
-                          className={`absolute inset-x-0 bottom-0 z-10 flex cursor-ns-resize items-end justify-between px-3 bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
+                          className={`absolute inset-x-0 bottom-0 z-10 flex cursor-ns-resize items-end justify-between ${isSupportSlot ? "px-1.5" : "px-3"} bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
@@ -1472,21 +1630,39 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 {activeEdit?.draft.date === col.key && (() => {
                   const draftTop = slotTop(activeEdit.draft.start);
                   const draftHeight = slotHeight(activeEdit.draft.start, activeEdit.draft.end);
+                  const draftLaneSlot: LaneRenderable = {
+                    id: activeEdit.originalSlot?.id ?? "draft-preview",
+                    start: activeEdit.draft.start,
+                    end: activeEdit.draft.end,
+                    source: activeEdit.originalSlot?.source ?? "derived",
+                    tags: activeEdit.originalSlot?.tags ?? activeEdit.draft.tags,
+                  };
+                  const draftLanePool = col.slots
+                    .filter((slot) => slot.id !== activeEdit.originalSlot?.id)
+                    .map((slot) => ({
+                      id: slot.id,
+                      start: slot.start,
+                      end: slot.end,
+                      source: slot.source,
+                      tags: slot.tags,
+                    }))
+                    .concat(draftLaneSlot);
+                  const draftLaneMetrics = getLaneMetrics(draftLaneSlot, draftLanePool, overlayColumnWidth);
                   const draftColor = toneColor(activeEdit.draft.tone);
                   const previewClass = activeEdit.blocked
                     ? "border-rose-400/80 bg-rose-950/45 text-rose-100"
                     : `${draftColor.border} ${draftColor.bg}`;
                   return (
                     <div
-                      className={`pointer-events-none absolute left-1 right-1 overflow-hidden rounded-xl border-2 border-dashed px-2 py-2 shadow-[0_18px_42px_rgba(0,0,0,0.28)] ${previewClass} ${
+                      className={`pointer-events-none absolute overflow-hidden rounded-xl border-2 border-dashed px-2 py-2 shadow-[0_18px_42px_rgba(0,0,0,0.28)] ${previewClass} ${
                         activeEdit.blocked ? "opacity-95" : "opacity-90"
                       }`}
-                      style={{ top: draftTop, height: draftHeight, minHeight: 20 }}
+                      style={{ top: draftTop, left: draftLaneMetrics.left, width: draftLaneMetrics.width, height: draftHeight, minHeight: 20 }}
                     >
                       <p className={`text-[10px] font-semibold leading-tight ${activeEdit.blocked ? "text-rose-100" : draftColor.text}`}>
                         {activeEdit.draft.start}–{activeEdit.draft.end}
                       </p>
-                      <p className={`mt-0.5 truncate text-[11px] font-semibold leading-snug ${activeEdit.blocked ? "text-rose-100" : draftColor.text}`}>
+                      <p className={`mt-0.5 font-semibold leading-snug ${activeEdit.blocked ? "text-rose-100" : draftColor.text} ${draftLaneMetrics.isSupportLane ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
                         {activeEdit.originalSlot ? activeEdit.draft.title : "Новый слот"}
                       </p>
                       <p className={`mt-1 text-[9px] font-medium uppercase tracking-[0.14em] ${activeEdit.blocked ? "text-rose-200" : "text-zinc-300"}`}>
@@ -1512,7 +1688,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
           {reboundPreview && (() => {
             const targetDraft = reboundPreview.stage === "from" ? reboundPreview.from : reboundPreview.to;
-            const box = getOverlayBoxForDraft(targetDraft);
+            const box = getOverlayBoxForDraft(
+              targetDraft,
+              {
+                id: reboundPreview.slotId ?? "rebound-preview",
+                source: reboundPreview.source,
+                tags: reboundPreview.tags,
+              },
+              reboundPreview.slotId,
+            );
             if (!box) return null;
 
             return (

@@ -826,7 +826,7 @@ export function getScheduleForDate(dateLike: Date | string): ScheduleSlot[] {
   const cleanupSlots = buildCleaningSlots(dateKey, studioEvents);
   const coverageSlots = buildCoverageSlots(dateKey, studioEvents);
   const customSlots = getCustomSlots(dateKey);
-  const lockedSlots = [...cleanupSlots, ...coverageSlots, ...customSlots];
+  const lockedSlots = [...cleanupSlots, ...customSlots];
   const templateSlots = filterTemplateSlots(buildTemplateSlots(dateKey), lockedSlots);
   const slots = [
     ...templateSlots,
