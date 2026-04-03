@@ -59,8 +59,14 @@ jobs:
           docker push "${{ steps.meta.outputs.image }}"
           docker push "${{ steps.meta.outputs.image_latest }}"
 
+      - name: Install YC CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -i /opt/yc -n
+          echo "/opt/yc/bin" >> $GITHUB_PATH
+
       - name: Deploy to Serverless Container
         run: |
+          yc config set service-account-key /dev/stdin <<< '${{ secrets.YC_SA_JSON_CREDENTIALS }}'
           yc serverless container revision deploy \
             --container-id "${{ secrets.YC_CONTAINER_ID }}" \
             --image "${{ steps.meta.outputs.image }}" \
