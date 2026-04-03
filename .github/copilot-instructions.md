@@ -68,6 +68,10 @@ npm run alpha -- snapshot
 npm run alpha -- brief
 npm run alpha -- review
 
+# Clarification learning
+npm run alpha -- clarification add "черновик / skeleton" --reason definition-of-done --task <id> --context-mode overloaded
+npm run alpha -- clarification list --limit 5
+
 # Deploy (push code changes to production)
 npm run alpha -- deploy --message "описание изменений"
 ```
@@ -133,6 +137,7 @@ to insert data — lib modules use browser localStorage.
 npm run alpha -- snapshot     # Balance score + areas + priorities
 npm run alpha -- task list    # Current tasks
 npm run alpha -- journal list # Recent journal entries
+npm run alpha -- clarification list --limit 5 # Recent answers to clarification questions
 ```
 
 ### Morning workflow
@@ -165,6 +170,7 @@ npm run alpha -- journal add "Обсудили Kinderly: определили с
    production so the user sees updates on the phone PWA.
 9. **Data-only changes** (via CLI) don't need deploy — they sync to PostgreSQL
    instantly and the PWA picks them up within ~5 seconds.
+10. **After user answers clarification questions in agent chat**, the agent should persist useful answer patterns through `npm run alpha -- clarification add ...` when it has CLI/API access, so ALPHACORE can learn how the user prefers to scope and plan tasks.
 
 ## Smart scheduling rules for agents
 

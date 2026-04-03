@@ -590,6 +590,110 @@ function filterTaskWindowSuggestionsByTaskIds(
 		.filter((window) => window.assignments.length > 0);
 }
 
+function normalizeClarificationAnswerText(text: string): string {
+	return text
+		.toLowerCase()
+		.replace(/ё/g, "е")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function inferClarificationSignal(
+	reason: AgentClarificationQuestionReason,
+	answer: string,
+): ClarificationLearningSignal | null {
+	const normalized = normalizeClarificationAnswerText(answer);
+
+	switch (reason) {
+		case "definition-of-done":
+			if (/чернов|skeleton/.test(normalized)) return "draft-first";
+			if (/структ|список|карта/.test(normalized)) return "structure-first";
+			if (/финал/.test(normalized)) return "finish-first";
+			return null;
+		case "timing":
+			if (/сегодня/.test(normalized)) return "today-first";
+			if (/недел/.test(normalized)) return "week-first";
+			if (/без жестк|без ж[её]стк|без слот|без даты/.test(normalized)) {
+				return "flexible-timing";
+			}
+			return null;
+		case "slotting":
+			if (/\d{1,2}:\d{2}|слот|на этой неделе|новый слот/.test(normalized)) {
+				return "slot-first";
+			}
+			if (/следующ|без слота|пока/.test(normalized)) return "defer-slot";
+			return null;
+		case "execution-mode":
+			if (/decision|планир/.test(normalized)) return "decision-first";
+			if (/mini|sprint|20-30|20–30|коротк/.test(normalized)) return "mini-sprint";
+			if (/полныи|полный слот|без сокращ/.test(normalized)) return "full-slot";
+			return null;
+		default:
+			return null;
+	}
+}
+
+function pickTopClarificationSignal<TSignal extends ClarificationLearningSignal>(
+	counts: Map<ClarificationLearningSignal, number>,
+	signals: TSignal[],
+): TSignal | null {
+	return [...signals]
+		.sort((left, right) => {
+			return (counts.get(right) ?? 0) - (counts.get(left) ?? 0);
+		})
+		.find((signal) => (counts.get(signal) ?? 0) > 0) ?? null;
+}
+
+function buildClarificationQuestionPriority(
+	question: AgentClarificationQuestion,
+	profile: AgentClarificationLearningProfile,
+): number {
+	let score = 0;
+
+	if (question.reason === "definition-of-done" && profile.preferredDoneStyle) score += 2;
+	if (question.reason === "timing" && profile.preferredTimingStyle) score += 2;
+	if (question.reason === "slotting" && profile.preferredSlotStyle) score += 3;
+	if (question.reason === "execution-mode" && profile.preferredExecutionStyle) score += 3;
+	if (question.reason === "priority") score += 1;
+
+	return score;
+}
+
+function buildClarificationOptionPriority(
+	question: AgentClarificationQuestion,
+	option: string,
+	profile: AgentClarificationLearningProfile,
+): number {
+	const signal = inferClarificationSignal(question.reason, option);
+	if (!signal) return 0;
+
+	if (signal === profile.preferredDoneStyle) return 4;
+	if (signal === profile.preferredTimingStyle) return 4;
+	if (signal === profile.preferredSlotStyle) return 4;
+	if (signal === profile.preferredExecutionStyle) return 4;
+
+	return 0;
+}
+
+function applyClarificationProfileToQuestions(
+	questions: AgentClarificationQuestion[],
+	profile: AgentClarificationLearningProfile,
+): AgentClarificationQuestion[] {
+	return [...questions]
+		.map((question) => ({
+			...question,
+			options: [...question.options].sort((left, right) => {
+				return (
+					buildClarificationOptionPriority(question, right, profile) -
+					buildClarificationOptionPriority(question, left, profile)
+				);
+			}),
+		}))
+		.sort((left, right) => {
+			return buildClarificationQuestionPriority(right, profile) - buildClarificationQuestionPriority(left, profile);
+		});
+}
+
 function isBroadPlanningTask(task: Task): boolean {
 	const title = task.title.toLowerCase();
 	return BROAD_TASK_PATTERN.test(title) || title.length >= 46;
@@ -643,8 +747,16 @@ function buildClarificationQuestions(input: {
 	leadProject: Project | null;
 	leadTask: Task | null;
 	energyConflict: boolean;
+	clarificationProfile: AgentClarificationLearningProfile;
 }): AgentClarificationQuestion[] {
-	const { context, recommendations, leadProject, leadTask, energyConflict } = input;
+	const {
+		context,
+		recommendations,
+		leadProject,
+		leadTask,
+		energyConflict,
+		clarificationProfile,
+	} = input;
 	const questions: AgentClarificationQuestion[] = [];
 
 	if (context.tasks.actionable.length === 0) return questions;
@@ -769,7 +881,7 @@ function buildClarificationQuestions(input: {
 		});
 	}
 
-	return questions;
+	return applyClarificationProfileToQuestions(questions, clarificationProfile).slice(0, 5);
 }
 
 function normalizeKeywordStems(text: string): string[] {
@@ -1306,7 +1418,40 @@ function isFeedbackEvent(value: unknown): value is RecommendationFeedbackEvent {
 	);
 }
 
+function isClarificationAnswerEvent(
+	value: unknown,
+): value is AgentClarificationAnswerEvent {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Partial<AgentClarificationAnswerEvent>;
+	return (
+		typeof candidate.id === "string" &&
+		typeof candidate.questionId === "string" &&
+		typeof candidate.reason === "string" &&
+		(candidate.taskId == null || typeof candidate.taskId === "string") &&
+		(candidate.contextHash == null || typeof candidate.contextHash === "string") &&
+		(candidate.freeform == null || typeof candidate.freeform === "string") &&
+		typeof candidate.answer === "string" &&
+		typeof candidate.createdAt === "string" &&
+		(candidate.contextMode === "normal" ||
+			candidate.contextMode === "energy-conflict" ||
+			candidate.contextMode === "overloaded") &&
+		[
+			"definition-of-done",
+			"timing",
+			"slotting",
+			"priority",
+			"execution-mode",
+		].includes(candidate.reason)
+	);
+}
+
 function sortEvents(events: RecommendationFeedbackEvent[]): RecommendationFeedbackEvent[] {
+	return [...events].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function sortClarificationEvents(
+	events: AgentClarificationAnswerEvent[],
+): AgentClarificationAnswerEvent[] {
 	return [...events].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
@@ -1335,6 +1480,85 @@ export function recordRecommendationFeedback(input: {
 	const next = sortEvents([...getRecommendationFeedbackEvents(), event]);
 	lsSet(AGENT_PROMPT_FEEDBACK_KEY, next);
 	return event;
+}
+
+export function getClarificationAnswerEvents(): AgentClarificationAnswerEvent[] {
+	const raw = lsGet<unknown[]>(AGENT_CLARIFICATION_FEEDBACK_KEY, []);
+	return sortClarificationEvents(raw.filter(isClarificationAnswerEvent));
+}
+
+export function recordClarificationAnswer(input: {
+	questionId: string;
+	taskId?: string | null;
+	reason: AgentClarificationQuestionReason;
+	answer: string;
+	freeform?: string | null;
+	contextHash?: string | null;
+	contextMode?: "normal" | "energy-conflict" | "overloaded";
+}): AgentClarificationAnswerEvent {
+	const event: AgentClarificationAnswerEvent = {
+		id: uid(),
+		questionId: input.questionId,
+		taskId: input.taskId ?? null,
+		reason: input.reason,
+		answer: input.answer,
+		freeform: input.freeform ?? null,
+		contextHash: input.contextHash ?? null,
+		contextMode: input.contextMode ?? "normal",
+		createdAt: nowIso(),
+	};
+
+	const next = sortClarificationEvents([...getClarificationAnswerEvents(), event]);
+	lsSet(AGENT_CLARIFICATION_FEEDBACK_KEY, next);
+	return event;
+}
+
+export function buildClarificationLearningProfile(
+	events: AgentClarificationAnswerEvent[],
+): AgentClarificationLearningProfile {
+	const counts = new Map<ClarificationLearningSignal, number>();
+
+	for (const event of events) {
+		const signal = inferClarificationSignal(
+			event.reason,
+			event.freeform?.trim() ? event.freeform : event.answer,
+		);
+		if (!signal) continue;
+		counts.set(signal, (counts.get(signal) ?? 0) + 1);
+	}
+
+	const topSignals = [...counts.entries()]
+		.sort((left, right) => right[1] - left[1])
+		.slice(0, 4)
+		.map(([signal, count]) => ({
+			signal,
+			label: CLARIFICATION_SIGNAL_LABEL[signal],
+			count,
+		}));
+
+	return {
+		totalAnswers: events.length,
+		preferredDoneStyle: pickTopClarificationSignal(counts, [
+			"draft-first",
+			"structure-first",
+			"finish-first",
+		]),
+		preferredTimingStyle: pickTopClarificationSignal(counts, [
+			"today-first",
+			"week-first",
+			"flexible-timing",
+		]),
+		preferredSlotStyle: pickTopClarificationSignal(counts, [
+			"slot-first",
+			"defer-slot",
+		]),
+		preferredExecutionStyle: pickTopClarificationSignal(counts, [
+			"decision-first",
+			"mini-sprint",
+			"full-slot",
+		]),
+		topSignals,
+	};
 }
 
 export function buildRecommendationRuntimeContext(
@@ -2276,6 +2500,7 @@ function buildCandidates(
 export function buildAgentPracticalPlan(
 	recommendations: AgentRecommendation[],
 	context: RecommendationRuntimeContext | null | undefined,
+	clarificationAnswerEvents: AgentClarificationAnswerEvent[] = [],
 ): AgentPracticalPlan | null {
 	if (!context || recommendations.length === 0) return null;
 
@@ -2294,24 +2519,44 @@ export function buildAgentPracticalPlan(
 		cleanupToday.length > 0 ||
 		areaSet.has("health") ||
 		areaSet.has("recovery");
+	const clarificationProfile = buildClarificationLearningProfile(
+		clarificationAnswerEvents,
+	);
+	const preferDecomposedProjectTarget =
+		clarificationProfile.preferredDoneStyle === "draft-first" ||
+		clarificationProfile.preferredDoneStyle === "structure-first";
+	const prefersDecisionFirst =
+		clarificationProfile.preferredExecutionStyle === "decision-first";
+	const prefersMiniSprint =
+		clarificationProfile.preferredExecutionStyle === "mini-sprint";
+	const prefersSlotFirst =
+		clarificationProfile.preferredSlotStyle === "slot-first";
 	const projectTarget = leadProject
-		? `${leadProject.name}: ${buildProjectFocusLabel(leadProject, energyConflict)}`
+		? `${leadProject.name}: ${buildProjectFocusLabel(leadProject, energyConflict || preferDecomposedProjectTarget)}`
 		: leadTask
 			? clipText(leadTask.title, 78)
 			: "сузить день до одного следующего шага";
 
 	const mainDecision = energyConflict
 		? planningSlot
-			? `В ${planningSlot.start}–${planningSlot.end} сделать один decision sprint по ${projectTarget}; отдельное cardio сегодня не добавлять.`
+			? prefersMiniSprint
+				? `В ${planningSlot.start}–${planningSlot.end} сделать один короткий sprint по ${projectTarget}; не доводить до финала и отдельное cardio сегодня не добавлять.`
+				: `В ${planningSlot.start}–${planningSlot.end} сделать один decision sprint по ${projectTarget}; отдельное cardio сегодня не добавлять.`
 			: `Не добавлять отдельное cardio сегодня и сузить работу до одного planning-узла: ${projectTarget}.`
 		: planningSlot
-			? `В ${planningSlot.start}–${planningSlot.end} развернуть один рабочий узел по ${projectTarget}.`
+			? prefersDecisionFirst
+				? `В ${planningSlot.start}–${planningSlot.end} сначала сделать decision sprint по ${projectTarget}, а не пытаться сразу дожать всё до финала.`
+				: prefersMiniSprint
+					? `В ${planningSlot.start}–${planningSlot.end} сделать один короткий sprint по ${projectTarget}.`
+					: `В ${planningSlot.start}–${planningSlot.end} развернуть один рабочий узел по ${projectTarget}.`
 			: `Оставить на сегодня один главный узел: ${projectTarget}.`;
 
 	const backupMoves = uniquePromptLines([
 		energyConflict
 			? "Если после cleanup энергии мало — ограничиться task + calendar + journal, без второй рабочей волны."
-			: "Если день схлопнется — оставить только один главный узел и убрать всё второстепенное.",
+			: prefersSlotFirst
+				? "Если день схлопнется — сначала закрепить или перебронировать слот в календаре, а уже потом делать."
+				: "Если день схлопнется — оставить только один главный узел и убрать всё второстепенное.",
 		leadProject
 			? `Если появится тихое окно 20–25 минут — сделать только skeleton по ${leadProject.name}, без полировки и новых веток.`
 			: leadTask
@@ -2353,6 +2598,7 @@ export function buildAgentPracticalPlan(
 		leadProject,
 		leadTask,
 		energyConflict,
+		clarificationProfile,
 	});
 	const taskWindows = context.tasks.distribution.suggestions
 		.slice(0, 4)

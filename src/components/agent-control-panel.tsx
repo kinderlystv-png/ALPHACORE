@@ -4,16 +4,20 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  AGENT_CLARIFICATION_FEEDBACK_KEY,
   FEEDBACK_REASON_LABEL,
   FEEDBACK_REASON_ORDER,
   FEEDBACK_REASON_SHORT_LABEL,
   AGENT_PROMPT_FEEDBACK_KEY,
   buildAgentPracticalPlan,
+  buildClarificationLearningProfile,
   buildAgentRecommendations,
   buildRecommendationProfile,
   buildRecommendationRuntimeContext,
+  getClarificationAnswerEvents,
   getRecommendationFeedbackEvents,
   recordRecommendationFeedback,
+  type AgentClarificationAnswerEvent,
   type AgentRecommendation,
   type AgentPracticalPlan,
   type RecommendationFeedbackEvent,
@@ -165,6 +169,7 @@ function buildBundleOrchestrationPrompt(
     "Если хотя бы одна задача требует раскрытия, definition of done, срока, слота или развязки приоритетов — не отвечай сразу.",
     "Сначала задай до 5 коротких уточняющих вопросов.",
     "Если среда поддерживает интерактивные вопросы с вариантами выбора и свободным вводом — используй их; иначе задай те же вопросы текстом.",
+    "После ответов пользователя, если у тебя есть доступ к ALPHACORE CLI/API, сохрани learning-signal из этих ответов и только потом давай финальный synthesis.",
     practicalPlan?.clarificationQuestions.length
       ? `Ниже уже есть suggested question-pass на ${practicalPlan.clarificationQuestions.length} вопрос(а/ов).`
       : null,
@@ -402,10 +407,20 @@ function RadarWheel({ areas, balanceScore }: { areas: AttentionArea[]; balanceSc
   );
 }
 
-function LearningProfile({ feedbackEvents }: { feedbackEvents: RecommendationFeedbackEvent[] }) {
+function LearningProfile({
+  feedbackEvents,
+  clarificationAnswerEvents,
+}: {
+  feedbackEvents: RecommendationFeedbackEvent[];
+  clarificationAnswerEvents: AgentClarificationAnswerEvent[];
+}) {
   const profile = useMemo(() => buildRecommendationProfile(feedbackEvents), [feedbackEvents]);
+  const clarificationProfile = useMemo(
+    () => buildClarificationLearningProfile(clarificationAnswerEvents),
+    [clarificationAnswerEvents],
+  );
 
-  if (feedbackEvents.length === 0) {
+  if (feedbackEvents.length === 0 && clarificationAnswerEvents.length === 0) {
     return (
       <div className="rounded-3xl border border-zinc-800/60 bg-zinc-950/40 p-4">
         <p className="text-[10px] uppercase tracking-widest text-zinc-500">Система учится по реакциям</p>
@@ -422,7 +437,7 @@ function LearningProfile({ feedbackEvents }: { feedbackEvents: RecommendationFee
         <div>
           <p className="text-[10px] uppercase tracking-widest text-zinc-500">Система учится по семантике</p>
           <p className="mt-1 text-sm text-zinc-300">
-            copied {profile.copiedCount} · implemented {profile.implementedCount} · disliked {profile.dislikedCount}
+            copied {profile.copiedCount} · implemented {profile.implementedCount} · disliked {profile.dislikedCount} · clarify {clarificationProfile.totalAnswers}
           </p>
         </div>
         <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
@@ -482,6 +497,27 @@ function LearningProfile({ feedbackEvents }: { feedbackEvents: RecommendationFee
               ))
             ) : (
               <span className="text-xs text-zinc-500">Пока мало reason-coded сигнала.</span>
+            )}
+          </div>
+        </div>
+
+        <div className="md:col-span-2">
+          <p className="text-[10px] uppercase tracking-widest text-zinc-600">Что видно по ответам на уточнения</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {clarificationProfile.topSignals.length > 0 ? (
+              clarificationProfile.topSignals.map(({ signal, label, count }) => (
+                <span
+                  key={signal}
+                  className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-100"
+                  title={label}
+                >
+                  {label} · {count}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-zinc-500">
+                Когда агент начнёт сохранять ответы на уточняющие вопросы, здесь появятся паттерны вроде «черновик &gt; финал» и «сначала слот, потом делать».
+              </span>
             )}
           </div>
         </div>
@@ -763,6 +799,7 @@ export function AgentControlPanel({
   onFlash?: (payload: FlashPayload) => void;
 }) {
   const [feedbackEvents, setFeedbackEvents] = useState<RecommendationFeedbackEvent[]>([]);
+  const [clarificationAnswerEvents, setClarificationAnswerEvents] = useState<AgentClarificationAnswerEvent[]>([]);
   const [runtimeContext, setRuntimeContext] = useState<RecommendationRuntimeContext | null>(null);
   const [inlineFlash, setInlineFlash] = useState<FlashPayload | null>(null);
   const [reasonPickerId, setReasonPickerId] = useState<string | null>(null);
@@ -773,11 +810,16 @@ export function AgentControlPanel({
 
   useEffect(() => {
     setFeedbackEvents(getRecommendationFeedbackEvents());
+    setClarificationAnswerEvents(getClarificationAnswerEvents());
     refreshRuntimeContext();
 
     return subscribeAppDataChange((keys) => {
       if (keys.includes(AGENT_PROMPT_FEEDBACK_KEY)) {
         setFeedbackEvents(getRecommendationFeedbackEvents());
+      }
+
+      if (keys.includes(AGENT_CLARIFICATION_FEEDBACK_KEY)) {
+        setClarificationAnswerEvents(getClarificationAnswerEvents());
       }
 
       if (keys.some((key) => RUNTIME_CONTEXT_KEYS.has(key))) {
@@ -799,8 +841,8 @@ export function AgentControlPanel({
   );
 
   const practicalPlan = useMemo(
-    () => buildAgentPracticalPlan(recommendations, runtimeContext),
-    [recommendations, runtimeContext],
+    () => buildAgentPracticalPlan(recommendations, runtimeContext, clarificationAnswerEvents),
+    [clarificationAnswerEvents, recommendations, runtimeContext],
   );
 
   const notify = useCallback((payload: FlashPayload) => {
@@ -937,7 +979,10 @@ export function AgentControlPanel({
             </div>
           </div>
 
-          <LearningProfile feedbackEvents={feedbackEvents} />
+          <LearningProfile
+            feedbackEvents={feedbackEvents}
+            clarificationAnswerEvents={clarificationAnswerEvents}
+          />
         </div>
       </div>
 

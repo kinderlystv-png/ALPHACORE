@@ -359,6 +359,14 @@ async function medicalAdd(args) {
 // ── Schedule commands ────────────────────────────────────────────────────────
 
 const VALID_TONES = ["kinderly", "heys", "work", "health", "personal", "cleanup", "family", "review"];
+const VALID_CLARIFICATION_REASONS = [
+  "definition-of-done",
+  "timing",
+  "slotting",
+  "priority",
+  "execution-mode",
+];
+const VALID_CLARIFICATION_CONTEXT_MODES = ["normal", "energy-conflict", "overloaded"];
 
 async function scheduleAdd(args) {
   const { positional, flags } = parseArgs(args);
@@ -426,6 +434,66 @@ async function scheduleRemove(args) {
   const removed = events.splice(idx, 1)[0];
   await putKey("alphacore_schedule_custom", events);
   console.info(`✅ Removed: ${removed.title} (${removed.id})`);
+}
+
+// ── Clarification-learning commands ─────────────────────────────────────────
+
+async function clarificationAdd(args) {
+  const { positional, flags } = parseArgs(args);
+  const answer = positional[0];
+  const reason = flags.reason;
+
+  if (!answer || !reason || !VALID_CLARIFICATION_REASONS.includes(reason)) {
+    console.error(
+      `Usage: clarification add "answer" --reason ${VALID_CLARIFICATION_REASONS.join("|")} [--task <id>] [--question-id <id>] [--freeform "..."] [--context-hash <hash>] [--context-mode normal|energy-conflict|overloaded]`,
+    );
+    process.exit(1);
+  }
+
+  const contextMode = flags["context-mode"] ?? "normal";
+  if (!VALID_CLARIFICATION_CONTEXT_MODES.includes(contextMode)) {
+    console.error(
+      `❌ Invalid context mode: ${contextMode}. Valid: ${VALID_CLARIFICATION_CONTEXT_MODES.join(", ")}`,
+    );
+    process.exit(1);
+  }
+
+  const events = (await getKey("alphacore_agent_clarification_feedback")) ?? [];
+  const event = {
+    id: uid(),
+    questionId: flags["question-id"] ?? uid(),
+    taskId: flags.task ?? null,
+    reason,
+    answer,
+    freeform: flags.freeform ?? null,
+    contextHash: flags["context-hash"] ?? null,
+    contextMode,
+    createdAt: new Date().toISOString(),
+  };
+
+  events.push(event);
+  await putKey("alphacore_agent_clarification_feedback", events);
+  console.info(
+    `✅ Clarification answer saved: ${reason} → ${answer}${event.taskId ? ` (${event.taskId})` : ""}`,
+  );
+}
+
+async function clarificationList(args) {
+  const { flags } = parseArgs(args);
+  const limit = flags.limit ? parseInt(flags.limit, 10) : 10;
+  const events = (await getKey("alphacore_agent_clarification_feedback")) ?? [];
+  const shown = events.slice(-limit);
+
+  if (shown.length === 0) {
+    console.info("📭 No clarification answers.");
+    return;
+  }
+
+  console.info(`🧠 Clarification answers (last ${shown.length}):\n`);
+  for (const event of shown) {
+    console.info(`  ${event.reason} → ${event.answer}${event.taskId ? ` [${event.taskId}]` : ""}`);
+    console.info(`     mode:${event.contextMode} ${event.createdAt} (${event.id})\n`);
+  }
 }
 
 // ── Snapshot / Brief / Review ────────────────────────────────────────────────
@@ -589,6 +657,8 @@ Commands:
   schedule add "title" --date YYYY-MM-DD --start HH:MM --end HH:MM [--tone work] [--tags t1,t2]
   schedule list [--date YYYY-MM-DD]
   schedule remove <id>
+  clarification add "answer" --reason definition-of-done|timing|slotting|priority|execution-mode [--task <id>] [--question-id <id>] [--freeform "..."] [--context-hash <hash>] [--context-mode normal|energy-conflict|overloaded]
+  clarification list [--limit N]
   snapshot
   brief
   review
@@ -635,6 +705,10 @@ async function main() {
       if (action === "add") return scheduleAdd(rest);
       if (action === "list") return scheduleList(rest);
       if (action === "remove") return scheduleRemove(rest);
+      break;
+    case "clarification":
+      if (action === "add") return clarificationAdd(rest);
+      if (action === "list") return clarificationList(rest);
       break;
     case "snapshot":
       return snapshotCmd();
