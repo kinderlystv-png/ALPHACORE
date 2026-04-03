@@ -609,14 +609,18 @@ function mergeCoverageDrafts(drafts: CoverageDraft[]): CoverageDraft[] {
 
 function buildCoverageSlots(dateKey: string, todayEvents: ScheduleSlot[]): ScheduleSlot[] {
   const weekday = parseDate(dateKey).getDay();
+  const hasBetweenPartySupport = hasMorningAndEveningEvents(todayEvents);
 
   const drafts = todayEvents.map((event) => {
     const evening = isEveningEvent(event);
+    const morning = isMorningEvent(event);
     const isWednesdayEvening = weekday === 3 && evening;
+    const start = hasBetweenPartySupport && evening ? event.start : addMinutes(event.start, -60);
+    const end = hasBetweenPartySupport && morning ? event.end : addMinutes(event.end, 60);
 
     return {
-      start: addMinutes(event.start, -60),
-      end: addMinutes(event.end, 60),
+      start,
+      end,
       titles: [event.title.replace(/^🎉\s*/, "")],
       tags: uniqueTags([
         "family",
