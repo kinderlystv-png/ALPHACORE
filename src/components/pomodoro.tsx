@@ -8,6 +8,11 @@ import {
   getTasks,
   logFocusSession,
 } from "@/lib/tasks";
+import {
+  POMODORO_FOCUS_EVENT,
+  readTaskDragId,
+  type PomodoroFocusDetail,
+} from "@/lib/dashboard-events";
 import { lsGet, lsSet, subscribeAppDataChange } from "@/lib/storage";
 
 type Phase = "focus" | "break";
@@ -15,7 +20,6 @@ type Phase = "focus" | "break";
 const FOCUS_MIN = 25;
 const BREAK_MIN = 5;
 const PREF_KEY = "alphacore_pomodoro";
-const POMODORO_FOCUS_EVENT = "alphacore:pomodoro-focus-task";
 
 function sortPomodoroTasks(tasks: Task[]): Task[] {
   const priorityRank = { p1: 0, p2: 1, p3: 2 };
@@ -39,6 +43,7 @@ export function Pomodoro() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [dropActive, setDropActive] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const total = phase === "focus" ? FOCUS_MIN * 60 : BREAK_MIN * 60;
@@ -72,7 +77,7 @@ export function Pomodoro() {
 
   useEffect(() => {
     const onExternalFocus = (event: Event) => {
-      const customEvent = event as CustomEvent<{ taskId?: string; autoStart?: boolean }>;
+      const customEvent = event as CustomEvent<PomodoroFocusDetail>;
       const taskId = customEvent.detail?.taskId;
       if (!taskId) return;
 
@@ -150,13 +155,34 @@ export function Pomodoro() {
   const c = 2 * Math.PI * r;
   const off = c - (pct / 100) * c;
 
+  const handleTaskDrop = useCallback((event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setDropActive(false);
+
+    const taskId = readTaskDragId(event.dataTransfer);
+    if (!taskId) return;
+
+    window.dispatchEvent(
+      new CustomEvent<PomodoroFocusDetail>(POMODORO_FOCUS_EVENT, {
+        detail: { taskId, autoStart: false },
+      }),
+    );
+  }, []);
+
   return (
     <section
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDropActive(true);
+      }}
+      onDragLeave={() => setDropActive(false)}
+      onDrop={handleTaskDrop}
       className={`rounded-4xl border p-5 shadow-2xl shadow-black/20 transition-colors ${
         phase === "focus"
           ? "border-rose-500/20 bg-linear-to-br from-rose-950/10 to-zinc-950"
           : "border-emerald-500/20 bg-linear-to-br from-emerald-950/10 to-zinc-950"
-      }`}
+      } ${dropActive ? "ring-2 ring-rose-400/40" : ""}`}
     >
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -201,6 +227,15 @@ export function Pomodoro() {
         <label className="block text-[11px] uppercase tracking-widest text-zinc-500">
           Задача в фокусе
         </label>
+
+        <div className={`rounded-2xl border border-dashed px-3 py-2 text-[10px] transition ${
+          dropActive
+            ? "border-rose-400/50 bg-rose-500/10 text-rose-200"
+            : "border-zinc-800 bg-zinc-950/20 text-zinc-500"
+        }`}>
+          Перетащи сюда задачу из triage или календаря, чтобы быстро отправить её в Pomodoro.
+        </div>
+
         <select
           value={selectedTaskId}
           onChange={(e) => setSelectedTaskId(e.target.value)}

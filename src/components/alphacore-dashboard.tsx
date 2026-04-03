@@ -12,6 +12,13 @@ import {
   type AgentControlSnapshot,
   getAgentControlSnapshot,
 } from "@/lib/agent-control";
+import { generateEveningReview, generateMorningBrief } from "@/lib/agent-brief";
+import {
+  POMODORO_FOCUS_EVENT,
+  readTaskDragId,
+  writeTaskDragData,
+  type PomodoroFocusDetail,
+} from "@/lib/dashboard-events";
 import { ensureJournalSeed, type JournalEntry } from "@/lib/journal";
 import { allParamNames, getEntries, paramStatus } from "@/lib/medical";
 import { addNote } from "@/lib/notes";
@@ -71,8 +78,6 @@ function ProdBars({ data }: { data: DayCompletions[] }) {
   );
 }
 
-const POMODORO_FOCUS_EVENT = "alphacore:pomodoro-focus-task";
-
 type QuickFlash = {
   tone: "success" | "info";
   text: string;
@@ -98,6 +103,8 @@ type CommandItem = {
   keywords: string;
   action: () => void;
 };
+
+type BriefPanelMode = "brief" | "review" | null;
 
 const PRIORITY_CLS: Record<TaskPriority, string> = {
   p1: "border-rose-500/25 bg-rose-500/10 text-rose-200",
@@ -222,7 +229,10 @@ export function AlphacoreDashboard() {
   const [flash, setFlash] = useState<QuickFlash | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
+  const [commandActiveIndex, setCommandActiveIndex] = useState(0);
   const [projectQuickId, setProjectQuickId] = useState("");
+  const [briefPanelMode, setBriefPanelMode] = useState<BriefPanelMode>("brief");
+  const [dragDeskTarget, setDragDeskTarget] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
 
@@ -239,6 +249,19 @@ export function AlphacoreDashboard() {
     () => (quickMode === "task" ? parseQuickTaskDraft(quickInput) : null),
     [quickInput, quickMode],
   );
+
+  const morningBrief = useMemo(
+    () => (agentControl ? generateMorningBrief(agentControl) : ""),
+    [agentControl],
+  );
+
+  const eveningReview = useMemo(
+    () => (agentControl ? generateEveningReview(agentControl) : ""),
+    [agentControl],
+  );
+
+  const activeBriefText = briefPanelMode === "review" ? eveningReview : morningBrief;
+  const activeBriefTitle = briefPanelMode === "review" ? "Вечерний review" : "Утренний brief";
 
   const refreshDashboard = useCallback(() => {
     setAgentControl(getAgentControlSnapshot());
@@ -325,6 +348,10 @@ export function AlphacoreDashboard() {
   }, [flash]);
 
   useEffect(() => {
+    setCommandActiveIndex(0);
+  }, [commandOpen, commandQuery]);
+
+  useEffect(() => {
     if (!projects.length) return;
     setProjectQuickId((current) => {
       if (current && projects.some((project) => project.id === current)) return current;
@@ -334,6 +361,7 @@ export function AlphacoreDashboard() {
 
   const openCommandPalette = useCallback(() => {
     setCommandOpen(true);
+    setCommandActiveIndex(0);
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
       commandInputRef.current?.select();
@@ -343,6 +371,7 @@ export function AlphacoreDashboard() {
   const closeCommandPalette = useCallback(() => {
     setCommandOpen(false);
     setCommandQuery("");
+    setCommandActiveIndex(0);
   }, []);
 
   useEffect(() => {
@@ -514,6 +543,62 @@ export function AlphacoreDashboard() {
     [router],
   );
 
+  const openBriefPanel = useCallback((mode: Exclude<BriefPanelMode, null>) => {
+    setBriefPanelMode(mode);
+  }, []);
+
+  const copyBriefToClipboard = useCallback(async () => {
+    if (!activeBriefText) return;
+
+    try {
+      await navigator.clipboard.writeText(activeBriefText);
+      setFlash({ tone: "success", text: `${activeBriefTitle} скопирован` });
+    } catch {
+      setFlash({ tone: "info", text: "Не удалось скопировать текст — можно выделить вручную" });
+    }
+  }, [activeBriefText, activeBriefTitle]);
+
+  const handleDeskDragOver = useCallback(
+    (target: string) => (event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setDragDeskTarget(target);
+    },
+    [],
+  );
+
+  const handleDeskDragLeave = useCallback(() => {
+    setDragDeskTarget(null);
+  }, []);
+
+  const handlePriorityDrop = useCallback(
+    (priority: TaskPriority) => (event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      setDragDeskTarget(null);
+
+      const taskId = readTaskDragId(event.dataTransfer);
+      if (!taskId) return;
+
+      updateTask(taskId, { priority });
+      setFlash({ tone: "info", text: `Приоритет обновлён: ${priority.toUpperCase()}` });
+      refreshDashboard();
+    },
+    [refreshDashboard],
+  );
+
+  const handlePomodoroDeskDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      setDragDeskTarget(null);
+
+      const taskId = readTaskDragId(event.dataTransfer);
+      if (!taskId) return;
+
+      pushTaskToPomodoro(taskId, false);
+    },
+    [pushTaskToPomodoro],
+  );
+
   const commandItems = useMemo<CommandItem[]>(() => {
     const items: CommandItem[] = [
       {
@@ -550,6 +635,20 @@ export function AlphacoreDashboard() {
         subtitle: "Поймать мысль, пока не убежала",
         keywords: "journal reflection notes",
         action: () => router.push("/journal"),
+      },
+      {
+        id: "open-brief",
+        title: "Показать утренний brief",
+        subtitle: "Короткий срез приоритетов и баланса",
+        keywords: "brief morning agent priorities",
+        action: () => openBriefPanel("brief"),
+      },
+      {
+        id: "open-review",
+        title: "Показать вечерний review",
+        subtitle: "Итог дня и перенос внимания на завтра",
+        keywords: "review evening reflection summary",
+        action: () => openBriefPanel("review"),
       },
       {
         id: "open-medical",
@@ -590,7 +689,7 @@ export function AlphacoreDashboard() {
     }
 
     return items;
-  }, [focusQuickInput, focusSnapshot, handlePrimaryTaskDone, handleProjectQuickOpen, pushTaskToPomodoro, router]);
+  }, [focusQuickInput, focusSnapshot, handlePrimaryTaskDone, handleProjectQuickOpen, openBriefPanel, pushTaskToPomodoro, router]);
 
   const filteredCommandItems = useMemo(() => {
     const query = commandQuery.trim().toLowerCase();
@@ -638,9 +737,23 @@ export function AlphacoreDashboard() {
               value={commandQuery}
               onChange={(event) => setCommandQuery(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && filteredCommandItems[0]) {
+                if (event.key === "ArrowDown") {
                   event.preventDefault();
-                  runCommand(filteredCommandItems[0]);
+                  setCommandActiveIndex((current) =>
+                    Math.min(current + 1, Math.max(filteredCommandItems.length - 1, 0)),
+                  );
+                  return;
+                }
+
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setCommandActiveIndex((current) => Math.max(current - 1, 0));
+                  return;
+                }
+
+                if (event.key === "Enter" && filteredCommandItems[commandActiveIndex]) {
+                  event.preventDefault();
+                  runCommand(filteredCommandItems[commandActiveIndex]!);
                 }
               }}
               placeholder="Например: pomodoro, проект, journal, задача…"
@@ -654,7 +767,7 @@ export function AlphacoreDashboard() {
                   type="button"
                   onClick={() => runCommand(item)}
                   className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                    index === 0
+                    index === commandActiveIndex
                       ? "border-zinc-600 bg-zinc-900/80"
                       : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
                   }`}
@@ -789,7 +902,15 @@ export function AlphacoreDashboard() {
 
             <div className="mt-3 space-y-2">
               {triageTasks.slice(0, 3).map((task) => (
-                <div key={task.id} className="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-3">
+                <div
+                  key={task.id}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    writeTaskDragData(event.dataTransfer, task.id);
+                  }}
+                  className="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-3"
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-zinc-100">{task.title}</p>
@@ -841,6 +962,52 @@ export function AlphacoreDashboard() {
                   Inbox пуст. Можно сразу кинуть новую задачу в capture.
                 </button>
               )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-50">🪄 Drop desk</h3>
+                <p className="text-[11px] text-zinc-500">Перетащи задачу сюда, чтобы быстро сменить приоритет или отправить в Pomodoro.</p>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {([
+                { id: "p1", label: "P1", hint: "critical / today" },
+                { id: "p2", label: "P2", hint: "important / week" },
+                { id: "p3", label: "P3", hint: "backlog" },
+              ] as const).map((item) => (
+                <div
+                  key={item.id}
+                  onDragOver={handleDeskDragOver(item.id)}
+                  onDragLeave={handleDeskDragLeave}
+                  onDrop={handlePriorityDrop(item.id)}
+                  className={`rounded-2xl border border-dashed px-3 py-3 transition ${
+                    dragDeskTarget === item.id
+                      ? "border-zinc-200 bg-zinc-50/10"
+                      : "border-zinc-800 bg-zinc-950/30"
+                  }`}
+                >
+                  <p className={`text-sm font-semibold ${PRIORITY_CLS[item.id]}`}>{item.label}</p>
+                  <p className="mt-1 text-[10px] text-zinc-500">{item.hint}</p>
+                </div>
+              ))}
+
+              <div
+                onDragOver={handleDeskDragOver("pomodoro")}
+                onDragLeave={handleDeskDragLeave}
+                onDrop={handlePomodoroDeskDrop}
+                className={`rounded-2xl border border-dashed px-3 py-3 transition ${
+                  dragDeskTarget === "pomodoro"
+                    ? "border-rose-300/50 bg-rose-500/10"
+                    : "border-zinc-800 bg-zinc-950/30"
+                }`}
+              >
+                <p className="text-sm font-semibold text-rose-200">Pomodoro</p>
+                <p className="mt-1 text-[10px] text-zinc-500">положить задачу в фокус без старта</p>
+              </div>
             </div>
           </section>
 
@@ -1074,6 +1241,20 @@ export function AlphacoreDashboard() {
             >
               Открыть задачи
             </Link>
+            <button
+              type="button"
+              onClick={() => openBriefPanel("brief")}
+              className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+            >
+              Утренний brief
+            </button>
+            <button
+              type="button"
+              onClick={() => openBriefPanel("review")}
+              className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+            >
+              Вечерний review
+            </button>
             {focusSnapshot.attentionProject && (
               <Link
                 href={`/projects?open=${focusSnapshot.attentionProject.id}`}
@@ -1082,6 +1263,61 @@ export function AlphacoreDashboard() {
                 Открыть проект
               </Link>
             )}
+          </div>
+        </section>
+      )}
+
+      {agentControl && activeBriefText && (
+        <section className="rounded-4xl border border-sky-500/15 bg-linear-to-br from-sky-950/10 to-zinc-950 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-50">🪞 Agent brief / review</h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                Быстрый текстовый срез системы, который можно сразу скопировать в чат, заметку или себе в голову.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => openBriefPanel("brief")}
+                className={`rounded-xl border px-3 py-2 text-xs transition ${
+                  briefPanelMode === "brief"
+                    ? "border-sky-400/40 bg-sky-500/10 text-sky-200"
+                    : "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                }`}
+              >
+                Утро
+              </button>
+              <button
+                type="button"
+                onClick={() => openBriefPanel("review")}
+                className={`rounded-xl border px-3 py-2 text-xs transition ${
+                  briefPanelMode === "review"
+                    ? "border-violet-400/40 bg-violet-500/10 text-violet-200"
+                    : "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                }`}
+              >
+                Вечер
+              </button>
+              <button
+                type="button"
+                onClick={copyBriefToClipboard}
+                className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+              >
+                Скопировать
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-3xl border border-zinc-800/60 bg-zinc-950/40 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-zinc-100">{activeBriefTitle}</p>
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500">
+                ready to share
+              </span>
+            </div>
+            <pre className="whitespace-pre-wrap text-sm leading-6 text-zinc-300">{activeBriefText}</pre>
           </div>
         </section>
       )}

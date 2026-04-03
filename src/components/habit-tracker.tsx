@@ -6,7 +6,11 @@ import {
   type Habit,
   type HabitCategory,
   activeHabits,
+  clearHabitOverride,
   getChecks,
+  getHabitOverrideMode,
+  skipHabit,
+  snoozeHabitToTomorrow,
   streak as getStreak,
   todayStr,
   toggle,
@@ -149,6 +153,30 @@ export function HabitTracker() {
     if (changed) reload();
   }, [checks, filteredHabits, reload, today]);
 
+  const onSkip = useCallback(
+    (id: string) => {
+      skipHabit(id, today);
+      reload();
+    },
+    [reload, today],
+  );
+
+  const onSnooze = useCallback(
+    (id: string) => {
+      snoozeHabitToTomorrow(id, today);
+      reload();
+    },
+    [reload, today],
+  );
+
+  const onClearOverride = useCallback(
+    (id: string) => {
+      clearHabitOverride(id, today);
+      reload();
+    },
+    [reload, today],
+  );
+
   return (
     <section className="rounded-4xl border border-emerald-500/20 bg-linear-to-br from-emerald-950/15 to-zinc-950 p-5 shadow-2xl shadow-black/20 sm:p-6">
       {/* Header: title + ring */}
@@ -218,48 +246,92 @@ export function HabitTracker() {
       <div className="mt-4 space-y-1.5">
         {filteredHabits.map((h) => {
           const on = checks[h.id] ?? false;
+          const override = getHabitOverrideMode(h.id, today);
           return (
-            <button
+            <div
               key={h.id}
-              type="button"
-              onClick={() => onToggle(h.id)}
               className={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all ${
                 on
                   ? "border-emerald-500/25 bg-emerald-500/5"
                   : "border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700"
               }`}
             >
-              <div
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all ${
-                  on
-                    ? "border-emerald-400 bg-emerald-400 text-zinc-950"
-                    : "border-zinc-600"
-                }`}
+              <button
+                type="button"
+                onClick={() => onToggle(h.id)}
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
               >
-                {on && (
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2 6L5 9L10 3"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </div>
-              <span className="text-base">{h.emoji}</span>
+                <div
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all ${
+                    on
+                      ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                      : "border-zinc-600"
+                  }`}
+                >
+                  {on && (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path
+                        d="M2 6L5 9L10 3"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </div>
+                <span className="text-base">{h.emoji}</span>
+                <div className="min-w-0">
+                  <span
+                    className={`block text-sm ${on ? "text-emerald-300/80 line-through" : "text-zinc-200"}`}
+                  >
+                    {h.name}
+                  </span>
+                  {override && !on && (
+                    <span className="mt-0.5 block text-[10px] text-zinc-500">
+                      {override === "skip" ? "сегодня пропуск" : "перенесено на завтра"}
+                    </span>
+                  )}
+                </div>
+              </button>
+
+              {!on && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  {override ? (
+                    <button
+                      type="button"
+                      onClick={() => onClearOverride(h.id)}
+                      className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+                    >
+                      вернуть
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onSkip(h.id)}
+                        className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+                      >
+                        пропуск
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onSnooze(h.id)}
+                        className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-300 transition hover:border-sky-400/40"
+                      >
+                        завтра
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
               <span
-                className={`text-sm ${on ? "text-emerald-300/80 line-through" : "text-zinc-200"}`}
-              >
-                {h.name}
-              </span>
-              <span
-                className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-medium ${CAT_CLS[h.category]}`}
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${CAT_CLS[h.category]}`}
               >
                 {CAT_LABEL[h.category]}
               </span>
-            </button>
+            </div>
           );
         })}
         {filteredHabits.length === 0 && (

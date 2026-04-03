@@ -22,6 +22,9 @@ export const DEFAULT_HABITS: Habit[] = [
 ];
 
 const KEY = "alphacore_habits";
+const OVERRIDE_KEY = "alphacore_habit_overrides";
+
+type HabitOverrideMode = "skip" | "extra";
 
 function ds(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -39,6 +42,14 @@ function save(log: Record<string, boolean>): void {
   lsSet(KEY, log);
 }
 
+function loadOverrides(): Record<string, HabitOverrideMode> {
+  return lsGet<Record<string, HabitOverrideMode>>(OVERRIDE_KEY, {});
+}
+
+function saveOverrides(log: Record<string, HabitOverrideMode>): void {
+  lsSet(OVERRIDE_KEY, log);
+}
+
 export function todayStr(): string {
   return ds(new Date());
 }
@@ -49,7 +60,18 @@ export function isActiveOn(h: Habit, dow: number): boolean {
 
 export function activeHabits(date: Date): Habit[] {
   const dow = date.getDay();
-  return DEFAULT_HABITS.filter((h) => isActiveOn(h, dow));
+  const day = ds(date);
+  const overrides = loadOverrides();
+  const base = DEFAULT_HABITS.filter((h) => isActiveOn(h, dow)).filter(
+    (habit) => overrides[sk(habit.id, day)] !== "skip",
+  );
+  const extras = DEFAULT_HABITS.filter(
+    (habit) => overrides[sk(habit.id, day)] === "extra",
+  );
+
+  return [...base, ...extras].filter(
+    (habit, index, list) => list.findIndex((item) => item.id === habit.id) === index,
+  );
 }
 
 export function getChecks(date: string): Record<string, boolean> {
@@ -84,7 +106,7 @@ export function weekSummary(): DaySummary[] {
     d.setDate(d.getDate() - i);
     const s = ds(d);
     const dow = d.getDay();
-    const active = DEFAULT_HABITS.filter((h) => isActiveOn(h, dow));
+    const active = activeHabits(d);
     const done = active.filter((h) => !!log[sk(h.id, s)]).length;
     out.push({ date: s, label: labels[dow], total: active.length, done });
   }
@@ -98,11 +120,37 @@ export function streak(): number {
     const d = new Date();
     d.setDate(d.getDate() - i);
     const s = ds(d);
-    const dow = d.getDay();
-    const active = DEFAULT_HABITS.filter((h) => isActiveOn(h, dow));
+    const active = activeHabits(d);
     if (active.length === 0) continue;
     if (active.every((h) => !!log[sk(h.id, s)])) count++;
     else break;
   }
   return count;
+}
+
+export function skipHabit(habitId: string, date: string): void {
+  const overrides = loadOverrides();
+  overrides[sk(habitId, date)] = "skip";
+  saveOverrides(overrides);
+}
+
+export function snoozeHabitToTomorrow(habitId: string, date: string): void {
+  const overrides = loadOverrides();
+  const next = new Date(`${date}T00:00:00`);
+  next.setDate(next.getDate() + 1);
+  const tomorrow = ds(next);
+
+  overrides[sk(habitId, date)] = "skip";
+  overrides[sk(habitId, tomorrow)] = "extra";
+  saveOverrides(overrides);
+}
+
+export function clearHabitOverride(habitId: string, date: string): void {
+  const overrides = loadOverrides();
+  delete overrides[sk(habitId, date)];
+  saveOverrides(overrides);
+}
+
+export function getHabitOverrideMode(habitId: string, date: string): HabitOverrideMode | null {
+  return loadOverrides()[sk(habitId, date)] ?? null;
 }

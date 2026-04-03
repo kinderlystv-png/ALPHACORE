@@ -16,6 +16,7 @@ import {
   timeToMinutes,
   updateCustomEvent,
 } from "@/lib/schedule";
+import { writeTaskDragData } from "@/lib/dashboard-events";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
 import {
   type Task,
@@ -102,6 +103,16 @@ type DragState =
   | { type: "slot"; slotId: string; originDay: string }
   | null;
 
+type CalendarViewMode = "full" | "compact";
+
+function getCompactStart(columns: DayColumn[], compactCount: number): number {
+  if (columns.length <= compactCount) return 0;
+  const todayIndex = columns.findIndex((column) => column.isToday);
+  if (todayIndex < 0) return 0;
+
+  return Math.max(0, Math.min(todayIndex - 1, columns.length - compactCount));
+}
+
 /* ── Component ── */
 
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
@@ -110,12 +121,32 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [shouldCenterNow, setShouldCenterNow] = useState(true);
   const [drag, setDrag] = useState<DragState>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
+  const [compactStart, setCompactStart] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const responsiveInitRef = useRef(false);
   const today = todayKey();
 
   useEffect(() => {
     setAnchor(getTodayWindowAnchor());
     setShouldCenterNow(true);
+  }, []);
+
+  useEffect(() => {
+    const syncViewport = () => {
+      const width = window.innerWidth;
+      setViewportWidth(width);
+
+      if (!responsiveInitRef.current) {
+        responsiveInitRef.current = true;
+        setViewMode(width < 960 ? "compact" : "full");
+      }
+    };
+
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
   }, []);
 
   // subscribe to data changes
@@ -173,6 +204,36 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, today, version]);
 
+  const compactCount = viewportWidth != null && viewportWidth < 640 ? 2 : 3;
+
+  useEffect(() => {
+    if (viewMode !== "compact" || columns.length === 0) return;
+    setCompactStart((current) => {
+      const maxStart = Math.max(0, columns.length - compactCount);
+      if (current > maxStart) return maxStart;
+      if (current === 0) return getCompactStart(columns, compactCount);
+      return current;
+    });
+  }, [columns, compactCount, viewMode]);
+
+  const visibleColumns = useMemo(() => {
+    if (viewMode === "full") return columns;
+    return columns.slice(compactStart, compactStart + compactCount);
+  }, [columns, compactCount, compactStart, viewMode]);
+
+  const visibleGridWidth = 56 + Math.max(visibleColumns.length, 1) * 120;
+
+  const visibleWindowLabel = useMemo(() => {
+    if (visibleColumns.length === 0) return "";
+    const first = visibleColumns[0]?.date;
+    const last = visibleColumns[visibleColumns.length - 1]?.date;
+    if (!first || !last) return "";
+    const fmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
+    return `${fmt.format(first)} — ${fmt.format(last)}`;
+  }, [visibleColumns]);
+
+  const showCompactControls = viewMode === "compact" && columns.length > compactCount;
+
   // navigation
   const shiftWeek = useCallback(
     (delta: number) => {
@@ -188,6 +249,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const goToday = useCallback(() => {
     setAnchor(getTodayWindowAnchor());
+    setCompactStart(0);
     setShouldCenterNow(true);
   }, []);
 
@@ -322,6 +384,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           </button>
           <span className="ml-2 text-sm font-semibold text-zinc-100">{weekLabel}</span>
 
+          {viewMode === "compact" && (
+            <span className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-400">
+              {visibleWindowLabel}
+            </span>
+          )}
+
           {stats && (
             <div className="ml-2 flex flex-wrap gap-2">
               <span className="rounded-lg border border-sky-500/20 bg-sky-950/10 px-2 py-1 text-[11px] text-sky-300">
@@ -338,7 +406,52 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         </div>
 
         {/* Legend */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="mr-1 flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/40 p-1">
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("compact");
+                setCompactStart(getCompactStart(columns, compactCount));
+              }}
+              className={`rounded-full px-2 py-1 text-[10px] transition ${
+                viewMode === "compact" ? "bg-zinc-50 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"
+              }`}
+            >
+              {compactCount}д
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("full")}
+              className={`rounded-full px-2 py-1 text-[10px] transition ${
+                viewMode === "full" ? "bg-zinc-50 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"
+              }`}
+            >
+              8д
+            </button>
+          </div>
+
+          {showCompactControls && (
+            <div className="mr-2 flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/40 p-1">
+              <button
+                type="button"
+                onClick={() => setCompactStart((current) => Math.max(0, current - 1))}
+                className="rounded-full px-2 py-1 text-[10px] text-zinc-400 transition hover:text-zinc-100"
+              >
+                ← окно
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setCompactStart((current) => Math.min(columns.length - compactCount, current + 1))
+                }
+                className="rounded-full px-2 py-1 text-[10px] text-zinc-400 transition hover:text-zinc-100"
+              >
+                окно →
+              </button>
+            </div>
+          )}
+
           {AREA_LEGEND.map((a) => (
             <span
               key={a.key}
@@ -356,8 +469,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         <div
           className="relative grid"
           style={{
-            gridTemplateColumns: "56px repeat(8, minmax(120px, 1fr))",
-            minWidth: "1080px",
+            gridTemplateColumns: `56px repeat(${visibleColumns.length}, minmax(120px, 1fr))`,
+            minWidth: `${visibleGridWidth}px`,
           }}
         >
           {/* ── Column headers ── */}
@@ -365,7 +478,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             className="sticky top-0 z-30 border-b border-r border-zinc-800/50 bg-zinc-950"
             style={{ height: HEADER_H }}
           />
-          {columns.map((col) => (
+          {visibleColumns.map((col) => (
             <div
               key={`head-${col.key}`}
               className={`sticky top-0 z-30 border-b border-r border-zinc-800/50 px-2 py-1.5 ${
@@ -418,6 +531,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         onDragStart={(e) => {
                           if (col.isPast) return;
                           e.dataTransfer.effectAllowed = "move";
+                          writeTaskDragData(e.dataTransfer, t.id);
                           onDragStartTask(t.id, col.key);
                         }}
                         onDragEnd={onDragEnd}
@@ -456,7 +570,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 </div>
 
                 {/* Day cells */}
-                {columns.map((col) => (
+                {visibleColumns.map((col) => (
                   <div
                     key={`cell-${col.key}-${hour}`}
                     className={`relative border-b border-r border-zinc-800/20 transition-colors ${
@@ -485,14 +599,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             left: 56,
             width: "calc(100% - 56px)",
             height: TOTAL_HOURS * ROW_H,
-            minWidth: 1080 - 56,
+            minWidth: visibleGridWidth - 56,
           }}
         >
           <div
             className="relative grid h-full"
-            style={{ gridTemplateColumns: "repeat(8, minmax(120px, 1fr))" }}
+            style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
-            {columns.map((col, colIdx) => (
+            {visibleColumns.map((col) => (
               <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
                 {col.slots.map((slot) => {
                   const top = slotTop(slot.start);
