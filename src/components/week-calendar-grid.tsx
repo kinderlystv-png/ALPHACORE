@@ -1024,7 +1024,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const openQuickMenu = useCallback((element: HTMLElement, slot: ScheduleSlot) => {
     const rect = element.getBoundingClientRect();
-    const mobile = window.innerWidth < 820 || window.innerHeight < 860;
+    const mobile = window.innerWidth < 640;
     const desktopHalfWidth = 192;
     const maxTop = Math.max(12, window.innerHeight - QUICK_MENU_ESTIMATED_HEIGHT - 12);
 
@@ -1838,10 +1838,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         return (
           <div
             ref={quickMenuRef}
-            className={quickMenu.mobile ? "fixed inset-x-3 bottom-24 z-50" : "fixed z-50 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2"}
+            className={quickMenu.mobile ? "fixed bottom-20 left-1/2 z-50 w-[min(22rem,calc(100vw-1rem))] -translate-x-1/2" : "fixed z-50 w-[min(24rem,calc(100vw-1.5rem))] -translate-x-1/2"}
             style={quickMenu.mobile ? undefined : { top: quickMenu.top, left: quickMenu.left }}
           >
-            <div className="max-h-[min(72vh,38rem)] overflow-y-auto overscroll-contain rounded-3xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur">
+            <div className={`overflow-y-auto overscroll-contain rounded-3xl border border-zinc-800 bg-zinc-950/95 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur ${quickMenu.mobile ? "max-h-[min(70vh,34rem)] p-3" : "max-h-[min(72vh,38rem)] p-3"}`}>
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-[11px] uppercase tracking-[0.16em] text-zinc-500">Быстрые команды</p>
