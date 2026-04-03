@@ -43,6 +43,17 @@ const MOUSE_HOLD_MS = 110;
 const TOUCH_HOLD_MS = 240;
 const POINTER_SLOP_PX = 10;
 
+const QUICK_TONE_OPTIONS: Array<{ value: ScheduleTone; label: string }> = [
+  { value: "work", label: "💼 Работа" },
+  { value: "kinderly", label: "🎉 Kinderly" },
+  { value: "heys", label: "⚙️ HEYS" },
+  { value: "health", label: "🫀 Здоровье" },
+  { value: "personal", label: "🌙 Личное" },
+  { value: "cleanup", label: "🧹 Опер." },
+  { value: "family", label: "🏡 Семья" },
+  { value: "review", label: "🧠 Review" },
+];
+
 /* ── Helpers ── */
 
 function todayKey() {
@@ -100,6 +111,18 @@ function minutesToCalendarTime(minutes: number): string {
   const h = Math.floor(safe / 60);
   const m = safe % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function shiftDateKey(dateKey: string, days: number): string {
+  const date = new Date(`${dateKey}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function copyTitle(title: string): string {
+  const trimmed = title.trim();
+  if (trimmed.toLowerCase().endsWith("(копия)")) return trimmed;
+  return `${trimmed} (копия)`;
 }
 
 /* ── Types ── */
@@ -170,6 +193,8 @@ type QuickMenuState = {
   top: number;
   left: number;
   mobile: boolean;
+  draftTitle: string;
+  draftTone: ScheduleTone;
 };
 
 function getCompactStart(columns: DayColumn[], compactCount: number): number {
@@ -533,6 +558,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       activeEditRef.current = null;
       setActiveEdit(null);
       document.body.style.userSelect = "";
+      window.setTimeout(() => {
+        skipNextClickRef.current = false;
+      }, 0);
     };
 
     window.addEventListener("pointermove", handlePointerMove, { passive: false });
@@ -592,7 +620,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       top: clamp(rect.top + Math.min(rect.height, 28) + 10, 12, window.innerHeight - 12),
       left: clamp(rect.left + rect.width / 2, 16 + desktopHalfWidth, window.innerWidth - 16 - desktopHalfWidth),
       mobile,
+      draftTitle: slot.title,
+      draftTone: slot.tone,
     });
+  }, []);
+
+  const updateQuickMenuDraft = useCallback((patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone">>) => {
+    setQuickMenu((current) => (current ? { ...current, ...patch } : current));
   }, []);
 
   const applyQuickSlotPatch = useCallback((slot: ScheduleSlot, patch: Partial<EditableSlotDraft>) => {
@@ -607,6 +641,51 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setVersion((value) => value + 1);
     setQuickMenu(null);
   }, []);
+
+  const saveQuickMenuDraft = useCallback(() => {
+    if (!quickMenu) return;
+
+    const nextTitle = quickMenu.draftTitle.trim();
+    if (!nextTitle) return;
+
+    if (nextTitle === quickMenu.slot.title && quickMenu.draftTone === quickMenu.slot.tone) {
+      setQuickMenu(null);
+      return;
+    }
+
+    updateEditableScheduleSlot(quickMenu.slot, {
+      title: nextTitle,
+      tone: quickMenu.draftTone,
+    });
+    setVersion((value) => value + 1);
+    setQuickMenu(null);
+  }, [quickMenu]);
+
+  const duplicateQuickSlot = useCallback(() => {
+    if (!quickMenu) return;
+
+    const duration = timeToMinutes(quickMenu.slot.end) - timeToMinutes(quickMenu.slot.start);
+    const sourceStart = timeToMinutes(quickMenu.slot.start);
+    const sourceEnd = timeToMinutes(quickMenu.slot.end);
+    const sameDayStart = sourceEnd;
+    const sameDayEnd = sameDayStart + duration;
+    const nextTitle = quickMenu.draftTitle.trim() || quickMenu.slot.title;
+
+    const duplicateDate = sameDayEnd <= HOUR_END * 60 ? quickMenu.slot.date : shiftDateKey(quickMenu.slot.date, 1);
+    const duplicateStart = sameDayEnd <= HOUR_END * 60 ? sameDayStart : sourceStart;
+    const duplicateEnd = sameDayEnd <= HOUR_END * 60 ? sameDayEnd : sourceEnd;
+
+    addCustomEvent({
+      date: duplicateDate,
+      start: minutesToCalendarTime(duplicateStart),
+      end: minutesToCalendarTime(duplicateEnd),
+      title: copyTitle(nextTitle),
+      tone: quickMenu.draftTone,
+      tags: [...new Set([...quickMenu.slot.tags, "copy"])],
+    });
+    setVersion((value) => value + 1);
+    setQuickMenu(null);
+  }, [quickMenu]);
 
   const deleteQuickSlot = useCallback((slot: ScheduleSlot) => {
     removeEditableScheduleSlot(slot);
@@ -1122,6 +1201,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         const startMin = timeToMinutes(slot.start);
         const endMin = timeToMinutes(slot.end);
         const durationMin = endMin - startMin;
+        const draftTitle = quickMenu.draftTitle.trim();
+        const saveDisabled = !draftTitle || (draftTitle === slot.title && quickMenu.draftTone === slot.tone);
         const earlierDisabled = startMin <= HOUR_START * 60;
         const laterDisabled = endMin >= HOUR_END * 60;
         const shorterDisabled = durationMin <= MIN_SLOT_MIN;
@@ -1153,6 +1234,52 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 >
                   ✕
                 </button>
+              </div>
+
+              <div className="mb-3 space-y-2">
+                <label className="block text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
+                  Название
+                </label>
+                <input
+                  value={quickMenu.draftTitle}
+                  onChange={(event) => updateQuickMenuDraft({ draftTitle: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      saveQuickMenuDraft();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      closeQuickMenu();
+                    }
+                  }}
+                  className="w-full rounded-2xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-zinc-600"
+                  placeholder="Название слота"
+                />
+              </div>
+
+              <div className="mb-3 space-y-2">
+                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Тон</p>
+                <div className="flex flex-wrap gap-2">
+                  {QUICK_TONE_OPTIONS.map((option) => {
+                    const tone = toneColor(option.value);
+                    const active = quickMenu.draftTone === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => updateQuickMenuDraft({ draftTone: option.value })}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                          active
+                            ? `${tone.border} ${tone.bg} ${tone.text}`
+                            : "border-zinc-800 bg-zinc-900/60 text-zinc-500 hover:border-zinc-600 hover:text-zinc-200"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1223,6 +1350,24 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   }
                 >
                   + длительность
+                </button>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={saveQuickMenuDraft}
+                  disabled={saveDisabled}
+                  className="rounded-2xl border border-sky-500/30 bg-sky-950/30 px-3 py-2 text-sm font-semibold text-sky-200 transition hover:border-sky-400/50 hover:bg-sky-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Сохранить
+                </button>
+                <button
+                  type="button"
+                  onClick={duplicateQuickSlot}
+                  className="rounded-2xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500 hover:bg-zinc-900"
+                >
+                  Дублировать
                 </button>
               </div>
 

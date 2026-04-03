@@ -183,12 +183,12 @@ const AREA_GENERIC_TITLE: Record<AttentionAreaKey, string> = {
 };
 
 const AREA_GENERIC_IMPACT: Record<AttentionAreaKey, string> = {
-	work: "Получишь один ясный рычаг вместо размазанной фоновой тревоги.",
-	health: "Снизишь энергетическую цену дня и не отдашь здоровье на потом.",
-	family: "Неделя не съест семейную часть через студийную логистику.",
-	operations: "Хвосты перестанут фонить и воровать фокус у главного.",
-	reflection: "Вернётся смысл и иерархия вместо ручного перебора списков.",
-	recovery: "Восстановление перестанет проигрывать случайной срочности.",
+	work: "Развернуть текущий next step в 2–3 конкретных действия и выбрать одно главное на сегодня.",
+	health: "Зафиксировать минимальный health floor на сегодня: сон, движение и нужный follow-up.",
+	family: "Разложить семейные буферы и логистику на 3–7 дней, пока неделя ещё управляема.",
+	operations: "Разделить хвосты на удалить / перенести / сделать первым и снять шум с головы.",
+	reflection: "Собрать короткий review: что движется, что буксует и какой один следующий шаг главный.",
+	recovery: "Поставить одно невыбиваемое окно восстановления в ритм недели.",
 };
 
 const PROJECT_STATUS_LABEL: Record<StatusTone, string> = {
@@ -550,7 +550,7 @@ function buildWorkRuntimeData(
 			: undefined,
 		impact:
 			queue.length > 0
-				? `Хороший prompt превратит ${queue.length} конкурирующих рабочих куска в одну последовательность на сегодня.`
+				? `Разложить ${queue.length} конкурирующих рабочих куска в одну последовательность на сегодня и сразу отсечь лишнее.`
 				: undefined,
 		promptLines: [
 			leadProject
@@ -622,7 +622,7 @@ function buildHealthRuntimeData(
 					: undefined,
 		impact:
 			missing.length > 0 || flags.length > 0
-				? "Агент сможет собрать реалистичный floor без героизма и без потери медицинского контекста."
+				? "Зафиксировать щадящий health floor без героизма: один минимум до вечера, один follow-up и один запрет на перегруз."
 				: undefined,
 		promptLines: [
 			missing.length > 0
@@ -704,7 +704,7 @@ function buildFamilyRuntimeData(
 					: undefined,
 		impact:
 			studio.length > 0 || birthday
-				? "Агент сможет заранее разложить буферы, логистику и решения, пока неделя ещё не захлопнулась."
+				? "Разложить буферы, логистику и заранее закрыть конфликтные места, пока неделя ещё не захлопнулась."
 				: undefined,
 		promptLines: [
 			studio.length > 0
@@ -774,7 +774,7 @@ function buildOperationsRuntimeData(
 					: undefined,
 		impact:
 			overdue.length > 0 || unscheduled.length > 0 || cleanup
-				? "После triage агент вернёт одно первое действие вместо вязкого списка хвостов."
+				? "Сделать жёсткий triage: удалить лишнее, перенести второстепенное и оставить одно первое действие на сегодня."
 				: undefined,
 		promptLines: [
 			overdue.length > 0
@@ -837,12 +837,12 @@ function buildReflectionRuntimeData(
 				: undefined,
 		impact:
 			recent.length > 0 || hotTags.length > 0
-				? "Агент может превратить заметки в решения, а не в ещё один склад наблюдений."
+				? "Сжать последние записи в 1–2 решения и один главный следующий шаг вместо нового слоя наблюдений."
 				: undefined,
 		promptLines: [
 			recent.length > 0
 				? `Последние записи: ${recent.map((entry) => `"${clipText(entry.text, 70)}"`).join(" · ")}.`
-				: "Свежих записей мало — попроси агента сначала вытащить контекст из разговора.",
+				: "Свежих записей мало — сначала вытащи контекст из разговора и только потом собирай review.",
 			hotTags.length > 0
 				? `Чаще всплывают теги: ${hotTags.map((tag) => `#${tag}`).join(" ")}.`
 				: "Устойчивых тегов пока не набралось.",
@@ -902,7 +902,7 @@ function buildRecoveryRuntimeData(
 					: undefined,
 		impact:
 			missingRecovery.length > 0 || overloaded.length > 0 || !nextPersonal
-				? "Агент поможет защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
+				? "Зафиксировать конкретный recovery-слот и заранее защитить его от случайной срочности."
 				: undefined,
 		promptLines: [
 			missingRecovery.length > 0
@@ -1003,7 +1003,7 @@ function buildPrompt(
 		],
 		reflection: [
 			"Сделай короткий review-prompt для AI-агента.",
-			"Пусть агент разберёт: что движется, что буксует, какой один следующий шаг даст максимум эффекта.",
+			"Разбери: что движется, что буксует и какой один следующий шаг даст максимум эффекта.",
 			"Ответ должен обновить фокус, а не породить новый склад задач.",
 		],
 		recovery: [
