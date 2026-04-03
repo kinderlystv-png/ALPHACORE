@@ -192,6 +192,8 @@ type RecommendationCandidate = {
 };
 
 type CandidateRuntimeData = {
+	candidateId?: string;
+	href?: string;
 	title?: string;
 	context?: string;
 	impact?: string;
@@ -527,6 +529,16 @@ function getTaskTrack(task: Task): TaskTrack {
 	if (/купить|заказать|позвонить|написать|операц|follow-up|хвост|check|швабр|тряпк/u.test(haystack)) {
 		return "ops";
 	}
+
+	return "general";
+}
+
+function getProjectTrack(project: Project): TaskTrack {
+	const haystack = `${project.id} ${project.name}`.toLowerCase();
+
+	if (/heys/u.test(haystack)) return "heys";
+	if (/minecraft|\bдр\b|день рождения|квест|реквизит/u.test(haystack)) return "birthday";
+	if (/kinderly|студи|праздник/u.test(haystack)) return "kinderly";
 
 	return "general";
 }
@@ -1078,18 +1090,27 @@ function buildWorkRuntimeData(
 	const energyConstrained = context.schedule.today.some(isCleanupLoadSlot);
 	const taskWindows = context.tasks.distribution.suggestions.slice(0, 3);
 	const overflowTasks = context.tasks.distribution.overflowTasks.slice(0, 2);
+	const preferredTrack = leadProject ? getProjectTrack(leadProject) : null;
+	const alignedTasks = preferredTrack
+		? context.tasks.actionable.filter((task) => getTaskTrack(task) === preferredTrack)
+		: [];
 	const leadTask =
+		alignedTasks[0] ??
 		context.tasks.p1[0] ??
 		context.tasks.overdue[0] ??
 		context.tasks.dueSoon[0] ??
 		context.tasks.unscheduled[0] ??
 		null;
-	const queue = uniqueTasks([
-		...context.tasks.p1,
-		...context.tasks.overdue,
-		...context.tasks.dueSoon,
-		...context.tasks.unscheduled,
-	]).slice(0, 3);
+	const queue = (
+		alignedTasks.length > 0
+			? alignedTasks
+			: uniqueTasks([
+					...context.tasks.p1,
+					...context.tasks.overdue,
+					...context.tasks.dueSoon,
+					...context.tasks.unscheduled,
+			  ])
+	).slice(0, 3);
 	const signals: string[] = [];
 
 	if (leadProject) {
@@ -1123,6 +1144,8 @@ function buildWorkRuntimeData(
 	}
 
 	return {
+		candidateId: leadProject ? `advice-project-${leadProject.id}` : undefined,
+		href: leadProject ? `/projects?open=${leadProject.id}` : undefined,
 		title: leadProject
 			? `Развернуть ${leadProject.name} без размазывания`
 			: undefined,
@@ -1736,13 +1759,15 @@ function buildCandidates(
 		if (priority?.id === "health-floor") baseTags.push("routine");
 
 		return {
-			id: priority ? `advice-${priority.id}` : `advice-area-${area.key}`,
+			id:
+				runtimeData?.candidateId ??
+				(priority ? `advice-${priority.id}` : `advice-area-${area.key}`),
 			areaKey: area.key,
 			title: runtimeData?.title ?? priority?.title ?? AREA_GENERIC_TITLE[area.key],
 			context: runtimeData?.context ?? priority?.reason ?? area.insight,
 			impact: runtimeData?.impact ?? priority?.action ?? AREA_GENERIC_IMPACT[area.key],
 			prompt: buildPrompt(snapshot, area, priority, runtimeData ?? undefined),
-			href: priority?.href ?? area.href,
+			href: runtimeData?.href ?? priority?.href ?? area.href,
 			level: priority?.level ?? area.level,
 			effort: AREA_EFFORT[area.key],
 			tags: [...new Set([...baseTags, ...(runtimeData?.tags ?? [])])],
