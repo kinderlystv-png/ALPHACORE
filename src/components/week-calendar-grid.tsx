@@ -26,6 +26,7 @@ import {
 import { writeTaskDragData } from "@/lib/dashboard-events";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
 import {
+  getTasks,
   type Task,
   compareTasksByAttention,
   getActionableTasks,
@@ -540,6 +541,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     const fmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
     return `${fmt.format(first)} — ${fmt.format(last)}`;
   }, [visibleColumns]);
+
+  const linkedTasksById = useMemo(
+    () => new Map(getTasks().map((task) => [task.id, task])),
+    [version],
+  );
 
   const showCompactControls = viewMode === "compact" && columns.length > compactCount;
 
@@ -1580,8 +1586,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         overlayColumnWidth,
                       );
                   const c = toneColor(slot.tone);
+                  const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
+                  const isCustomSlot = slot.id.startsWith("custom-");
+                  const slotKindLabel = slot.kind === "event" ? "event" : "task";
                   const isBlockingSlot =
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
@@ -1671,6 +1680,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         </>
                       ) : (
                         <>
+                          {isCustomSlot && (
+                            <span className="pointer-events-none absolute right-2 top-1.5 z-10 rounded-full border border-white/12 bg-zinc-950/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-zinc-200">
+                              {slotKindLabel}
+                            </span>
+                          )}
                           {isEditable && (
                             <button
                               type="button"
@@ -1692,6 +1706,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
                             {slot.title}
                           </p>
+                          {linkedTask && !isSupportSlot && height > 44 && (
+                            <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-zinc-400">
+                              {linkedTask.status} · {linkedTask.id.slice(0, 8)}
+                            </p>
+                          )}
                           {!isSupportSlot && height > 40 && slot.subtitle && (
                             <p className="mt-0.5 line-clamp-2 text-[9px] leading-tight text-zinc-500">
                               {slot.subtitle}
@@ -1840,6 +1859,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
       {quickMenu && (() => {
         const slot = quickMenu.slot;
+        const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
         const isCustomSlot = slot.id.startsWith("custom-");
         const isTaskBackedSlot = isCustomSlot && slot.kind !== "event";
         const startMin = timeToMinutes(slot.start);
@@ -1874,6 +1894,17 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   <p className="truncate text-[11px] uppercase tracking-[0.16em] text-zinc-500">Быстрые команды</p>
                   <p className="truncate text-sm font-semibold text-zinc-100">{slot.title}</p>
                   <p className="mt-0.5 text-[11px] text-zinc-400">{slot.start}–{slot.end}</p>
+                  {isCustomSlot && (
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      Тип: <span className="text-zinc-300">{slot.kind === "event" ? "event" : "task"}</span>
+                      {slot.taskId ? (
+                        <>
+                          {" "}· linked task: <span className="text-zinc-300">{slot.taskId}</span>
+                          {linkedTask ? <span className="text-zinc-400"> ({linkedTask.status})</span> : null}
+                        </>
+                      ) : null}
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
