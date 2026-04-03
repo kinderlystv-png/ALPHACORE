@@ -81,6 +81,7 @@ export type WeeklyFocusReport = {
   totalCompletedTasks: number;
   topTask:
     | {
+        id: string;
         title: string;
         minutes: number;
         sessions: number;
@@ -89,6 +90,7 @@ export type WeeklyFocusReport = {
     | null;
   topProject:
     | {
+        id?: string;
         name: string;
         minutes: number;
       }
@@ -147,6 +149,7 @@ export function getWeeklyFocusReport(): WeeklyFocusReport {
         : task.project;
 
       return {
+        id: task.id,
         title: task.title,
         projectLabel,
         minutes: totals.minutes,
@@ -165,6 +168,9 @@ export function getWeeklyFocusReport(): WeeklyFocusReport {
   const topProjectEntry = [...projectTotals.entries()].sort(
     (a, b) => b[1] - a[1],
   )[0];
+  const topProject = topProjectEntry
+    ? projects.find((project) => project.name === topProjectEntry[0]) ?? null
+    : null;
 
   return {
     days,
@@ -173,7 +179,7 @@ export function getWeeklyFocusReport(): WeeklyFocusReport {
     totalCompletedTasks: days.reduce((acc, day) => acc + day.completedTasks, 0),
     topTask: taskTotals[0] ?? null,
     topProject: topProjectEntry
-      ? { name: topProjectEntry[0], minutes: topProjectEntry[1] }
+      ? { id: topProject?.id, name: topProjectEntry[0], minutes: topProjectEntry[1] }
       : null,
   };
 }

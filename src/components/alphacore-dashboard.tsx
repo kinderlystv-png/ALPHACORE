@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentControlPanel } from "@/components/agent-control-panel";
@@ -14,8 +15,17 @@ import {
 import { ensureJournalSeed, type JournalEntry } from "@/lib/journal";
 import { allParamNames, getEntries, paramStatus } from "@/lib/medical";
 import { addNote } from "@/lib/notes";
+import { getProjects, type Project } from "@/lib/projects";
 import { subscribeAppDataChange } from "@/lib/storage";
-import { activateTask, addTask, toggleDone, updateTask, type TaskPriority } from "@/lib/tasks";
+import {
+  activateTask,
+  addTask,
+  getActionableTasks,
+  toggleDone,
+  updateTask,
+  type Task,
+  type TaskPriority,
+} from "@/lib/tasks";
 import {
   type ActivityStats,
   type DayCompletions,
@@ -79,6 +89,26 @@ type QuickTaskDraft = {
   title: string;
   priority: TaskPriority;
   dueDate?: string;
+};
+
+type CommandItem = {
+  id: string;
+  title: string;
+  subtitle: string;
+  keywords: string;
+  action: () => void;
+};
+
+const PRIORITY_CLS: Record<TaskPriority, string> = {
+  p1: "border-rose-500/25 bg-rose-500/10 text-rose-200",
+  p2: "border-amber-500/25 bg-amber-500/10 text-amber-200",
+  p3: "border-zinc-700 bg-zinc-800/70 text-zinc-300",
+};
+
+const PROJECT_STATUS_CLS: Record<Project["status"], string> = {
+  green: "border-emerald-500/25 bg-emerald-500/10 text-emerald-200",
+  yellow: "border-amber-500/25 bg-amber-500/10 text-amber-200",
+  red: "border-rose-500/25 bg-rose-500/10 text-rose-200",
 };
 
 function dayKey(offset = 0) {
@@ -170,12 +200,15 @@ function MedicalTrend({ data }: { data: MedicalTrendPoint[] }) {
 }
 
 export function AlphacoreDashboard() {
+  const router = useRouter();
   const [agentControl, setAgentControl] = useState<AgentControlSnapshot | null>(null);
   const [stats, setStats] = useState<ActivityStats | null>(null);
   const [completions, setCompletions] = useState<DayCompletions[]>([]);
   const [focusSnapshot, setFocusSnapshot] = useState<FocusSnapshot | null>(null);
   const [weeklyReport, setWeeklyReport] = useState<WeeklyFocusReport | null>(null);
   const [journalPreview, setJournalPreview] = useState<JournalEntry[]>([]);
+  const [triageTasks, setTriageTasks] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [medicalSummary, setMedicalSummary] = useState<{
     entries: number;
     flagged: number;
@@ -187,7 +220,11 @@ export function AlphacoreDashboard() {
   const [quickMode, setQuickMode] = useState<"task" | "note">("task");
   const [quickInput, setQuickInput] = useState("");
   const [flash, setFlash] = useState<QuickFlash | null>(null);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [projectQuickId, setProjectQuickId] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const focusQuickInput = useCallback((mode?: "task" | "note") => {
     if (mode) setQuickMode(mode);
@@ -210,6 +247,8 @@ export function AlphacoreDashboard() {
     setFocusSnapshot(getFocusSnapshot());
     setWeeklyReport(getWeeklyFocusReport());
     setJournalPreview(ensureJournalSeed().slice(-2));
+    setTriageTasks(getActionableTasks().slice(0, 4));
+    setProjects(getProjects());
 
     const entries = getEntries();
     const flagged = entries
@@ -286,6 +325,27 @@ export function AlphacoreDashboard() {
   }, [flash]);
 
   useEffect(() => {
+    if (!projects.length) return;
+    setProjectQuickId((current) => {
+      if (current && projects.some((project) => project.id === current)) return current;
+      return focusSnapshot?.attentionProject?.id ?? projects[0]?.id ?? "";
+    });
+  }, [projects, focusSnapshot]);
+
+  const openCommandPalette = useCallback(() => {
+    setCommandOpen(true);
+    requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+      commandInputRef.current?.select();
+    });
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    setCommandOpen(false);
+    setCommandQuery("");
+  }, []);
+
+  useEffect(() => {
     const isTypingTarget = (target: EventTarget | null) => {
       return (
         target instanceof HTMLElement &&
@@ -299,6 +359,16 @@ export function AlphacoreDashboard() {
     const onKeyDown = (event: KeyboardEvent) => {
       const meta = event.metaKey || event.ctrlKey;
 
+      if (meta && event.shiftKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        if (commandOpen) {
+          closeCommandPalette();
+        } else {
+          openCommandPalette();
+        }
+        return;
+      }
+
       if (meta && event.key.toLowerCase() === "k") {
         event.preventDefault();
         focusQuickInput();
@@ -308,6 +378,11 @@ export function AlphacoreDashboard() {
       if (!meta && !event.altKey && !event.shiftKey && event.key === "/" && !isTypingTarget(event.target)) {
         event.preventDefault();
         focusQuickInput();
+        return;
+      }
+
+      if (event.key === "Escape" && commandOpen) {
+        closeCommandPalette();
         return;
       }
 
@@ -322,7 +397,7 @@ export function AlphacoreDashboard() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [focusQuickInput, quickInput]);
+  }, [closeCommandPalette, commandOpen, focusQuickInput, openCommandPalette, quickInput]);
 
   const handleQuickAdd = useCallback((status: "inbox" | "active" = "inbox") => {
     const value = quickInput.trim();
@@ -413,8 +488,192 @@ export function AlphacoreDashboard() {
     refreshDashboard();
   }, [focusSnapshot, refreshDashboard]);
 
+  const handleTriageActivate = useCallback(
+    (task: Task) => {
+      activateTask(task.id);
+      setFlash({ tone: "info", text: `В работе: ${task.title}` });
+      refreshDashboard();
+    },
+    [refreshDashboard],
+  );
+
+  const handleTriageDone = useCallback(
+    (task: Task) => {
+      toggleDone(task.id);
+      setFlash({ tone: "success", text: `Закрыто: ${task.title}` });
+      refreshDashboard();
+    },
+    [refreshDashboard],
+  );
+
+  const handleProjectQuickOpen = useCallback(
+    (projectId: string) => {
+      if (!projectId) return;
+      router.push(`/projects?open=${projectId}`);
+    },
+    [router],
+  );
+
+  const commandItems = useMemo<CommandItem[]>(() => {
+    const items: CommandItem[] = [
+      {
+        id: "capture-task",
+        title: "Новая задача",
+        subtitle: "Сфокусировать quick capture на задаче",
+        keywords: "task quick capture inbox",
+        action: () => focusQuickInput("task"),
+      },
+      {
+        id: "capture-note",
+        title: "Новая заметка",
+        subtitle: "Открыть capture в режиме note",
+        keywords: "note quick capture memory",
+        action: () => focusQuickInput("note"),
+      },
+      {
+        id: "open-calendar",
+        title: "Открыть календарь",
+        subtitle: "Перейти к недельному планированию",
+        keywords: "calendar week schedule",
+        action: () => router.push("/calendar"),
+      },
+      {
+        id: "open-tasks",
+        title: "Открыть задачи",
+        subtitle: "Inbox, active и done задачи",
+        keywords: "tasks inbox active",
+        action: () => router.push("/tasks"),
+      },
+      {
+        id: "open-journal",
+        title: "Открыть дневник",
+        subtitle: "Поймать мысль, пока не убежала",
+        keywords: "journal reflection notes",
+        action: () => router.push("/journal"),
+      },
+      {
+        id: "open-medical",
+        title: "Открыть показатели",
+        subtitle: "Последние анализы и отклонения",
+        keywords: "medical health lab",
+        action: () => router.push("/medical"),
+      },
+    ];
+
+    if (focusSnapshot?.primaryTask) {
+      items.unshift(
+        {
+          id: "focus-pomodoro",
+          title: "Запустить Pomodoro для главного фокуса",
+          subtitle: focusSnapshot.primaryTask.title,
+          keywords: `pomodoro focus ${focusSnapshot.primaryTask.title}`,
+          action: () => pushTaskToPomodoro(focusSnapshot.primaryTask!.id, true),
+        },
+        {
+          id: "focus-done",
+          title: "Закрыть главный фокус",
+          subtitle: focusSnapshot.primaryTask.title,
+          keywords: `done close focus ${focusSnapshot.primaryTask.title}`,
+          action: handlePrimaryTaskDone,
+        },
+      );
+    }
+
+    if (focusSnapshot?.attentionProject) {
+      items.push({
+        id: "attention-project",
+        title: "Открыть проект внимания",
+        subtitle: focusSnapshot.attentionProject.name,
+        keywords: `project attention ${focusSnapshot.attentionProject.name}`,
+        action: () => handleProjectQuickOpen(focusSnapshot.attentionProject!.id),
+      });
+    }
+
+    return items;
+  }, [focusQuickInput, focusSnapshot, handlePrimaryTaskDone, handleProjectQuickOpen, pushTaskToPomodoro, router]);
+
+  const filteredCommandItems = useMemo(() => {
+    const query = commandQuery.trim().toLowerCase();
+    if (!query) return commandItems;
+    return commandItems.filter((item) => {
+      const haystack = `${item.title} ${item.subtitle} ${item.keywords}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [commandItems, commandQuery]);
+
+  const runCommand = useCallback(
+    (item: CommandItem) => {
+      closeCommandPalette();
+      item.action();
+    },
+    [closeCommandPalette],
+  );
+
+  const selectedQuickProject = useMemo(
+    () => projects.find((project) => project.id === projectQuickId) ?? null,
+    [projectQuickId, projects],
+  );
+
   return (
     <div className="space-y-4 py-3">
+      {commandOpen && (
+        <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/55 px-4 py-16 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-4xl border border-zinc-800 bg-zinc-950/95 p-4 shadow-2xl shadow-black/40">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-zinc-50">⌘⇧P Agent palette</p>
+                <p className="text-xs text-zinc-500">Прыжок по действиям и экранам без поиска по меню.</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeCommandPalette}
+                className="rounded-xl border border-zinc-800 px-2.5 py-1 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-100"
+              >
+                Esc
+              </button>
+            </div>
+
+            <input
+              ref={commandInputRef}
+              value={commandQuery}
+              onChange={(event) => setCommandQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && filteredCommandItems[0]) {
+                  event.preventDefault();
+                  runCommand(filteredCommandItems[0]);
+                }
+              }}
+              placeholder="Например: pomodoro, проект, journal, задача…"
+              className="mt-4 w-full rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 outline-none focus:border-zinc-600"
+            />
+
+            <div className="mt-4 max-h-[55vh] space-y-2 overflow-auto pr-1">
+              {filteredCommandItems.map((item, index) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => runCommand(item)}
+                  className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                    index === 0
+                      ? "border-zinc-600 bg-zinc-900/80"
+                      : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
+                  }`}
+                >
+                  <p className="text-sm font-medium text-zinc-100">{item.title}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{item.subtitle}</p>
+                </button>
+              ))}
+
+              {filteredCommandItems.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-zinc-800 px-4 py-6 text-center text-sm text-zinc-500">
+                  Ничего не нашлось. Попробуй “pomodoro”, “проект” или “дневник”.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {flash && (
         <div className="pointer-events-none fixed right-5 top-5 z-50 flex justify-end">
           <div
@@ -453,6 +712,13 @@ export function AlphacoreDashboard() {
                   {mode === "task" ? "📥 Задача" : "📝 Заметка"}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={openCommandPalette}
+                className="ml-auto rounded-lg border border-zinc-800 px-2 py-1 text-[11px] text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
+              >
+                ⌘⇧P palette
+              </button>
             </div>
             <div className="flex gap-2">
               <input
@@ -506,6 +772,77 @@ export function AlphacoreDashboard() {
               </span>
             </div>
           </div>
+
+          <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-50">🧹 Inbox triage</h3>
+                <p className="text-[11px] text-zinc-500">Самые важные хвосты без похода в /tasks.</p>
+              </div>
+              <Link
+                href="/tasks"
+                className="rounded-lg border border-zinc-800 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
+              >
+                Все задачи
+              </Link>
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {triageTasks.slice(0, 3).map((task) => (
+                <div key={task.id} className="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-zinc-100">{task.title}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500">
+                        <span className={`rounded-full border px-1.5 py-0.5 ${PRIORITY_CLS[task.priority]}`}>
+                          {task.priority.toUpperCase()}
+                        </span>
+                        <span>{task.status}</span>
+                        <span>·</span>
+                        <span>{dueLabel(task.dueDate)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {task.status === "inbox" && (
+                      <button
+                        type="button"
+                        onClick={() => handleTriageActivate(task)}
+                        className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                      >
+                        В работу
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => pushTaskToPomodoro(task.id, task.status !== "active")}
+                      className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-[11px] text-rose-200 transition hover:border-rose-400/40"
+                    >
+                      В Pomodoro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTriageDone(task)}
+                      className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-200 transition hover:border-emerald-400/40"
+                    >
+                      Готово
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {triageTasks.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => focusQuickInput("task")}
+                  className="w-full rounded-xl border border-dashed border-zinc-800 px-3 py-4 text-sm text-zinc-500 transition hover:border-zinc-600 hover:text-zinc-300"
+                >
+                  Inbox пуст. Можно сразу кинуть новую задачу в capture.
+                </button>
+              )}
+            </div>
+          </section>
 
           {/* Habits */}
           <HabitTracker />
@@ -689,6 +1026,44 @@ export function AlphacoreDashboard() {
               <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">
                 {focusSnapshot.attentionProject?.nextStep ?? "Можно смело идти в execution mode."}
               </p>
+
+              {projects.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <select
+                    value={projectQuickId}
+                    onChange={(event) => setProjectQuickId(event.target.value)}
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs text-zinc-100"
+                  >
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name} · {project.status}
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedQuickProject && (
+                    <div className="rounded-lg border border-zinc-800/70 bg-zinc-950/40 p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[10px] ${PROJECT_STATUS_CLS[selectedQuickProject.status]}`}
+                        >
+                          {selectedQuickProject.status}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleProjectQuickOpen(selectedQuickProject.id)}
+                          className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                        >
+                          Открыть
+                        </button>
+                      </div>
+                      <p className="mt-2 line-clamp-2 text-[11px] text-zinc-500">
+                        {selectedQuickProject.nextStep}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -774,6 +1149,16 @@ export function AlphacoreDashboard() {
                       }`
                     : "Запусти пару помодоро — и лидер сразу найдётся."}
                 </p>
+
+                {weeklyReport.topTask && (
+                  <button
+                    type="button"
+                    onClick={() => pushTaskToPomodoro(weeklyReport.topTask?.id ?? "", true)}
+                    className="mt-3 rounded-lg border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[11px] text-violet-200 transition hover:border-violet-400/40"
+                  >
+                    В Pomodoro
+                  </button>
+                )}
               </div>
 
               <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-4">
@@ -786,6 +1171,16 @@ export function AlphacoreDashboard() {
                     ? `${weeklyReport.topProject.minutes} мин чистого фокуса`
                     : "Как только задачи получат проектную привязку, карточка станет ещё умнее."}
                 </p>
+
+                {weeklyReport.topProject?.id && (
+                  <button
+                    type="button"
+                    onClick={() => handleProjectQuickOpen(weeklyReport.topProject!.id!)}
+                    className="mt-3 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                  >
+                    Открыть проект
+                  </button>
+                )}
               </div>
             </div>
           </div>

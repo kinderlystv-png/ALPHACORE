@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   type DaySummary,
   type Habit,
+  type HabitCategory,
   activeHabits,
   getChecks,
   streak as getStreak,
@@ -97,6 +98,8 @@ export function HabitTracker() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [week, setWeek] = useState<DaySummary[]>([]);
   const [str, setStr] = useState(0);
+  const [categoryFilter, setCategoryFilter] = useState<HabitCategory | "all">("all");
+  const [showOnlyPending, setShowOnlyPending] = useState(false);
 
   const reload = useCallback(() => {
     const t = todayStr();
@@ -127,9 +130,27 @@ export function HabitTracker() {
   const done = habits.filter((h) => checks[h.id]).length;
   const total = habits.length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const filteredHabits = habits.filter((habit) => {
+    if (categoryFilter !== "all" && habit.category !== categoryFilter) return false;
+    if (showOnlyPending && checks[habit.id]) return false;
+    return true;
+  });
+  const visiblePending = filteredHabits.filter((habit) => !checks[habit.id]);
+
+  const completeVisible = useCallback(() => {
+    let changed = false;
+    for (const habit of filteredHabits) {
+      if (!checks[habit.id]) {
+        toggle(habit.id, today);
+        changed = true;
+      }
+    }
+
+    if (changed) reload();
+  }, [checks, filteredHabits, reload, today]);
 
   return (
-    <section className="rounded-[2rem] border border-emerald-500/20 bg-gradient-to-br from-emerald-950/15 to-zinc-950 p-5 shadow-2xl shadow-black/20 sm:p-6">
+    <section className="rounded-4xl border border-emerald-500/20 bg-linear-to-br from-emerald-950/15 to-zinc-950 p-5 shadow-2xl shadow-black/20 sm:p-6">
       {/* Header: title + ring */}
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -149,9 +170,53 @@ export function HabitTracker() {
         </div>
       </div>
 
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {([
+          { key: "all", label: "все" },
+          { key: "health", label: "здоровье" },
+          { key: "work", label: "работа" },
+          { key: "personal", label: "личное" },
+        ] as const).map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setCategoryFilter(item.key)}
+            className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition ${
+              categoryFilter === item.key
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                : "border-zinc-800 bg-zinc-900/40 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+
+        <button
+          type="button"
+          onClick={() => setShowOnlyPending((current) => !current)}
+          className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition ${
+            showOnlyPending
+              ? "border-amber-500/25 bg-amber-500/10 text-amber-300"
+              : "border-zinc-800 bg-zinc-900/40 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
+          }`}
+        >
+          только незакрытые
+        </button>
+
+        {visiblePending.length > 0 && (
+          <button
+            type="button"
+            onClick={completeVisible}
+            className="ml-auto rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400/40"
+          >
+            закрыть видимое · {visiblePending.length}
+          </button>
+        )}
+      </div>
+
       {/* Checklist */}
       <div className="mt-4 space-y-1.5">
-        {habits.map((h) => {
+        {filteredHabits.map((h) => {
           const on = checks[h.id] ?? false;
           return (
             <button
@@ -197,9 +262,11 @@ export function HabitTracker() {
             </button>
           );
         })}
-        {habits.length === 0 && (
+        {filteredHabits.length === 0 && (
           <p className="py-3 text-center text-sm text-zinc-500">
-            На сегодня нет запланированных привычек
+            {habits.length === 0
+              ? "На сегодня нет запланированных привычек"
+              : "По текущему фильтру ничего не осталось — уже красиво."}
           </p>
         )}
       </div>
