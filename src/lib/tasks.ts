@@ -35,8 +35,53 @@ function ds(d: Date): string {
   return dateStr(d);
 }
 
+function priorityWeight(priority: TaskPriority): number {
+  if (priority === "p1") return 0;
+  if (priority === "p2") return 1;
+  return 2;
+}
+
+function statusWeight(status: TaskStatus): number {
+  if (status === "active") return 0;
+  if (status === "inbox") return 1;
+  if (status === "done") return 2;
+  return 3;
+}
+
+function dueWeight(dueDate: string | undefined, referenceDate: string): number {
+  if (!dueDate) return 9999;
+  return Math.floor(
+    (new Date(`${dueDate}T00:00:00`).getTime() -
+      new Date(`${referenceDate}T00:00:00`).getTime()) /
+      86_400_000,
+  );
+}
+
 function isCarryoverCandidate(task: Task): boolean {
   return task.status === "inbox" || task.status === "active";
+}
+
+export function isActionableTask(task: Task): boolean {
+  return task.status === "inbox" || task.status === "active";
+}
+
+export function compareTasksByAttention(
+  left: Task,
+  right: Task,
+  referenceDate: string = ds(new Date()),
+): number {
+  return (
+    statusWeight(left.status) - statusWeight(right.status) ||
+    priorityWeight(left.priority) - priorityWeight(right.priority) ||
+    dueWeight(left.dueDate, referenceDate) - dueWeight(right.dueDate, referenceDate) ||
+    left.createdAt.localeCompare(right.createdAt)
+  );
+}
+
+export function getActionableTasks(referenceDate: string = ds(new Date())): Task[] {
+  return getTasks()
+    .filter(isActionableTask)
+    .sort((left, right) => compareTasksByAttention(left, right, referenceDate));
 }
 
 export function addTask(

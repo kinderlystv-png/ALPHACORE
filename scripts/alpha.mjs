@@ -498,6 +498,74 @@ async function reviewCmd() {
   }
 }
 
+// ── Deploy command ────────────────────────────────────────────────────────────
+
+import { execSync } from "node:child_process";
+
+async function deployCmd(args) {
+  const { flags } = parseArgs(args);
+  const message = flags.message ?? flags.m ?? null;
+
+  console.info("🚀 ALPHACORE deploy — pushing code changes to production…\n");
+
+  // Step 1: type-check
+  console.info("① Type-check…");
+  try {
+    execSync("npm run type-check", { cwd: process.cwd(), stdio: "pipe" });
+    console.info("   ✅ No type errors.\n");
+  } catch (err) {
+    console.error("   ❌ Type-check failed. Fix errors before deploying:\n");
+    console.error(err.stdout?.toString() ?? err.stderr?.toString() ?? err.message);
+    process.exit(1);
+  }
+
+  // Step 2: check for changes
+  const status = execSync("git status --porcelain", { cwd: process.cwd(), encoding: "utf-8" }).trim();
+  if (!status) {
+    console.info("② No uncommitted changes — pushing existing commits.\n");
+  } else {
+    console.info(`② Staging ${status.split("\n").length} changed file(s)…`);
+    execSync("git add -A", { cwd: process.cwd(), stdio: "pipe" });
+
+    // Step 3: commit
+    const commitMsg = message ?? autoCommitMessage();
+    console.info(`③ Committing: "${commitMsg}"`);
+    try {
+      execSync(`git commit -m ${JSON.stringify(commitMsg)}`, { cwd: process.cwd(), stdio: "pipe" });
+      console.info("   ✅ Committed.\n");
+    } catch (err) {
+      // Nothing to commit (rare edge case after add -A)
+      console.info("   ℹ  Nothing to commit.\n");
+    }
+  }
+
+  // Step 4: push
+  console.info("④ Pushing to origin/main…");
+  try {
+    execSync("git push origin main", { cwd: process.cwd(), stdio: "pipe" });
+    console.info("   ✅ Pushed.\n");
+  } catch (err) {
+    console.error("   ❌ Push failed:\n");
+    console.error(err.stderr?.toString() ?? err.message);
+    process.exit(1);
+  }
+
+  console.info("🎉 Deploy triggered! GitHub Actions will build & deploy to Yandex Cloud.");
+  console.info("   PWA will update in ~3 minutes.");
+  console.info("   Track progress: https://github.com/kinderlystv-png/ALPHACORE/actions");
+}
+
+function autoCommitMessage() {
+  try {
+    const diff = execSync("git diff --cached --stat", { cwd: process.cwd(), encoding: "utf-8" }).trim();
+    const lines = diff.split("\n");
+    const summary = lines[lines.length - 1]; // e.g. "3 files changed, 45 insertions(+), 12 deletions(-)"
+    return `chore: update — ${summary}`;
+  } catch {
+    return "chore: update via agent deploy";
+  }
+}
+
 // ── Router ───────────────────────────────────────────────────────────────────
 
 const HELP = `
@@ -524,6 +592,7 @@ Commands:
   snapshot
   brief
   review
+  deploy [--message "commit message"]   Push code to production
 `;
 
 async function main() {
@@ -573,6 +642,8 @@ async function main() {
       return briefCmd();
     case "review":
       return reviewCmd();
+    case "deploy":
+      return deployCmd(args.slice(1));
     case "help":
     case "--help":
     case "-h":

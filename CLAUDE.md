@@ -1,10 +1,14 @@
 @AGENTS.md
 
-# ALPHACORE — Quick Rules for Claude/Codex
+# ALPHACORE — Quick Rules for Claude/Codex/ChatGPT
 
 > Ответы по-русски, код на английском.
 
 Основные правила находятся в `.github/copilot-instructions.md`.
+
+Несмотря на имя файла, эти quick rules подходят не только для Claude. Их можно
+применять и для Codex, ChatGPT/OpenAI и других агентов, которые работают с
+этим репозиторием.
 
 ## Quick rules
 
@@ -14,6 +18,10 @@
 4. Не редактировать seed-данные в исходниках — работать через CLI/API.
 5. Journal entries от агента: `--author assistant`.
 6. Tailwind CSS v4 syntax.
+7. **После правок кода**: `npm run alpha -- deploy --message "описание"` —
+   type-check + commit + push в production.
+8. **Data-only changes** через CLI не требуют deploy — данные синкаются
+   через PostgreSQL мгновенно (~5 сек).
 
 ## CLI reference
 
@@ -28,6 +36,7 @@ npm run alpha -- habit check sleep
 npm run alpha -- snapshot
 npm run alpha -- brief
 npm run alpha -- review
+npm run alpha -- deploy --message "description of changes"
 ```
 
 ## Useful commands

@@ -59,7 +59,7 @@ export const SCHEDULE_TONE_CLS: Record<ScheduleTone, string> = {
 
 export const SCHEDULE_RULES = [
   "С 1 апреля без уборщицы: если был праздник, на следующий день нужен слот на уборку.",
-  "Обычная уборка ставится не раньше 10:00; если после вечернего праздника утром уже стоит следующий праздник — уборка переносится на 06:00–09:00.",
+  "Праздник вечером → уборка на следующий день 11:00–15:00 (сначала пробежка утром). Если утром уже стоит следующий праздник — уборка переносится на 06:00–09:00.",
   "Во время праздников нужен семейный буфер: за час до и через час после ты с Даней, пока Саша на админке.",
   "Если в среду есть вечерний праздник, добавляем логистику: отвезти Даню к бабушке перед репетицией.",
   "Мягкие weekly-блоки автоматически скрываются, если конфликтуют с праздником, уборкой или семейным буфером.",
@@ -84,15 +84,22 @@ const TEMPLATE_BY_WEEKDAY: Record<number, TemplateSlot[]> = {
   ],
   1: [
     {
-      start: "09:00",
-      end: "10:30",
+      start: "08:00",
+      end: "09:00",
+      title: "🏃 Бег 60 мин",
+      tone: "health",
+      tags: ["run", "health"],
+    },
+    {
+      start: "09:30",
+      end: "11:00",
       title: "Стратег. задачи Kinderly",
       tone: "kinderly",
       tags: ["kinderly", "strategy"],
     },
     {
-      start: "11:00",
-      end: "12:30",
+      start: "11:30",
+      end: "13:00",
       title: "Стратег. задачи HEYS",
       tone: "heys",
       tags: ["heys", "strategy"],
@@ -104,17 +111,17 @@ const TEMPLATE_BY_WEEKDAY: Record<number, TemplateSlot[]> = {
       tone: "work",
       tags: ["deep-work"],
     },
+  ],
+  2: [
     {
-      start: "17:00",
-      end: "18:00",
+      start: "08:00",
+      end: "09:00",
       title: "🏃 Бег 60 мин",
       tone: "health",
       tags: ["run", "health"],
     },
-  ],
-  2: [
     {
-      start: "09:00",
+      start: "09:30",
       end: "12:00",
       title: "Реализация + коммуникации",
       tone: "work",
@@ -133,13 +140,6 @@ const TEMPLATE_BY_WEEKDAY: Record<number, TemplateSlot[]> = {
       title: "HEYS: операционные задачи",
       tone: "heys",
       tags: ["heys", "ops"],
-    },
-    {
-      start: "17:00",
-      end: "18:00",
-      title: "🏃 Бег 60 мин",
-      tone: "health",
-      tags: ["run", "health"],
     },
   ],
   3: [
@@ -197,7 +197,14 @@ const TEMPLATE_BY_WEEKDAY: Record<number, TemplateSlot[]> = {
   ],
   5: [
     {
-      start: "09:00",
+      start: "08:00",
+      end: "09:00",
+      title: "🏃 Бег 60 мин",
+      tone: "health",
+      tags: ["run", "health"],
+    },
+    {
+      start: "09:30",
       end: "12:00",
       title: "Операционные задачи",
       tone: "work",
@@ -217,28 +224,21 @@ const TEMPLATE_BY_WEEKDAY: Record<number, TemplateSlot[]> = {
       tone: "review",
       tags: ["planning"],
     },
+  ],
+  6: [
     {
-      start: "17:00",
-      end: "18:00",
+      start: "08:00",
+      end: "09:00",
       title: "🏃 Бег 60 мин",
       tone: "health",
       tags: ["run", "health"],
     },
-  ],
-  6: [
     {
       start: "10:00",
       end: "13:00",
       title: "Семья / активный отдых",
       tone: "personal",
       tags: ["family", "rest"],
-    },
-    {
-      start: "16:00",
-      end: "17:00",
-      title: "🏃 Бег 60 мин",
-      tone: "health",
-      tags: ["run", "health"],
     },
   ],
 };
@@ -431,12 +431,12 @@ function shiftDate(dateKey: string, days: number): string {
   return toDateKey(next);
 }
 
-function timeToMinutes(time: string): number {
+export function timeToMinutes(time: string): number {
   const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
 }
 
-function minutesToTime(minutes: number): string {
+export function minutesToTime(minutes: number): string {
   const safe = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60);
   const h = Math.floor(safe / 60);
   const m = safe % 60;
@@ -504,23 +504,25 @@ function buildCleaningSlots(dateKey: string, todayEvents: ScheduleSlot[]): Sched
   const previousEvents = getStudioEvents(previousDate);
   if (previousEvents.length === 0) return [];
 
-  const earlyWindow =
-    todayEvents.some((event) => isMorningEvent(event)) &&
-    previousEvents.some((event) => isEveningEvent(event));
+  // Evening party yesterday → cleanup today 11:00–15:00
+  // Morning party today AND evening party yesterday → early cleanup 06:00–09:00
+  const hasMorningToday = todayEvents.some((event) => isMorningEvent(event));
+  const hadEveningYesterday = previousEvents.some((event) => isEveningEvent(event));
+  const earlyWindow = hasMorningToday && hadEveningYesterday;
 
   return [
     {
       id: `cleanup-${dateKey}`,
       date: dateKey,
-      start: earlyWindow ? "06:00" : "10:00",
-      end: earlyWindow ? "09:00" : "13:00",
+      start: earlyWindow ? "06:00" : "11:00",
+      end: earlyWindow ? "09:00" : "15:00",
       title:
         previousEvents.length > 1
           ? `🧹 Уборка студии после ${previousEvents.length} праздников`
           : "🧹 Уборка студии после праздника",
       subtitle: earlyWindow
         ? "Раннее окно: утром уже стоит следующий праздник"
-        : "С 1 апреля без уборщицы — следующий день закрываем сами",
+        : "Уборка с 11 до 15 — сначала пробежка утром, потом студия",
       tone: "cleanup",
       tags: ["cleanup", "studio"],
       source: "derived",
@@ -660,6 +662,18 @@ export function removeCustomEvent(id: string): boolean {
   events.splice(idx, 1);
   saveCustomEvents(events);
   return true;
+}
+
+export function updateCustomEvent(
+  id: string,
+  patch: Partial<Omit<CustomEvent, "id">>,
+): CustomEvent | null {
+  const events = loadCustomEvents();
+  const idx = events.findIndex((e) => e.id === id);
+  if (idx === -1) return null;
+  events[idx] = { ...events[idx], ...patch };
+  saveCustomEvents(events);
+  return events[idx];
 }
 
 function getCustomSlots(dateKey: string): ScheduleSlot[] {

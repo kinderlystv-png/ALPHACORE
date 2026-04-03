@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { WeekPlanner } from "@/components/week-planner";
 import {
   SCHEDULE_RULES,
   SCHEDULE_TONE_CLS,
@@ -37,7 +38,7 @@ export default function CalendarPage() {
               key={item.key}
               type="button"
               onClick={() => setSelectedDate(item.key)}
-              className={`flex min-w-[72px] shrink-0 flex-col items-center rounded-2xl px-3 py-2 transition ${
+              className={`flex min-w-18 shrink-0 flex-col items-center rounded-2xl px-3 py-2 transition ${
                 selectedDate === item.key
                   ? "bg-zinc-50 text-zinc-950"
                   : item.isToday
@@ -50,6 +51,12 @@ export default function CalendarPage() {
             </button>
           ))}
         </div>
+
+        <WeekPlanner
+          anchorDate={selectedDate}
+          title="🗓 Week view / 7-дневный горизонт"
+          description="Due-задачи живут внутри дня, а не отдельно от расписания. Ниже остаётся детальный разбор выбранной даты."
+        />
 
         <section className="grid grid-cols-3 gap-2">
           <div className="rounded-xl border border-sky-500/20 bg-sky-950/10 p-3">
@@ -66,7 +73,7 @@ export default function CalendarPage() {
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-zinc-800/50 bg-zinc-900/20 p-5">
+        <section className="rounded-4xl border border-zinc-800/50 bg-zinc-900/20 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-zinc-50">План на {selected?.label}</h2>
@@ -120,7 +127,7 @@ export default function CalendarPage() {
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-zinc-800/50 bg-zinc-900/20 p-5">
+        <section className="rounded-4xl border border-zinc-800/50 bg-zinc-900/20 p-5">
           <h2 className="text-lg font-semibold text-zinc-50">Правила синхронизации</h2>
           <div className="mt-4 space-y-2">
             {SCHEDULE_RULES.map((rule) => (
