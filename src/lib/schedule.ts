@@ -11,7 +11,7 @@ export type ScheduleTone =
   | "review";
 
 export type ScheduleSource = "template" | "studio" | "derived";
-export type EditableScheduleSource = "template" | "studio";
+export type EditableScheduleSource = "template" | "studio" | "derived";
 
 export type ScheduleSlot = {
   id: string;
@@ -659,6 +659,18 @@ function buildCoverageSlots(dateKey: string, todayEvents: ScheduleSlot[]): Sched
   });
 }
 
+function buildDerivedSlots(dateKey: string, todayEvents: ScheduleSlot[]): ScheduleSlot[] {
+  return applyOverrides(
+    [
+      ...buildCleaningSlots(dateKey, todayEvents),
+      ...buildBetweenPartySupportSlots(dateKey, todayEvents),
+      ...buildCoverageSlots(dateKey, todayEvents),
+    ],
+    dateKey,
+    "derived",
+  );
+}
+
 function filterTemplateSlots(
   templateSlots: ScheduleSlot[],
   lockedSlots: ScheduleSlot[],
@@ -724,8 +736,6 @@ function upsertOverride(
   slot: ScheduleSlot,
   patch: Partial<Omit<ScheduleOverride, "originalId" | "originalSource">>,
 ): ScheduleOverride | null {
-  if (slot.source === "derived") return null;
-
   const overrides = loadOverrides();
   const next: ScheduleOverride = {
     originalId: slot.id,
@@ -854,17 +864,14 @@ function getCustomSlots(dateKey: string): ScheduleSlot[] {
 export function getScheduleForDate(dateLike: Date | string): ScheduleSlot[] {
   const dateKey = toDateKey(dateLike);
   const studioEvents = getStudioEvents(dateKey);
-  const cleanupSlots = buildCleaningSlots(dateKey, studioEvents);
-  const betweenPartySupportSlots = buildBetweenPartySupportSlots(dateKey, studioEvents);
-  const coverageSlots = buildCoverageSlots(dateKey, studioEvents);
+  const derivedSlots = buildDerivedSlots(dateKey, studioEvents);
   const customSlots = getCustomSlots(dateKey);
-  const cleanupLikeSlots = [...cleanupSlots, ...betweenPartySupportSlots];
+  const cleanupLikeSlots = derivedSlots.filter((slot) => slot.tone === "cleanup");
   const lockedSlots = [...cleanupLikeSlots, ...customSlots];
   const templateSlots = filterTemplateSlots(buildTemplateSlots(dateKey), lockedSlots);
   const slots = [
     ...templateSlots,
-    ...cleanupLikeSlots,
-    ...coverageSlots,
+    ...derivedSlots,
     ...customSlots,
   ];
 
@@ -884,14 +891,12 @@ export function getScheduleSummary(dateLike: Date | string): {
 } {
   const dateKey = toDateKey(dateLike);
   const studioEvents = getStudioEvents(dateKey);
-  const cleanupSlots = buildCleaningSlots(dateKey, studioEvents);
-  const betweenPartySupportSlots = buildBetweenPartySupportSlots(dateKey, studioEvents);
-  const coverageSlots = buildCoverageSlots(dateKey, studioEvents);
+  const derivedSlots = buildDerivedSlots(dateKey, studioEvents);
 
   return {
     parties: studioEvents.length,
-    cleanup: cleanupSlots.length + betweenPartySupportSlots.length,
-    family: coverageSlots.length,
+    cleanup: derivedSlots.filter((slot) => slot.tone === "cleanup").length,
+    family: derivedSlots.filter((slot) => slot.tone === "family").length,
   };
 }
 
