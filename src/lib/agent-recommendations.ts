@@ -183,12 +183,12 @@ const AREA_GENERIC_TITLE: Record<AttentionAreaKey, string> = {
 };
 
 const AREA_GENERIC_IMPACT: Record<AttentionAreaKey, string> = {
-	work: "Попроси агента развернуть текущий next step в 2–3 конкретных действия и выбрать одно главное на сегодня.",
-	health: "Попроси агента зафиксировать минимальный health floor на сегодня: сон, движение и нужный follow-up.",
-	family: "Попроси агента разложить семейные буферы и логистику на 3–7 дней, пока неделя ещё управляема.",
-	operations: "Попроси агента разделить хвосты на удалить / перенести / сделать первым и снять шум с головы.",
-	reflection: "Опиши агенту, что движется, что буксует и какой один следующий шаг сейчас главный.",
-	recovery: "Попроси агента поставить одно невыбиваемое окно восстановления в ритм недели.",
+	work: "Попроси агента собрать один рабочий план на сегодня из текущего next step.",
+	health: "Попроси агента зафиксировать щадящий health floor на сегодня.",
+	family: "Попроси агента заранее защитить семейные окна и логистику недели.",
+	operations: "Попроси агента сделать triage хвостов и оставить одно первое действие.",
+	reflection: "Опиши агенту, что происходит, и попроси собрать один ясный следующий шаг.",
+	recovery: "Попроси агента поставить recovery-окно и защитить его от срочности.",
 };
 
 const PROJECT_STATUS_LABEL: Record<StatusTone, string> = {
@@ -576,7 +576,7 @@ function buildWorkRuntimeData(
 			: undefined,
 		impact:
 			queue.length > 0
-				? `Попроси агента превратить ${queue.length} конкурирующих рабочих куска в одну последовательность на сегодня.`
+				? `Попроси агента превратить ${queue.length} конкурирующих рабочих куска в один понятный план на сегодня.`
 				: undefined,
 		promptLines: [
 			leadProject
@@ -730,7 +730,7 @@ function buildFamilyRuntimeData(
 					: undefined,
 		impact:
 			studio.length > 0 || birthday
-				? "Попроси агента заранее разложить буферы, логистику и решения, пока неделя ещё не захлопнулась."
+				? "Попроси агента заранее разложить буферы, логистику и ключевые решения, пока неделя ещё не захлопнулась."
 				: undefined,
 		promptLines: [
 			studio.length > 0
@@ -800,7 +800,7 @@ function buildOperationsRuntimeData(
 					: undefined,
 		impact:
 			overdue.length > 0 || unscheduled.length > 0 || cleanup
-				? "Попроси агента сделать triage: убрать вязкий список хвостов и оставить одно первое действие на сегодня."
+				? "Попроси агента сделать triage хвостов и оставить одно первое действие на сегодня."
 				: undefined,
 		promptLines: [
 			overdue.length > 0
@@ -863,7 +863,7 @@ function buildReflectionRuntimeData(
 				: undefined,
 		impact:
 			recent.length > 0 || hotTags.length > 0
-				? "Опиши агенту, что происходит, что буксует и что важно — пусть он превратит заметки в решения, а не в ещё один склад наблюдений."
+				? "Опиши агенту, что происходит, что буксует и что важно — пусть он соберёт 1–2 решения и один следующий шаг."
 				: undefined,
 		promptLines: [
 			recent.length > 0
@@ -990,54 +990,63 @@ function buildPrompt(
 	priority: AgentPriority | null,
 	runtimeData?: CandidateRuntimeData,
 ): string {
+	const areaSignals = uniquePromptLines(area.evidence).slice(0, 1);
+	const liveSignals = uniquePromptLines(runtimeData?.promptLines ?? []).slice(0, 3);
+	const runtimeInstructions = uniquePromptLines(runtimeData?.requestLines ?? []).slice(0, 1);
+
 	const contextLines = [
 		`Контекст ALPHACORE:`,
 		`- Баланс: ${snapshot.balanceScore}/100`,
 		`- Зона: ${area.label} (${area.level})`,
 		`- Почему сейчас: ${priority?.reason ?? area.insight}`,
 		`- Текущая сводка: ${area.summary}`,
-		...area.evidence.slice(0, 2).map((item) => `- Сигнал: ${item}`),
+		...areaSignals.map((item) => `- Сигнал: ${item}`),
 		"",
 	];
 
-	if (runtimeData && runtimeData.promptLines.length > 0) {
+	if (liveSignals.length > 0) {
 		contextLines.push("- Реальные сигналы из текущих данных:");
-		contextLines.push(...runtimeData.promptLines.map((item) => `- ${item}`));
+		contextLines.push(...liveSignals.map((item) => `- ${item}`));
 		contextLines.push("");
 	}
 
 	const askByArea: Record<AttentionAreaKey, string[]> = {
 		work: [
-			"Сделай сильный запрос для AI-агента в IDE по рабочему направлению.",
-			"Разверни текущий next step в 2–3 конкретных действия и выбери одно главное на сегодня.",
-			"Добавь критерий done и короткий follow-up, который потом можно внести обратно в ALPHACORE.",
+			"Сделай рабочий prompt для AI-агента в IDE по текущему узлу.",
+			"Разверни текущий next step в 2–3 действия и выбери одно главное на сегодня.",
 		],
 		health: [
-			"Сделай рабочий health-prompt для AI-агента.",
-			"Собери минимальный health floor на сегодня: сон, растяжка, бег/прогулка, follow-up по анализам.",
-			"План должен быть реалистичным, без героизма и с одной минимальной победой до вечера.",
+			"Сделай щадящий health-prompt на сегодня.",
+			"Собери минимальный health floor: сон, растяжка, бег/прогулка, follow-up по анализам.",
 		],
 		family: [
 			"Сделай prompt для защиты семейной части недели.",
-			"Накидай буферы, логистику и 1–2 решения, как не дать студии съесть семейные окна.",
-			"Нужен короткий план на 3–7 дней вперёд с минимальным ручным контролем.",
+			"Разложи буферы, логистику и 1–2 решения вокруг студии.",
 		],
 		operations: [
-			"Сделай prompt на операционный разбор хвостов.",
-			"Раздели всё на удалить / перенести / сделать первым и убери лишний шум из inbox.",
-			"Ответ нужен в формате triage, без воды и с одним первым действием на сегодня.",
+			"Сделай prompt на разбор хвостов.",
+			"Раздели всё на удалить / перенести / сделать первым.",
 		],
 		reflection: [
 			"Сделай короткий review-prompt для AI-агента.",
-			"Пусть агент разберёт: что движется, что буксует, какой один следующий шаг даст максимум эффекта.",
-			"Ответ должен обновить фокус, а не породить новый склад задач.",
+			"Пусть агент разберёт: что движется, что буксует и какой один следующий шаг сейчас главный.",
 		],
 		recovery: [
 			"Сделай prompt на восстановление и ритм недели.",
-			"Найди хотя бы одно невыбиваемое окно восстановления и увяжи его с текущим графиком.",
-			"План должен защищать энергию, а не требовать отдельного подвига.",
+			"Найди одно невыбиваемое окно восстановления и привяжи его к текущему графику.",
 		],
 	};
+
+	const taskLines = uniquePromptLines([
+		...askByArea[area.key],
+		...runtimeInstructions,
+	]).slice(0, 3);
+
+	const taskBlock = [
+		"Что нужно от агента:",
+		...taskLines.map((line) => `- ${line}`),
+		"",
+	];
 
 	const formatLines = [
 		"",
@@ -1050,8 +1059,7 @@ function buildPrompt(
 
 	return [
 		...contextLines,
-		...askByArea[area.key],
-		...(runtimeData?.requestLines ?? []),
+		...taskBlock,
 		...formatLines,
 	].join("\n");
 }

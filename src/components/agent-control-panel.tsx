@@ -137,6 +137,12 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
+function buildPromptBundle(recommendations: AgentRecommendation[]): string {
+  return recommendations
+    .map((recommendation, index) => [`### ${index + 1}. ${recommendation.title}`, recommendation.prompt].join("\n"))
+    .join("\n\n---\n\n");
+}
+
 function RadarWheel({ areas, balanceScore }: { areas: AttentionArea[]; balanceScore: number }) {
   const size = 280;
   const center = size / 2;
@@ -517,6 +523,30 @@ export function AgentControlPanel({
     }
   }, [commitFeedback, notify]);
 
+  const handleCopyAll = useCallback(async () => {
+    if (recommendations.length === 0) return;
+
+    try {
+      await copyText(buildPromptBundle(recommendations));
+
+      for (const recommendation of recommendations) {
+        recordRecommendationFeedback({
+          recommendationId: recommendation.id,
+          action: "copied",
+          tags: recommendation.tags,
+        });
+      }
+
+      setFeedbackEvents(getRecommendationFeedbackEvents());
+      notify({ tone: "success", text: `Скопированы все prompts: ${recommendations.length}` });
+    } catch {
+      notify({
+        tone: "info",
+        text: "Не удалось скопировать bundle prompts. Попробуй ещё раз или копируй по одному.",
+      });
+    }
+  }, [notify, recommendations]);
+
   return (
     <section className="rounded-4xl border border-zinc-800/60 bg-linear-to-br from-zinc-900/50 to-zinc-950/90 p-5 shadow-2xl shadow-black/20 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -559,9 +589,19 @@ export function AgentControlPanel({
                     : "Карточки строятся из текущего контекста ALPHACORE и подстраиваются по copy / dislike / implemented."}
                 </p>
               </div>
-              <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
-                {recommendations.length} активных
-              </span>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyAll}
+                  disabled={recommendations.length === 0}
+                  className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-[11px] font-medium text-sky-100 transition hover:border-sky-400/40 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900/60 disabled:text-zinc-500"
+                >
+                  Скопировать все prompts
+                </button>
+                <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
+                  {recommendations.length} активных
+                </span>
+              </div>
             </div>
           </div>
 
