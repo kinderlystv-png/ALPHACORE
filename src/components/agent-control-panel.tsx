@@ -505,6 +505,12 @@ function RecommendationCard({
       {recommendation.staleReason && (
         <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
           Авто-stale: {FEEDBACK_REASON_LABEL[recommendation.staleReason]}.
+
+          {recommendation.replacementAction && (
+            <p className="mt-2 text-amber-50">
+              Вместо этого: {recommendation.replacementAction}
+            </p>
+          )}
         </div>
       )}
 

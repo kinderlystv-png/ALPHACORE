@@ -83,6 +83,7 @@ export type AgentRecommendation = {
 	latestReason: RecommendationFeedbackReason | null;
 	staleReason: RecommendationFeedbackReason | null;
 	contextHash: string | null;
+	replacementAction: string | null;
 	feedback: {
 		copied: number;
 		implemented: number;
@@ -224,6 +225,7 @@ type RecommendationCandidate = {
 	impact: string;
 	prompt: string;
 	href: string;
+	replacementAction: string | null;
 	level: AttentionLevel;
 	effort: RecommendationEffort;
 	tags: string[];
@@ -242,6 +244,7 @@ type CandidateRuntimeData = {
 	title?: string;
 	context?: string;
 	impact?: string;
+	replacementAction?: string | null;
 	promptLines: string[];
 	requestLines: string[];
 	signals: string[];
@@ -1228,6 +1231,11 @@ function buildWorkRuntimeData(
 	const overflowTasks = context.tasks.distribution.overflowTasks
 		.filter((task) => !leadProject || getTaskTrack(task) === preferredTrack)
 		.slice(0, 2);
+	const projectTarget = leadProject
+		? `${leadProject.name}: ${buildProjectFocusLabel(leadProject, energyConstrained)}`
+		: leadTask
+			? clipText(leadTask.title, 78)
+			: "один рабочий следующий шаг";
 	const signals: string[] = [];
 
 	if (leadProject) {
@@ -1273,6 +1281,13 @@ function buildWorkRuntimeData(
 			queue.length > 0
 				? `Попроси агента превратить ${queue.length} конкурирующих рабочих куска в один понятный план на сегодня.`
 				: undefined,
+		replacementAction: planningSlot
+			? `Вместо старого окна используй ${formatDateKeyRu(planningSlot.date)} ${planningSlot.start}–${planningSlot.end} и держи только ${projectTarget}.`
+			: leadTask
+				? `Вместо старого тайминга оставь один живой узел: ${clipText(leadTask.title, 82)}.`
+				: leadProject
+					? `Вместо старого тайминга пересобери один следующий шаг по ${leadProject.name}.`
+					: null,
 		promptLines: [
 			leadProject
 				? `Проект в attention: ${leadProject.name} (${formatProjectStatus(leadProject.status)}), next step: ${energyConstrained ? buildProjectFocusLabel(leadProject, true) : leadProject.nextStep}, открытых deliverables: ${projectOpenDeliverables(leadProject)}.`
@@ -1483,6 +1498,11 @@ function buildFamilyRuntimeData(
 			studio.length > 0 || birthday
 				? "Попроси агента заранее разложить буферы, логистику и ключевые решения, пока неделя ещё не захлопнулась."
 				: undefined,
+		replacementAction: betweenPartySupport
+			? `Не держи старый совет абстрактным: защити support-слот ${formatSlotBrief(betweenPartySupport)} и один семейный узел по ${birthday?.name ?? "проекту"}.`
+			: birthday
+				? `Сведи семейный фокус к одному решению по ${birthday.name} и не смешивай его с операционкой.`
+				: null,
 		promptLines: [
 			studio.length > 0
 				? `Ближайшие студийные события: ${studio.map(formatSlotBrief).join("; ")}.`
@@ -1578,6 +1598,11 @@ function buildOperationsRuntimeData(
 			overdue.length > 0 || unscheduled.length > 0 || cleanup
 				? "Попроси агента сделать triage хвостов и оставить одно первое действие на сегодня."
 				: undefined,
+		replacementAction: taskWindows[0]
+			? `Не возвращайся к старому таймингу: переложи ops-хвосты в ${formatTaskWindowSuggestion(taskWindows[0])}.`
+			: unscheduled[0]
+				? `Сузь операционку до одного первого хвоста: ${clipText(unscheduled[0].title, 82)}.`
+				: null,
 		promptLines: [
 			overdue.length > 0
 				? `Просрочка: ${overdue.map((task) => formatTaskBrief(task, context.today)).join("; ")}.`
@@ -1659,6 +1684,11 @@ function buildReflectionRuntimeData(
 			recent.length > 0 || hotTags.length > 0
 				? "Опиши агенту, что происходит, что буксует и что важно — пусть он соберёт 1–2 решения и один следующий шаг."
 				: undefined,
+		replacementAction: nextReview
+			? `Не оживляй старый review-момент: собери короткий курс вокруг ${formatSlotBrief(nextReview)} и одного следующего шага.`
+			: recent[0]
+				? `Сожми последние записи в один вывод и один следующий шаг вместо повторного пересказа.`
+				: null,
 		promptLines: [
 			recent.length > 0
 				? `Последние записи: ${recent.map((entry) => `"${clipText(entry.text, 70)}"`).join(" · ")}.`
@@ -1763,6 +1793,11 @@ function buildRecoveryRuntimeData(
 					? "Попроси агента выбрать одно recovery-окно на неделю и использовать cleanup-пики как аргумент для защиты этого окна."
 					: "Попроси агента защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
 				: undefined,
+		replacementAction: protectedRecovery
+			? `Не создавай новое recovery-окно: просто защити ${formatSlotBrief(protectedRecovery)} и не отдавай его под срочность.`
+			: recoveryAnchor
+				? `Вместо старого совета зафиксируй recovery в ${formatRecoveryAnchorBrief(recoveryAnchor)}.`
+				: null,
 		promptLines: [
 			missingRecovery.length > 0
 				? `Сегодня не закрыты recovery-сигналы: ${missingRecovery.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
@@ -1843,6 +1878,7 @@ function buildCandidateRuntimeData(
 			return {
 				tags: [],
 				signals: [],
+				replacementAction: null,
 				promptLines: [],
 				requestLines: [],
 				riskReasons: [],
@@ -1959,6 +1995,7 @@ function buildCandidates(
 			impact: runtimeData?.impact ?? priority?.action ?? AREA_GENERIC_IMPACT[area.key],
 			prompt: buildPrompt(snapshot, area, priority, runtimeData ?? undefined),
 			href: runtimeData?.href ?? priority?.href ?? area.href,
+			replacementAction: runtimeData?.replacementAction ?? null,
 			level: priority?.level ?? area.level,
 			effort: AREA_EFFORT[area.key],
 			tags: [...new Set([...baseTags, ...(runtimeData?.tags ?? [])])],
@@ -2284,6 +2321,7 @@ export function buildAgentRecommendations(
 				latestReason: latest?.reason ?? null,
 				staleReason,
 				contextHash: candidate.contextHash,
+				replacementAction: candidate.replacementAction,
 				feedback: counts,
 			} satisfies AgentRecommendation;
 		})
