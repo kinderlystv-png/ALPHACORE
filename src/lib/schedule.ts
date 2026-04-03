@@ -850,6 +850,25 @@ export function removeCustomEvent(id: string): boolean {
   return true;
 }
 
+export function unscheduleCustomTaskEvent(id: string): boolean {
+  const events = loadCustomEvents();
+  const idx = events.findIndex((event) => event.id === id);
+  if (idx === -1) return false;
+
+  const [removed] = events.splice(idx, 1);
+  saveCustomEvents(events);
+
+  if (removed?.taskId) {
+    updateTask(removed.taskId, {
+      title: removed.title,
+      dueDate: removed.date,
+      status: "active",
+    });
+  }
+
+  return true;
+}
+
 export function updateCustomEvent(
   id: string,
   patch: Partial<Omit<CustomEvent, "id">>,

@@ -656,7 +656,7 @@ function buildPlanningContourSummary(
 ): string | null {
 	const parts = [
 		contour.unslottedTasks.length > 0
-			? `${contour.unslottedTasks.length} unslotted задач`
+			? `${contour.unslottedTasks.length} задач без слота`
 			: null,
 		contour.calendarTasks.length > 0
 			? `${contour.calendarTasks.length} дел уже стоят в календаре`
@@ -685,7 +685,9 @@ function isStudioPressureSlot(slot: ScheduleSlot): boolean {
 }
 
 function isCleanupLoadSlot(slot: ScheduleSlot): boolean {
-	return slot.tone === "cleanup";
+	if (slot.tone !== "cleanup") return false;
+	if (slot.id.startsWith("custom-") && slot.kind !== "event") return false;
+	return true;
 }
 
 function isBetweenPartiesSupportSlot(slot: ScheduleSlot): boolean {
@@ -1222,11 +1224,17 @@ function buildTaskDistributionAnalysis(input: {
 	todaySchedule: ScheduleSlot[];
 	upcomingSchedule: ScheduleSlot[];
 }): TaskDistributionAnalysis {
+	const linkedTaskIds = new Set(
+		input.upcomingSchedule
+			.map((slot) => slot.taskId)
+			.filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+	);
 	const cleanupEndToday = input.todaySchedule
 		.filter(isCleanupLoadSlot)
 		.reduce((max, slot) => Math.max(max, timeToMinutes(slot.end)), 0);
 	const actionable = uniqueTasks(input.tasks)
 		.filter((task) => task.status === "active" || task.status === "inbox")
+		.filter((task) => !linkedTaskIds.has(task.id))
 		.sort((left, right) => compareTasksByAttention(left, right, input.today));
 
 	const windowStates = sortSlots(input.upcomingSchedule)

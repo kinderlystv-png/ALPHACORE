@@ -15,6 +15,7 @@ import {
   getScheduledTaskIds,
   isEditableScheduleSlot,
   removeEditableScheduleSlot,
+  unscheduleCustomTaskEvent,
   type ScheduleSlot,
   type ScheduleSource,
   type ScheduleTone,
@@ -360,6 +361,7 @@ type QuickMenuState = {
   mobile: boolean;
   draftTitle: string;
   draftTone: ScheduleTone;
+  draftKind: "task" | "event";
 };
 
 type EdgeCueState = {
@@ -1038,10 +1040,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       mobile,
       draftTitle: slot.title,
       draftTone: slot.tone,
+      draftKind: slot.kind === "event" ? "event" : "task",
     });
   }, []);
 
-  const updateQuickMenuDraft = useCallback((patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone">>) => {
+  const updateQuickMenuDraft = useCallback((patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone" | "draftKind">>) => {
     setQuickMenu((current) => (current ? { ...current, ...patch } : current));
   }, []);
 
@@ -1064,7 +1067,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     const nextTitle = quickMenu.draftTitle.trim();
     if (!nextTitle) return;
 
-    if (nextTitle === quickMenu.slot.title && quickMenu.draftTone === quickMenu.slot.tone) {
+    const isCustomSlot = quickMenu.slot.id.startsWith("custom-");
+    const nextKind = isCustomSlot ? quickMenu.draftKind : quickMenu.slot.kind ?? "event";
+
+    if (
+      nextTitle === quickMenu.slot.title &&
+      quickMenu.draftTone === quickMenu.slot.tone &&
+      nextKind === (quickMenu.slot.kind ?? "event")
+    ) {
       setQuickMenu(null);
       return;
     }
@@ -1072,6 +1082,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     updateEditableScheduleSlot(quickMenu.slot, {
       title: nextTitle,
       tone: quickMenu.draftTone,
+      kind: nextKind,
     });
     setVersion((value) => value + 1);
     setQuickMenu(null);
@@ -1098,10 +1109,18 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       title: copyTitle(nextTitle),
       tone: quickMenu.draftTone,
       tags: [...new Set([...quickMenu.slot.tags, "copy"])],
+      kind: quickMenu.draftKind,
+      taskId: null,
     });
     setVersion((value) => value + 1);
     setQuickMenu(null);
   }, [quickMenu]);
+
+  const unscheduleQuickSlot = useCallback((slot: ScheduleSlot) => {
+    unscheduleCustomTaskEvent(slot.id);
+    setVersion((value) => value + 1);
+    setQuickMenu(null);
+  }, []);
 
   const deleteQuickSlot = useCallback((slot: ScheduleSlot) => {
     removeEditableScheduleSlot(slot);
@@ -1821,11 +1840,17 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
       {quickMenu && (() => {
         const slot = quickMenu.slot;
+        const isCustomSlot = slot.id.startsWith("custom-");
+        const isTaskBackedSlot = isCustomSlot && slot.kind !== "event";
         const startMin = timeToMinutes(slot.start);
         const endMin = timeToMinutes(slot.end);
         const durationMin = endMin - startMin;
         const draftTitle = quickMenu.draftTitle.trim();
-        const saveDisabled = !draftTitle || (draftTitle === slot.title && quickMenu.draftTone === slot.tone);
+        const saveDisabled =
+          !draftTitle ||
+          (draftTitle === slot.title &&
+            quickMenu.draftTone === slot.tone &&
+            quickMenu.draftKind === (slot.kind === "event" ? "event" : "task"));
         const earlierDisabled = startMin <= HOUR_START * 60;
         const laterDisabled = endMin >= HOUR_END * 60;
         const shorterDisabled = durationMin <= MIN_SLOT_MIN;
@@ -1904,6 +1929,37 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   })}
                 </div>
               </div>
+
+              {isCustomSlot && (
+                <div className="mb-3 space-y-2">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Тип</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { value: "task", label: "Это задача" },
+                      { value: "event", label: "Это событие" },
+                    ].map((option) => {
+                      const active = quickMenu.draftKind === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => updateQuickMenuDraft({ draftKind: option.value as "task" | "event" })}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                            active
+                              ? "border-sky-500/20 bg-sky-500/10 text-sky-100"
+                              : "border-zinc-800 bg-zinc-900/60 text-zinc-500 hover:border-zinc-600 hover:text-zinc-200"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-zinc-500">
+                    Задача живёт и в task-контуре; событие остаётся только календарным слотом.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -2001,6 +2057,16 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               >
                 Удалить
               </button>
+
+              {isTaskBackedSlot && slot.taskId && (
+                <button
+                  type="button"
+                  onClick={() => unscheduleQuickSlot(slot)}
+                  className="mt-3 w-full rounded-2xl border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-sm font-semibold text-amber-100 transition hover:border-amber-400/50 hover:bg-amber-950/35"
+                >
+                  Убрать слот, оставить задачу
+                </button>
+              )}
             </div>
           </div>
         );
