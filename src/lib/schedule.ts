@@ -11,6 +11,7 @@ export type ScheduleTone =
   | "review";
 
 export type ScheduleSource = "template" | "studio" | "derived";
+export type EditableScheduleSource = "template" | "studio";
 
 export type ScheduleSlot = {
   id: string;
@@ -22,6 +23,18 @@ export type ScheduleSlot = {
   tone: ScheduleTone;
   tags: string[];
   source: ScheduleSource;
+};
+
+export type ScheduleOverride = {
+  originalId: string;
+  originalSource: EditableScheduleSource;
+  date: string;
+  start: string;
+  end: string;
+  title: string;
+  subtitle?: string;
+  tone: ScheduleTone;
+  tags: string[];
 };
 
 type StudioEvent = {
@@ -471,7 +484,7 @@ function isEveningEvent(slot: { start: string }): boolean {
 
 function buildTemplateSlots(dateKey: string): ScheduleSlot[] {
   const weekday = parseDate(dateKey).getDay();
-  return (TEMPLATE_BY_WEEKDAY[weekday] ?? []).map((slot, index) => ({
+  const baseSlots: ScheduleSlot[] = (TEMPLATE_BY_WEEKDAY[weekday] ?? []).map((slot, index) => ({
     id: `tpl-${dateKey}-${index}`,
     date: dateKey,
     start: slot.start,
@@ -482,11 +495,13 @@ function buildTemplateSlots(dateKey: string): ScheduleSlot[] {
     tags: slot.tags,
     source: "template",
   }));
+
+  return applyOverrides(baseSlots, dateKey, "template");
 }
 
 export function getStudioEvents(dateLike: Date | string): ScheduleSlot[] {
   const dateKey = toDateKey(dateLike);
-  return STUDIO_EVENTS.filter((event) => event.date === dateKey).map((event) => ({
+  const baseSlots: ScheduleSlot[] = STUDIO_EVENTS.filter((event) => event.date === dateKey).map((event) => ({
     id: event.id,
     date: event.date,
     start: event.start,
@@ -497,6 +512,8 @@ export function getStudioEvents(dateLike: Date | string): ScheduleSlot[] {
     tags: ["party", "studio", ...(event.customer ? [event.customer.toLowerCase()] : [])],
     source: "studio",
   }));
+
+  return applyOverrides(baseSlots, dateKey, "studio");
 }
 
 function buildCleaningSlots(dateKey: string, todayEvents: ScheduleSlot[]): ScheduleSlot[] {
@@ -632,6 +649,67 @@ export type CustomEvent = {
 };
 
 const CUSTOM_KEY = "alphacore_schedule_custom";
+const OVERRIDE_KEY = "alphacore_schedule_overrides";
+
+function loadOverrides(): ScheduleOverride[] {
+  return lsGet<ScheduleOverride[]>(OVERRIDE_KEY, []);
+}
+
+function saveOverrides(overrides: ScheduleOverride[]): void {
+  lsSet(OVERRIDE_KEY, overrides);
+}
+
+function applyOverrides(
+  baseSlots: ScheduleSlot[],
+  dateKey: string,
+  source: EditableScheduleSource,
+): ScheduleSlot[] {
+  const overrides = loadOverrides().filter((override) => override.originalSource === source);
+  const overrideMap = new Map(overrides.map((override) => [override.originalId, override]));
+
+  const slots = baseSlots
+    .filter((slot) => !overrideMap.has(slot.id))
+    .concat(
+      overrides
+        .filter((override) => override.date === dateKey)
+        .map((override) => ({
+          id: override.originalId,
+          date: override.date,
+          start: override.start,
+          end: override.end,
+          title: override.title,
+          subtitle: override.subtitle,
+          tone: override.tone,
+          tags: override.tags,
+          source,
+        })),
+    );
+
+  return slots;
+}
+
+function upsertOverride(slot: ScheduleSlot, patch: Partial<Omit<ScheduleOverride, "originalId" | "originalSource">>): ScheduleOverride | null {
+  if (slot.source === "derived") return null;
+
+  const overrides = loadOverrides();
+  const next: ScheduleOverride = {
+    originalId: slot.id,
+    originalSource: slot.source,
+    date: patch.date ?? slot.date,
+    start: patch.start ?? slot.start,
+    end: patch.end ?? slot.end,
+    title: patch.title ?? slot.title,
+    subtitle: patch.subtitle ?? slot.subtitle,
+    tone: patch.tone ?? slot.tone,
+    tags: patch.tags ?? slot.tags,
+  };
+
+  const index = overrides.findIndex((override) => override.originalId === slot.id);
+  if (index >= 0) overrides[index] = next;
+  else overrides.push(next);
+  saveOverrides(overrides);
+  return next;
+}
 
 function loadCustomEvents(): CustomEvent[] {
   return lsGet<CustomEvent[]>(CUSTOM_KEY, []);
@@ -674,6 +752,46 @@ export function updateCustomEvent(
   events[idx] = { ...events[idx], ...patch };
   saveCustomEvents(events);
   return events[idx];
+}
+
+export function isEditableScheduleSlot(slot: ScheduleSlot): boolean {
+  return slot.id.startsWith("custom-") || slot.source === "template" || slot.source === "studio";
+}
+
+export function updateEditableScheduleSlot(
+  slot: ScheduleSlot,
+  patch: Partial<Omit<CustomEvent, "id">>,
+): ScheduleSlot | null {
+  if (slot.id.startsWith("custom-")) {
+    const updated = updateCustomEvent(slot.id, patch);
+    return updated
+      ? {
+          id: updated.id,
+          date: updated.date,
+          start: updated.start,
+          end: updated.end,
+          title: updated.title,
+          tone: updated.tone,
+          tags: updated.tags,
+          source: "derived",
+        }
+      : null;
+  }
+
+  const override = upsertOverride(slot, patch);
+  return override
+    ? {
+        id: override.originalId,
+        date: override.date,
+        start: override.start,
+        end: override.end,
+        title: override.title,
+        subtitle: override.subtitle,
+        tone: override.tone,
+        tags: override.tags,
+        source: override.originalSource,
+      }
+    : null;
 }
 
 function getCustomSlots(dateKey: string): ScheduleSlot[] {

@@ -11,10 +11,13 @@ import {
   toneColor,
 } from "@/lib/life-areas";
 import {
+  addCustomEvent,
+  isEditableScheduleSlot,
   type ScheduleSlot,
+  type ScheduleTone,
   getScheduleForDate,
   timeToMinutes,
-  updateCustomEvent,
+  updateEditableScheduleSlot,
 } from "@/lib/schedule";
 import { writeTaskDragData } from "@/lib/dashboard-events";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
@@ -32,6 +35,12 @@ const HOUR_END = 24; // 00:00 next day
 const TOTAL_HOURS = HOUR_END - HOUR_START; // 19
 const ROW_H = 56; // px per hour row
 const HEADER_H = 66; // compact column header height
+const STEP_MIN = 30;
+const MIN_SLOT_MIN = 30;
+const DEFAULT_CUSTOM_DURATION_MIN = 60;
+const MOUSE_HOLD_MS = 110;
+const TOUCH_HOLD_MS = 240;
+const POINTER_SLOP_PX = 10;
 
 /* ── Helpers ── */
 
@@ -76,6 +85,22 @@ function formatHour(hour: number): string {
   return `${String(hour).padStart(2, "0")}:00`;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function snapMinutes(minutes: number): number {
+  return Math.round(minutes / STEP_MIN) * STEP_MIN;
+}
+
+function minutesToCalendarTime(minutes: number): string {
+  if (minutes >= HOUR_END * 60) return "24:00";
+  const safe = Math.max(0, minutes);
+  const h = Math.floor(safe / 60);
+  const m = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 /* ── Types ── */
 
 type DayColumn = {
@@ -100,10 +125,44 @@ type WeekCalendarGridProps = {
 
 type DragState =
   | { type: "task"; taskId: string; originDay: string }
-  | { type: "slot"; slotId: string; originDay: string }
   | null;
 
 type CalendarViewMode = "full" | "compact";
+
+type EditableSlotDraft = {
+  id: string | null;
+  date: string;
+  start: string;
+  end: string;
+  title: string;
+  tone: ScheduleTone;
+  tags: string[];
+};
+
+type PointerEditMode = "move" | "resize-start" | "resize-end" | "create";
+
+type PendingPointerEdit = {
+  mode: PointerEditMode;
+  pointerId: number;
+  pointerType: string;
+  startX: number;
+  startY: number;
+  dayKey: string;
+  slot: ScheduleSlot | null;
+};
+
+type ActivePointerEdit = {
+  mode: PointerEditMode;
+  pointerId: number;
+  pointerType: string;
+  originClientX: number;
+  originClientY: number;
+  originColumnIndex: number;
+  originalSlot: ScheduleSlot | null;
+  base: EditableSlotDraft;
+  draft: EditableSlotDraft;
+  hasMoved: boolean;
+};
 
 function getCompactStart(columns: DayColumn[], compactCount: number): number {
   if (columns.length <= compactCount) return 0;
@@ -121,11 +180,16 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [shouldCenterNow, setShouldCenterNow] = useState(true);
   const [drag, setDrag] = useState<DragState>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [activeEdit, setActiveEdit] = useState<ActivePointerEdit | null>(null);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
   const [compactStart, setCompactStart] = useState(0);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const overlayGridRef = useRef<HTMLDivElement>(null);
   const responsiveInitRef = useRef(false);
+  const pendingEditRef = useRef<{ data: PendingPointerEdit; timerId: number } | null>(null);
+  const activeEditRef = useRef<ActivePointerEdit | null>(null);
+  const visibleColumnsRef = useRef<DayColumn[]>([]);
   const today = todayKey();
 
   useEffect(() => {
@@ -154,7 +218,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return subscribeAppDataChange((keys) => {
       if (
         keys.some((k) =>
-          ["alphacore_tasks", "alphacore_schedule_custom"].includes(k),
+          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides"].includes(k),
         )
       ) {
         setVersion((v) => v + 1);
@@ -221,6 +285,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return columns.slice(compactStart, compactStart + compactCount);
   }, [columns, compactCount, compactStart, viewMode]);
 
+  useEffect(() => {
+    visibleColumnsRef.current = visibleColumns;
+  }, [visibleColumns]);
+
+  useEffect(() => {
+    activeEditRef.current = activeEdit;
+  }, [activeEdit]);
+
   const visibleGridWidth = 56 + Math.max(visibleColumns.length, 1) * 120;
 
   const visibleWindowLabel = useMemo(() => {
@@ -233,6 +305,263 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   }, [visibleColumns]);
 
   const showCompactControls = viewMode === "compact" && columns.length > compactCount;
+
+  const cancelPendingPointerEdit = useCallback(() => {
+    if (!pendingEditRef.current) return;
+    window.clearTimeout(pendingEditRef.current.timerId);
+    pendingEditRef.current = null;
+  }, []);
+
+  const toEditableDraft = useCallback((slot: ScheduleSlot): EditableSlotDraft => {
+    return {
+      id: slot.id,
+      date: slot.date,
+      start: slot.start,
+      end: slot.end,
+      title: slot.title,
+      tone: slot.tone,
+      tags: slot.tags,
+    };
+  }, []);
+
+  const getPointerDayIndex = useCallback((clientX: number): number => {
+    const rect = overlayGridRef.current?.getBoundingClientRect();
+    const columns = visibleColumnsRef.current;
+    if (!rect || columns.length === 0) return 0;
+    const columnWidth = rect.width / columns.length;
+    const raw = Math.floor((clientX - rect.left) / Math.max(columnWidth, 1));
+    return clamp(raw, 0, columns.length - 1);
+  }, []);
+
+  const getPointerDayKey = useCallback((clientX: number): string => {
+    const columns = visibleColumnsRef.current;
+    return columns[getPointerDayIndex(clientX)]?.key ?? columns[0]?.key ?? today;
+  }, [getPointerDayIndex, today]);
+
+  const getSnappedMinutesFromClientY = useCallback((clientY: number): number => {
+    const rect = overlayGridRef.current?.getBoundingClientRect();
+    if (!rect) return HOUR_START * 60;
+
+    const relativeY = clamp(clientY - rect.top, 0, TOTAL_HOURS * ROW_H);
+    const rawMinutes = HOUR_START * 60 + (relativeY / ROW_H) * 60;
+    return clamp(snapMinutes(rawMinutes), HOUR_START * 60, HOUR_END * 60);
+  }, []);
+
+  const buildDraftFromPointer = useCallback(
+    (edit: ActivePointerEdit, clientX: number, clientY: number): ActivePointerEdit => {
+      const baseStartMin = timeToMinutes(edit.base.start);
+      const baseEndMin = timeToMinutes(edit.base.end);
+      const duration = baseEndMin - baseStartMin;
+      const deltaMin = snapMinutes(((clientY - edit.originClientY) / ROW_H) * 60);
+      const targetDate = getPointerDayKey(clientX);
+
+      let draft = edit.draft;
+
+      if (edit.mode === "move") {
+        const nextStart = clamp(baseStartMin + deltaMin, HOUR_START * 60, HOUR_END * 60 - duration);
+        draft = {
+          ...edit.base,
+          date: targetDate,
+          start: minutesToCalendarTime(nextStart),
+          end: minutesToCalendarTime(nextStart + duration),
+        };
+      }
+
+      if (edit.mode === "resize-start") {
+        const nextStart = clamp(baseStartMin + deltaMin, HOUR_START * 60, baseEndMin - MIN_SLOT_MIN);
+        draft = {
+          ...edit.base,
+          start: minutesToCalendarTime(nextStart),
+        };
+      }
+
+      if (edit.mode === "resize-end") {
+        const nextEnd = clamp(baseEndMin + deltaMin, baseStartMin + MIN_SLOT_MIN, HOUR_END * 60);
+        draft = {
+          ...edit.base,
+          end: minutesToCalendarTime(nextEnd),
+        };
+      }
+
+      if (edit.mode === "create") {
+        const anchorMin = baseStartMin;
+        const pointerMin = getSnappedMinutesFromClientY(clientY);
+        const low = clamp(Math.min(anchorMin, pointerMin), HOUR_START * 60, HOUR_END * 60 - MIN_SLOT_MIN);
+        const high = clamp(Math.max(anchorMin, pointerMin), low + MIN_SLOT_MIN, HOUR_END * 60);
+
+        draft = {
+          ...edit.base,
+          date: targetDate,
+          start: minutesToCalendarTime(low),
+          end: minutesToCalendarTime(high),
+        };
+      }
+
+      return {
+        ...edit,
+        draft,
+        hasMoved:
+          edit.hasMoved ||
+          Math.abs(clientX - edit.originClientX) > POINTER_SLOP_PX ||
+          Math.abs(clientY - edit.originClientY) > POINTER_SLOP_PX ||
+          draft.date !== edit.base.date ||
+          draft.start !== edit.base.start ||
+          draft.end !== edit.base.end,
+      };
+    },
+    [getPointerDayKey, getSnappedMinutesFromClientY],
+  );
+
+  const activatePendingPointerEdit = useCallback(
+    (pending: PendingPointerEdit) => {
+      const originColumnIndex = visibleColumnsRef.current.findIndex((column) => column.key === pending.dayKey);
+      const startMin = getSnappedMinutesFromClientY(pending.startY);
+      const base = pending.slot
+        ? toEditableDraft(pending.slot)
+        : {
+            id: null,
+            date: pending.dayKey,
+            start: minutesToCalendarTime(clamp(startMin, HOUR_START * 60, HOUR_END * 60 - MIN_SLOT_MIN)),
+            end: minutesToCalendarTime(
+              clamp(startMin + DEFAULT_CUSTOM_DURATION_MIN, HOUR_START * 60 + MIN_SLOT_MIN, HOUR_END * 60),
+            ),
+            title: "Новый слот",
+            tone: "work" as ScheduleTone,
+            tags: ["custom"],
+          };
+
+      const next: ActivePointerEdit = {
+        mode: pending.mode,
+        pointerId: pending.pointerId,
+        pointerType: pending.pointerType,
+        originClientX: pending.startX,
+        originClientY: pending.startY,
+        originColumnIndex: Math.max(originColumnIndex, 0),
+        originalSlot: pending.slot,
+        base,
+        draft: base,
+        hasMoved: false,
+      };
+
+      activeEditRef.current = next;
+      setActiveEdit(next);
+      document.body.style.userSelect = "none";
+    },
+    [getSnappedMinutesFromClientY, toEditableDraft],
+  );
+
+  const commitPointerEdit = useCallback(
+    (edit: ActivePointerEdit) => {
+      const { draft, originalSlot } = edit;
+
+      if (!originalSlot) {
+        addCustomEvent({
+          date: draft.date,
+          start: draft.start,
+          end: draft.end,
+          title: draft.title,
+          tone: draft.tone,
+          tags: draft.tags,
+        });
+        setVersion((value) => value + 1);
+        return;
+      }
+
+      updateEditableScheduleSlot(originalSlot, {
+        date: draft.date,
+        start: draft.start,
+        end: draft.end,
+        title: draft.title,
+        tone: draft.tone,
+        tags: draft.tags,
+      });
+      setVersion((value) => value + 1);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const pending = pendingEditRef.current;
+      if (pending?.data.pointerId === event.pointerId) {
+        if (
+          Math.abs(event.clientX - pending.data.startX) > POINTER_SLOP_PX ||
+          Math.abs(event.clientY - pending.data.startY) > POINTER_SLOP_PX
+        ) {
+          cancelPendingPointerEdit();
+        }
+      }
+
+      const edit = activeEditRef.current;
+      if (!edit || edit.pointerId !== event.pointerId) return;
+
+      event.preventDefault();
+      const next = buildDraftFromPointer(edit, event.clientX, event.clientY);
+      activeEditRef.current = next;
+      setActiveEdit(next);
+    };
+
+    const handlePointerFinish = (event: PointerEvent) => {
+      const pending = pendingEditRef.current;
+      if (pending?.data.pointerId === event.pointerId) {
+        cancelPendingPointerEdit();
+      }
+
+      const edit = activeEditRef.current;
+      if (!edit || edit.pointerId !== event.pointerId) return;
+
+      event.preventDefault();
+      commitPointerEdit(edit);
+      activeEditRef.current = null;
+      setActiveEdit(null);
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerFinish, { passive: false });
+    window.addEventListener("pointercancel", handlePointerFinish, { passive: false });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerFinish);
+      window.removeEventListener("pointercancel", handlePointerFinish);
+      document.body.style.userSelect = "";
+    };
+  }, [buildDraftFromPointer, cancelPendingPointerEdit, commitPointerEdit]);
+
+  const queuePointerEdit = useCallback(
+    (
+      mode: PointerEditMode,
+      event: React.PointerEvent<HTMLElement>,
+      dayKey: string,
+      slot: ScheduleSlot | null,
+    ) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (slot && !isEditableScheduleSlot(slot)) return;
+      if (!slot && dayKey < today) return;
+
+      cancelPendingPointerEdit();
+
+      const data: PendingPointerEdit = {
+        mode,
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        startX: event.clientX,
+        startY: event.clientY,
+        dayKey,
+        slot,
+      };
+
+      const delay = event.pointerType === "touch" ? TOUCH_HOLD_MS : MOUSE_HOLD_MS;
+      const timerId = window.setTimeout(() => {
+        activatePendingPointerEdit(data);
+        pendingEditRef.current = null;
+      }, delay);
+
+      pendingEditRef.current = { data, timerId };
+    },
+    [activatePendingPointerEdit, cancelPendingPointerEdit, today],
+  );
 
   // navigation
   const shiftWeek = useCallback(
@@ -258,10 +587,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setDrag({ type: "task", taskId, originDay });
   }, []);
 
-  const onDragStartSlot = useCallback((slotId: string, originDay: string) => {
-    setDrag({ type: "slot", slotId, originDay });
-  }, []);
-
   const onDragOver = useCallback((e: React.DragEvent, dayKey: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -280,12 +605,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
       if (drag.type === "task" && drag.originDay !== targetDay) {
         updateTask(drag.taskId, { dueDate: targetDay });
-      }
-
-      if (drag.type === "slot" && drag.originDay !== targetDay) {
-        if (drag.slotId.startsWith("custom-")) {
-          updateCustomEvent(drag.slotId, { date: targetDay });
-        }
       }
 
       setDrag(null);
@@ -584,6 +903,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
                     onDragLeave={!col.isPast ? onDragLeave : undefined}
                     onDrop={(e) => !col.isPast && onDrop(e, col.key)}
+                    onPointerDown={(e) => {
+                      if (col.isPast) return;
+                      queuePointerEdit("create", e, col.key, null);
+                    }}
                   />
                 ))}
               </div>
@@ -593,6 +916,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
         {/* ── Positioned slot blocks ── */}
         <div
+          ref={overlayGridRef}
           className="pointer-events-none absolute z-10 overflow-hidden"
           style={{
             top: HEADER_H,
@@ -609,27 +933,40 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             {visibleColumns.map((col) => (
               <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
                 {col.slots.map((slot) => {
+                  if (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date) {
+                    return null;
+                  }
+
                   const top = slotTop(slot.start);
                   const height = slotHeight(slot.start, slot.end);
                   const c = toneColor(slot.tone);
-                  const isCustom = slot.id.startsWith("custom-");
+                  const isEditable = isEditableScheduleSlot(slot);
 
                   return (
                     <div
                       key={slot.id}
                       className={`pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-lg border px-2 py-1 ${c.border} ${c.bg} ${
-                        isCustom ? "cursor-grab" : ""
+                        isEditable ? "cursor-grab touch-none" : ""
                       }`}
                       style={{ top, height, minHeight: 20 }}
-                      draggable={isCustom}
-                      onDragStart={(e) => {
-                        if (!isCustom) return;
-                        e.dataTransfer.effectAllowed = "move";
-                        onDragStartSlot(slot.id, col.key);
+                      onPointerDown={(e) => {
+                        if (!isEditable) return;
+                        e.stopPropagation();
+                        queuePointerEdit("move", e, col.key, slot);
                       }}
-                      onDragEnd={onDragEnd}
                       title={`${slot.start}–${slot.end} ${slot.title}`}
                     >
+                      {isEditable && (
+                        <button
+                          type="button"
+                          aria-label="Изменить начало"
+                          className="absolute inset-x-1 top-0 h-2 cursor-ns-resize rounded-t-md bg-transparent"
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            queuePointerEdit("resize-start", e, col.key, slot);
+                          }}
+                        />
+                      )}
                       <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
                         {slot.start}–{slot.end}
                       </p>
@@ -641,9 +978,48 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           {slot.subtitle}
                         </p>
                       )}
+                      {isEditable && (
+                        <button
+                          type="button"
+                          aria-label="Изменить конец"
+                          className="absolute inset-x-1 bottom-0 h-2 cursor-ns-resize rounded-b-md bg-transparent"
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            queuePointerEdit("resize-end", e, col.key, slot);
+                          }}
+                        />
+                      )}
                     </div>
                   );
                 })}
+
+                {activeEdit?.draft.date === col.key && (() => {
+                  const draftTop = slotTop(activeEdit.draft.start);
+                  const draftHeight = slotHeight(activeEdit.draft.start, activeEdit.draft.end);
+                  const draftColor = toneColor(activeEdit.draft.tone);
+                  return (
+                    <div
+                      className={`pointer-events-none absolute left-1 right-1 overflow-hidden rounded-lg border-2 px-2 py-1 shadow-[0_0_0_1px_rgba(255,255,255,0.05)] ${draftColor.border} ${draftColor.bg}`}
+                      style={{ top: draftTop, height: draftHeight, minHeight: 20 }}
+                    >
+                      <p className={`text-[10px] font-semibold leading-tight ${draftColor.text}`}>
+                        {activeEdit.draft.start}–{activeEdit.draft.end}
+                      </p>
+                      <p className={`mt-0.5 truncate text-[11px] font-semibold leading-snug ${draftColor.text}`}>
+                        {activeEdit.originalSlot ? activeEdit.draft.title : "Новый слот"}
+                      </p>
+                      <p className="mt-1 text-[9px] font-medium uppercase tracking-[0.14em] text-zinc-400">
+                        {activeEdit.mode === "move"
+                          ? "Перемещение"
+                          : activeEdit.mode === "resize-start"
+                            ? "Старт"
+                            : activeEdit.mode === "resize-end"
+                              ? "Финиш"
+                              : "Создание"}
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 {/* Now-line */}
                 {col.isToday && <NowLine />}
