@@ -105,6 +105,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     d.setHours(0, 0, 0, 0);
     return d;
   });
+  const [shouldCenterNow, setShouldCenterNow] = useState(true);
   const [drag, setDrag] = useState<DragState>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -123,15 +124,22 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     });
   }, []);
 
-  // scroll to ~8am on first render
-  useEffect(() => {
-    if (gridRef.current) {
-      const target = (8 - HOUR_START) * ROW_H;
-      gridRef.current.scrollTop = target - 40;
-    }
-  }, []);
-
   const days = useMemo(() => buildWindow(anchor), [anchor]);
+
+  // center current-time line on first render / when returning to today
+  useEffect(() => {
+    if (!shouldCenterNow) return;
+
+    const hasTodayColumn = days.some((day) => dateStr(day) === today);
+    if (!hasTodayColumn) return;
+
+    const frame = requestAnimationFrame(() => {
+      centerNowLine(gridRef.current);
+      setShouldCenterNow(false);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [days, shouldCenterNow, today]);
 
   const columns = useMemo<DayColumn[]>(() => {
     const tasks = getActionableTasks(today);
@@ -175,6 +183,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     d.setDate(d.getDate() - 1);
     d.setHours(0, 0, 0, 0);
     setAnchor(d);
+    setShouldCenterNow(true);
   }, []);
 
   // drag handlers
@@ -507,4 +516,15 @@ function calcNowTop(): number {
   const now = new Date();
   const mins = now.getHours() * 60 + now.getMinutes();
   return ((mins - HOUR_START * 60) / 60) * ROW_H;
+}
+
+function centerNowLine(container: HTMLDivElement | null) {
+  if (!container) return;
+
+  const rowViewportHeight = Math.max(container.clientHeight - HEADER_H, 0);
+  const rawTarget = calcNowTop() - rowViewportHeight / 2;
+  const maxScroll = Math.max(container.scrollHeight - container.clientHeight, 0);
+  const nextScrollTop = Math.min(Math.max(rawTarget, 0), maxScroll);
+
+  container.scrollTop = nextScrollTop;
 }
