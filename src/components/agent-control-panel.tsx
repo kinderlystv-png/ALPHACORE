@@ -201,6 +201,16 @@ function buildPracticalPlanSection(plan: AgentPracticalPlan): string {
     ...(plan.review
       ? ["Короткий review", plan.review, ""]
       : []),
+    ...(plan.taskWindows.length > 0
+      ? [
+          "Окна под накопившиеся задачи",
+          ...plan.taskWindows.map((window) => `- ${window}`),
+          ...(plan.overflowSummary ? [plan.overflowSummary] : []),
+          "",
+        ]
+      : plan.overflowSummary
+        ? ["Окна под накопившиеся задачи", plan.overflowSummary, ""]
+        : []),
     "Критерий done",
     plan.doneCriterion,
     "",
@@ -573,6 +583,26 @@ function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
             <div>
               <p className="text-[10px] uppercase tracking-widest text-zinc-500">Короткий review</p>
               <p className="mt-2 text-sm text-zinc-300">{plan.review}</p>
+            </div>
+          )}
+
+          {(plan.taskWindows.length > 0 || plan.overflowSummary) && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Окна под накопившиеся задачи</p>
+              <ul className="mt-2 space-y-2 text-sm text-zinc-300">
+                {plan.taskWindows.map((window) => (
+                  <li key={window} className="flex gap-2">
+                    <span className="mt-0.5 text-zinc-600">•</span>
+                    <span>{window}</span>
+                  </li>
+                ))}
+                {plan.overflowSummary && (
+                  <li className="flex gap-2 text-zinc-400">
+                    <span className="mt-0.5 text-zinc-600">•</span>
+                    <span>{plan.overflowSummary}</span>
+                  </li>
+                )}
+              </ul>
             </div>
           )}
         </div>

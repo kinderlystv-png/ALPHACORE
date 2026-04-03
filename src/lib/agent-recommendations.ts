@@ -9,7 +9,12 @@ import type { Habit } from "./habits";
 import type { JournalEntry } from "./journal";
 import { paramStatus, type MedEntry, type MedParam } from "./medical";
 import type { Project, StatusTone } from "./projects";
-import { minutesToTime, timeToMinutes, type ScheduleSlot } from "./schedule";
+import {
+	minutesToTime,
+	timeToMinutes,
+	type ScheduleSlot,
+	type ScheduleTone,
+} from "./schedule";
 import { lsGet, lsSet, uid } from "./storage";
 import { compareTasksByAttention, type Task } from "./tasks";
 
@@ -90,6 +95,7 @@ export type RecommendationRuntimeContext = {
 		dueSoon: Task[];
 		unscheduled: Task[];
 		p1: Task[];
+		distribution: TaskDistributionAnalysis;
 	};
 	projects: {
 		attention: Project[];
@@ -120,12 +126,39 @@ export type RecommendationRuntimeContext = {
 	};
 };
 
+export type TaskWindowAssignment = {
+	taskId: string;
+	title: string;
+	project?: string;
+	minutes: number;
+	reason: string;
+};
+
+export type TaskWindowSuggestion = {
+	date: string;
+	start: string;
+	end: string;
+	label: string;
+	tone: ScheduleTone;
+	assignments: TaskWindowAssignment[];
+	remainingMinutes: number;
+};
+
+export type TaskDistributionAnalysis = {
+	suggestions: TaskWindowSuggestion[];
+	overflowTasks: Task[];
+	candidateWindowCount: number;
+	totalTasks: number;
+};
+
 export type AgentPracticalPlan = {
 	mergedThemes: string[];
 	mainDecision: string;
 	backupMoves: string[];
 	doneCriterion: string;
 	review: string | null;
+	taskWindows: string[];
+	overflowSummary: string | null;
 	updates: {
 		task: string;
 		schedule: string;
@@ -140,6 +173,8 @@ type RecoveryAnchor = {
 	label: string;
 	mode: "protect" | "convert" | "create";
 };
+
+type TaskTrack = "kinderly" | "heys" | "birthday" | "ops" | "general";
 
 type RecommendationCandidate = {
 	id: string;
@@ -381,6 +416,14 @@ function formatRecoveryAnchorBrief(anchor: RecoveryAnchor): string {
 	return `${formatDateKeyRu(anchor.date)} ${anchor.start}–${anchor.end} · ${clipText(anchor.label, 62)}`;
 }
 
+function formatTaskWindowSuggestion(window: TaskWindowSuggestion): string {
+	const tasks = window.assignments
+		.map((assignment) => clipText(assignment.title, 32))
+		.join(" + ");
+
+	return `${formatDateKeyRu(window.date)} ${window.start}–${window.end} → ${tasks}`;
+}
+
 function normalizeKeywordStems(text: string): string[] {
 	return [...new Set(
 		text
@@ -451,6 +494,187 @@ function buildProjectFocusLabel(project: Project, energyConstrained: boolean): s
 	}
 
 	return clipText(project.nextStep || "зафиксировать один следующий шаг", 78);
+}
+
+function daysBetweenDateKeys(from: string, to: string): number {
+	const fromDate = new Date(`${from}T00:00:00`).getTime();
+	const toDate = new Date(`${to}T00:00:00`).getTime();
+	return Math.floor((toDate - fromDate) / 86_400_000);
+}
+
+function estimateTaskMinutes(task: Task): number {
+	const lower = task.title.toLowerCase();
+
+	if (/купить|заказать|позвонить|написать|проверить|follow-up|чеклист|швабр|тряпк/u.test(lower)) {
+		return 30;
+	}
+
+	if (/сценар|структур|квест|финализ|стратег|карта|план|тайминг|реквизит/u.test(lower)) {
+		return 60;
+	}
+
+	if (task.priority === "p1") return 60;
+	if (task.priority === "p2") return 45;
+	return 30;
+}
+
+function getTaskTrack(task: Task): TaskTrack {
+	const haystack = `${task.projectId ?? ""} ${task.project ?? ""} ${task.title}`.toLowerCase();
+
+	if (/heys/u.test(haystack)) return "heys";
+	if (/minecraft|\bдр\b|день рождения|квест|реквизит/u.test(haystack)) return "birthday";
+	if (/kinderly|студи|праздник/u.test(haystack)) return "kinderly";
+	if (/купить|заказать|позвонить|написать|операц|follow-up|хвост|check|швабр|тряпк/u.test(haystack)) {
+		return "ops";
+	}
+
+	return "general";
+}
+
+function getWindowTracks(slot: ScheduleSlot): TaskTrack[] {
+	const title = slot.title.toLowerCase();
+
+	if (slot.tone === "heys" || /heys/u.test(title)) return ["heys", "general"];
+	if (slot.tone === "kinderly" || /kinderly|студи/u.test(title)) {
+		return ["kinderly", "birthday", "general"];
+	}
+	if (slot.tone === "review" || /план|review/u.test(title)) {
+		return ["birthday", "general", "ops"];
+	}
+	if (/операц|follow-up|хвост/u.test(title)) {
+		return ["ops", "general"];
+	}
+
+	return ["general"];
+}
+
+function scoreTaskForWindow(
+	task: Task,
+	slot: ScheduleSlot,
+	today: string,
+): { score: number; reason: string } {
+	const taskTrack = getTaskTrack(task);
+	const windowTracks = getWindowTracks(slot);
+	const reasons: string[] = [];
+	let score = 0;
+
+	if (windowTracks.includes(taskTrack)) {
+		score += windowTracks[0] === taskTrack ? 10 : 6;
+		reasons.push("совпадает по контуру");
+	} else if (taskTrack === "general") {
+		score += 4;
+	}
+
+	if (task.priority === "p1") {
+		score += 8;
+		reasons.push("p1");
+	} else if (task.priority === "p2") {
+		score += 4;
+	}
+
+	if (task.dueDate) {
+		const daysToDueFromWindow = daysBetweenDateKeys(slot.date, task.dueDate);
+		if (daysToDueFromWindow < 0) {
+			score -= 24 + Math.abs(daysToDueFromWindow) * 4;
+		} else {
+			score += Math.max(0, 12 - daysToDueFromWindow * 3);
+			if (daysToDueFromWindow <= 1) reasons.push("срок близко");
+		}
+	} else {
+		const daysFromToday = daysBetweenDateKeys(today, slot.date);
+		score += Math.max(0, 6 - daysFromToday);
+		if (daysFromToday === 0) reasons.push("окно сегодня");
+	}
+
+	if (/операц|follow-up|хвост/u.test(slot.title.toLowerCase()) && taskTrack === "ops") {
+		score += 4;
+		reasons.push("подходит под ops-слот");
+	}
+
+	if (/план|review/u.test(slot.title.toLowerCase()) && (taskTrack === "birthday" || taskTrack === "general")) {
+		score += 3;
+		reasons.push("хорошо ложится в planning-окно");
+	}
+
+	return {
+		score,
+		reason: reasons.slice(0, 2).join(" · ") || "лучшее свободное окно",
+	};
+}
+
+function buildTaskDistributionAnalysis(input: {
+	today: string;
+	tasks: Task[];
+	todaySchedule: ScheduleSlot[];
+	upcomingSchedule: ScheduleSlot[];
+}): TaskDistributionAnalysis {
+	const cleanupEndToday = input.todaySchedule
+		.filter(isCleanupLoadSlot)
+		.reduce((max, slot) => Math.max(max, timeToMinutes(slot.end)), 0);
+	const actionable = uniqueTasks(input.tasks)
+		.filter((task) => task.status === "active" || task.status === "inbox")
+		.sort((left, right) => compareTasksByAttention(left, right, input.today));
+
+	const windowStates = sortSlots(input.upcomingSchedule)
+		.filter((slot) => {
+			if (!isPlanningSlot(slot)) return false;
+			if (slot.date === input.today && timeToMinutes(slot.start) < cleanupEndToday) return false;
+			return slotDurationMinutes(slot) >= 30;
+		})
+		.map((slot) => ({
+			slot,
+			remainingMinutes: slotDurationMinutes(slot),
+			assignments: [] as TaskWindowAssignment[],
+		}));
+
+	const overflowTasks: Task[] = [];
+
+	for (const task of actionable) {
+		const neededMinutes = estimateTaskMinutes(task);
+		const best = windowStates
+			.map((state, index) => {
+				const scored = scoreTaskForWindow(task, state.slot, input.today);
+				return {
+					index,
+					score: scored.score,
+					reason: scored.reason,
+					fits: state.remainingMinutes >= neededMinutes,
+				};
+			})
+			.filter((item) => item.fits)
+			.sort((left, right) => right.score - left.score || left.index - right.index)[0];
+
+		if (!best || best.score < -12) {
+			overflowTasks.push(task);
+			continue;
+		}
+
+		windowStates[best.index]!.assignments.push({
+			taskId: task.id,
+			title: task.title,
+			project: task.project,
+			minutes: neededMinutes,
+			reason: best.reason,
+		});
+		windowStates[best.index]!.remainingMinutes -= neededMinutes;
+	}
+
+	return {
+		suggestions: windowStates
+			.filter((state) => state.assignments.length > 0)
+			.map((state) => ({
+				date: state.slot.date,
+				start: state.slot.start,
+				end: state.slot.end,
+				label: state.slot.title,
+				tone: state.slot.tone,
+				assignments: state.assignments,
+				remainingMinutes: state.remainingMinutes,
+			})),
+		overflowTasks,
+		candidateWindowCount: windowStates.length,
+		totalTasks: actionable.length,
+	};
 }
 
 function isTrueRecoverySlot(slot: ScheduleSlot): boolean {
@@ -776,6 +1000,12 @@ export function buildRecommendationRuntimeContext(
 		})
 		.slice(0, 4);
 	const upcomingSchedule = sortSlots(input.upcomingSchedule);
+	const taskDistribution = buildTaskDistributionAnalysis({
+		today: input.today,
+		tasks: actionable,
+		todaySchedule: sortSlots(input.todaySchedule),
+		upcomingSchedule,
+	});
 
 	return {
 		today: input.today,
@@ -785,6 +1015,7 @@ export function buildRecommendationRuntimeContext(
 			dueSoon,
 			unscheduled,
 			p1,
+			distribution: taskDistribution,
 		},
 		projects: {
 			attention: attentionProjects,
@@ -845,6 +1076,8 @@ function buildWorkRuntimeData(
 ): CandidateRuntimeData {
 	const leadProject = context.projects.attention[0] ?? null;
 	const energyConstrained = context.schedule.today.some(isCleanupLoadSlot);
+	const taskWindows = context.tasks.distribution.suggestions.slice(0, 3);
+	const overflowTasks = context.tasks.distribution.overflowTasks.slice(0, 2);
 	const leadTask =
 		context.tasks.p1[0] ??
 		context.tasks.overdue[0] ??
@@ -877,6 +1110,18 @@ function buildWorkRuntimeData(
 		);
 	}
 
+	if (taskWindows.length > 0) {
+		signals.push(
+			`Окна под задачи: ${taskWindows.map((window) => formatTaskWindowSuggestion(window)).join(" · ")}`,
+		);
+	}
+
+	if (overflowTasks.length > 0) {
+		signals.push(
+			`Пока без окна: ${overflowTasks.map((task) => clipText(task.title, 28)).join(" · ")}`,
+		);
+	}
+
 	return {
 		title: leadProject
 			? `Развернуть ${leadProject.name} без размазывания`
@@ -895,6 +1140,11 @@ function buildWorkRuntimeData(
 			queue.length > 0
 				? `Рабочие задачи под давлением: ${queue.map((task) => formatTaskBrief(task, context.today)).join("; ")}.`
 				: "Явных дедлайнов мало, поэтому агент должен сам выбрать один главный шаг и два вторичных.",
+			taskWindows.length > 0
+				? `Предварительное распределение по окнам: ${taskWindows.map((window) => formatTaskWindowSuggestion(window)).join("; ")}.`
+				: overflowTasks.length > 0
+					? `Пока без окна: ${overflowTasks.map((task) => formatTaskBrief(task, context.today)).join("; ")}.`
+					: "Пока нет явного распределения задач по окнам недели.",
 		],
 		requestLines: [
 			leadProject && energyConstrained
@@ -902,6 +1152,7 @@ function buildWorkRuntimeData(
 				: leadProject
 					? "Свяжи план с текущим next step проекта, а не придумывай новый параллельный трек."
 				: "Если проекта явно не видно, выбери один центр тяжести по задачам.",
+			"Разложи backlog по ближайшим окнам недели и покажи, какие задачи не должны бороться за один и тот же слот.",
 			"Расставь задачи по порядку и объясни, что не делать сегодня.",
 		],
 		signals,
@@ -1115,6 +1366,8 @@ function buildOperationsRuntimeData(
 	const dueSoon = context.tasks.dueSoon.slice(0, 2);
 	const unscheduled = context.tasks.unscheduled.slice(0, 2);
 	const cleanup = context.schedule.cleanup[0] ?? null;
+	const taskWindows = context.tasks.distribution.suggestions.slice(0, 3);
+	const overflowTasks = context.tasks.distribution.overflowTasks.slice(0, 3);
 	const signals: string[] = [];
 
 	if (overdue.length > 0) {
@@ -1131,6 +1384,14 @@ function buildOperationsRuntimeData(
 
 	if (cleanup) {
 		signals.push(`Операционное окно: ${formatSlotBrief(cleanup)}`);
+	}
+
+	if (taskWindows.length > 0) {
+		signals.push(`Разложено по окнам: ${taskWindows.map((window) => formatTaskWindowSuggestion(window)).join(" · ")}`);
+	}
+
+	if (overflowTasks.length > 0) {
+		signals.push(`Ещё без слота: ${overflowTasks.map((task) => clipText(task.title, 28)).join(" · ")}`);
 	}
 
 	return {
@@ -1163,9 +1424,15 @@ function buildOperationsRuntimeData(
 			cleanup
 				? `Операционное окно недели: ${formatSlotBrief(cleanup)}.`
 				: "Отдельного cleanup-окна пока нет.",
+			taskWindows.length > 0
+				? `Предлагаемые task-окна: ${taskWindows.map((window) => formatTaskWindowSuggestion(window)).join("; ")}.`
+				: overflowTasks.length > 0
+					? `Пока без окна: ${overflowTasks.map((task) => formatTaskBrief(task, context.today)).join("; ")}.`
+					: "Текущих рекомендаций по слотам пока нет.",
 		],
 		requestLines: [
 			"Раздели всё на удалить / перенести / сделать первым.",
+			"Подбери оптимальные окна недели для всех живых задач и явно покажи, что не помещается без перегруза.",
 			"Не размазывай ответ — нужен triage и один первый слот на сегодня.",
 		],
 		signals,
@@ -1563,6 +1830,15 @@ export function buildAgentPracticalPlan(
 	const review = areaSet.has("reflection")
 		? buildReviewSummary(context, leadProject, leadTask)
 		: null;
+	const taskWindows = context.tasks.distribution.suggestions
+		.slice(0, 4)
+		.map((window) => formatTaskWindowSuggestion(window));
+	const overflowSummary = context.tasks.distribution.overflowTasks.length > 0
+		? `Без слота пока: ${context.tasks.distribution.overflowTasks
+			.slice(0, 3)
+			.map((task) => clipText(task.title, 34))
+			.join(" · ")}`
+		: null;
 
 	const scheduleUpdate = recoveryAnchor
 		? recoveryAnchor.mode === "protect"
@@ -1594,6 +1870,8 @@ export function buildAgentPracticalPlan(
 				? `${doneParts.join(", ")}.`
 				: "Есть один главный шаг, один защищённый recovery-контур и нет параллельного раздувания дня.",
 		review,
+		taskWindows,
+		overflowSummary,
 		updates: {
 			task: leadProject
 				? `${leadProject.name} — ${buildProjectFocusLabel(leadProject, energyConflict)}`
