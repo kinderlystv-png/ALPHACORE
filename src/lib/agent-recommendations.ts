@@ -251,6 +251,32 @@ function clipText(text: string, max = 96): string {
 	return `${clean.slice(0, max - 1).trimEnd()}…`;
 }
 
+function normalizePromptLine(line: string): string {
+	return line
+		.replace(/\s+/g, " ")
+		.replace(/[.:;!?]+$/g, "")
+		.trim()
+		.toLowerCase();
+}
+
+function uniquePromptLines(lines: Array<string | null | undefined>): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+
+	for (const line of lines) {
+		const value = line?.trim();
+		if (!value) continue;
+
+		const normalized = normalizePromptLine(value);
+		if (seen.has(normalized)) continue;
+
+		seen.add(normalized);
+		result.push(value);
+	}
+
+	return result;
+}
+
 function uniqueTasks(tasks: Task[]): Task[] {
 	const seen = new Set<string>();
 

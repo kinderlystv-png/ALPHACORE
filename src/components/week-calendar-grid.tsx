@@ -812,18 +812,18 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         autoScrollFrameRef.current = null;
       }
     };
-
-    useEffect(() => {
-      return () => {
-        if (reboundTimerRef.current != null) {
-          window.clearTimeout(reboundTimerRef.current);
-        }
-        if (reboundFrameRef.current != null) {
-          window.cancelAnimationFrame(reboundFrameRef.current);
-        }
-      };
-    }, []);
   }, [activeEdit, buildDraftFromPointer]);
+
+  useEffect(() => {
+    return () => {
+      if (reboundTimerRef.current != null) {
+        window.clearTimeout(reboundTimerRef.current);
+      }
+      if (reboundFrameRef.current != null) {
+        window.cancelAnimationFrame(reboundFrameRef.current);
+      }
+    };
+  }, []);
 
   const queuePointerEdit = useCallback(
     (
@@ -1355,6 +1355,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
                     activeEdit.blockingSlot.date === slot.date;
+                  const isSelectedSlot =
+                    (quickMenu?.slot.id === slot.id && quickMenu.slot.date === slot.date) ||
+                    (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date);
                   const slotPadding = !isEditable
                     ? "px-2 py-1"
                     : height >= 96
@@ -1362,8 +1365,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       : height >= 64
                         ? "px-2 pt-4 pb-4"
                         : "px-2 pt-3 pb-3";
-                  const handleButtonSize = height >= 64 ? "h-4 w-10" : "h-3 w-8";
-                  const handlePillSize = height >= 64 ? "h-1 w-7" : "h-0.5 w-5";
+                  const handleButtonHeight = height >= 64 ? "h-5" : "h-4";
+                  const handleGripSize = height >= 64 ? "h-1 w-4" : "h-0.5 w-3";
+                  const handleOpacity = isSelectedSlot
+                    ? "opacity-90"
+                    : "opacity-0 group-hover:opacity-70 group-focus-within:opacity-70";
+                  const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
 
                   return (
                     <div
@@ -1373,6 +1380,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       } ${
                         isBlockingSlot
                           ? "ring-2 ring-rose-400/80 shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_14px_28px_rgba(127,29,29,0.28)]"
+                          : isSelectedSlot
+                            ? "ring-1 ring-white/12 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_10px_24px_rgba(0,0,0,0.22)]"
                           : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]"
                       }`}
                       style={{ top, height, minHeight: 20 }}
@@ -1396,14 +1405,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить начало"
-                          className={`absolute left-1/2 top-1 z-10 flex -translate-x-1/2 cursor-ns-resize items-start justify-center rounded-full bg-transparent opacity-45 transition-opacity group-hover:opacity-80 ${handleButtonSize}`}
+                          className={`absolute inset-x-0 top-0 z-10 flex cursor-ns-resize items-start justify-between px-3 bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-start", e, col.key, slot);
                           }}
                         >
-                          <span className={`mt-0.5 rounded-full bg-white/30 shadow-[0_0_0_1px_rgba(255,255,255,0.06)] ${handlePillSize}`} />
+                          <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
+                          <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
                         </button>
                       )}
                       <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
@@ -1421,14 +1431,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         <button
                           type="button"
                           aria-label="Изменить конец"
-                          className={`absolute left-1/2 bottom-1 z-10 flex -translate-x-1/2 cursor-ns-resize items-end justify-center rounded-full bg-transparent opacity-45 transition-opacity group-hover:opacity-80 ${handleButtonSize}`}
+                          className={`absolute inset-x-0 bottom-0 z-10 flex cursor-ns-resize items-end justify-between px-3 bg-transparent transition-opacity ${handleOpacity} ${handleButtonHeight}`}
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             queuePointerEdit("resize-end", e, col.key, slot);
                           }}
                         >
-                          <span className={`mb-0.5 rounded-full bg-white/30 shadow-[0_0_0_1px_rgba(255,255,255,0.06)] ${handlePillSize}`} />
+                          <span className={`mb-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
+                          <span className={`mb-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
                         </button>
                       )}
                     </div>
