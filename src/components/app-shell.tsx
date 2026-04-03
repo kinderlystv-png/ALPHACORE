@@ -18,7 +18,7 @@ const routes = [
 
 function RailTooltip({ label, shortcut }: { label: string; shortcut?: string }) {
   return (
-    <span className="pointer-events-none absolute left-full top-1/2 z-[90] ml-3 flex -translate-y-1/2 translate-x-1 items-center gap-2 whitespace-nowrap rounded-xl border border-zinc-700/70 bg-zinc-900/96 px-3 py-2 text-xs font-medium text-zinc-100 opacity-0 shadow-[0_14px_34px_rgba(0,0,0,0.32)] backdrop-blur transition duration-150 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100">
+    <span className="pointer-events-none absolute left-full top-1/2 z-90 ml-3 flex -translate-y-1/2 translate-x-1 items-center gap-2 whitespace-nowrap rounded-xl border border-zinc-700/70 bg-zinc-900/96 px-3 py-2 text-xs font-medium text-zinc-100 opacity-0 shadow-[0_14px_34px_rgba(0,0,0,0.32)] backdrop-blur transition duration-150 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100">
       <span>{label}</span>
       {shortcut && (
         <span className="rounded-lg border border-zinc-700 bg-zinc-800/90 px-1.5 py-0.5 text-[10px] text-zinc-300">
@@ -36,7 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-zinc-950 text-zinc-50">
       <div className="mx-auto max-w-7xl lg:grid lg:grid-cols-[88px_minmax(0,1fr)] lg:overflow-visible">
         {/* ── SIDEBAR (desktop) ── */}
-        <aside className="relative z-40 hidden lg:block">
+        <aside className="relative z-40 hidden isolate lg:block">
           <div className="sticky top-0 flex h-screen flex-col items-center gap-3 overflow-visible border-r border-zinc-800/60 px-3 py-4">
             <nav className="flex w-full flex-col items-center gap-1.5">
               {routes.map((r) => {
