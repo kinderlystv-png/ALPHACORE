@@ -158,6 +158,7 @@ function pushPriority(
 
 export function getAgentControlSnapshot(): AgentControlSnapshot {
   const today = dateStr();
+  const todaySlots = getScheduleForDate(today);
   const tasks = getTasks();
   const projects = getProjects();
   const stats = getActivityStats();
@@ -167,6 +168,7 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
   const medEntries = getEntries();
   const upcomingSlots = collectUpcomingSchedule(7);
   const upcoming = getUpcomingScheduleStats(upcomingSlots);
+  const todayCleanupSlots = todaySlots.filter((slot) => slot.tone === "cleanup");
   const todayChecks = getChecks(today);
   const activeHabitsToday = DEFAULT_HABITS.filter((habit) =>
     isActiveOn(habit, new Date().getDay()),
@@ -237,6 +239,7 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       Math.min(upcoming.personal, 3) * 12 +
       (sleepChecked ? 22 : 0) +
       Math.min(upcoming.health, 2) * 5 -
+      Math.min(upcoming.cleanup, 2) * 6 -
       Math.max(0, upcoming.studio - upcoming.personal - upcoming.family) * 4,
   );
 
@@ -309,6 +312,8 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       insight:
         flaggedMedicalParams > 0
           ? "Здоровье нельзя оставлять фоном: сначала понять красные сигналы, потом усиливать нагрузку."
+          : todayCleanupSlots.length > 0
+            ? "Сегодня уже есть cleanup-нагрузка — не нужно автоматически дублировать её отдельным cardio; важнее щадящий floor и восстановление."
           : habitRatio < 0.67
             ? "Минимальный health floor на день: сон, растяжка и один телесный блок."
             : "База держится — агенту важно лишь не дать здоровью снова исчезнуть из поля зрения.",
@@ -316,7 +321,7 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
         latestMedicalDate
           ? `Последний медсигнал: ${latestMedicalDate}`
           : "Медицинских записей пока нет",
-        `${upcoming.health} health-окон в ближайшие 7 дней`,
+        `${upcoming.health} health-окон и ${upcoming.cleanup} cleanup-нагрузок в ближайшие 7 дней`,
       ],
     },
     {
@@ -390,12 +395,16 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       summary: `${upcoming.personal} личных окон · сон ${sleepChecked ? "отмечен" : "не отмечен"}`,
       insight:
         !sleepChecked && upcoming.personal === 0
-          ? "Если восстановление не защищено, система скатывается в героическую, но тупиковую гонку."
+          ? todayCleanupSlots.length > 0
+            ? "Сегодня уже есть cleanup-нагрузка, а recovery не защищено — не дублируй день cardio и добавь окно восстановления."
+            : "Если восстановление не защищено, система скатывается в героическую, но тупиковую гонку."
+          : todayCleanupSlots.length > 0 || upcoming.cleanup > 0
+            ? "Cleanup-дни дают реальную физическую нагрузку, поэтому recovery нужно защищать как обязательный слот, а не как бонус."
           : upcoming.personal < 2
             ? "Восстановление есть, но пока слишком хрупкое — агенту стоит сделать его невыбиваемым."
             : "Ритм восстановления уже заметен. Важно не разменять его на случайные срочности.",
       evidence: [
-        `${upcoming.personal} personal-слотов и ${upcoming.health} телесных слотов на 7 дней`,
+        `${upcoming.personal} personal-слотов, ${upcoming.health} телесных и ${upcoming.cleanup} cleanup-слотов на 7 дней`,
         sleepChecked ? "Сон отмечен сегодня" : "Сегодня сон пока не закрыт",
       ],
     },

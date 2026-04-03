@@ -74,6 +74,7 @@ export const SCHEDULE_TONE_CLS: Record<ScheduleTone, string> = {
 export const SCHEDULE_RULES = [
   "С 1 апреля без уборщицы: если был праздник, на следующий день нужен слот на уборку.",
   "Праздник вечером → уборка на следующий день 11:00–15:00 (сначала пробежка утром). Если утром уже стоит следующий праздник — уборка переносится на 06:00–09:00.",
+  "Если в один день стоят утренний и вечерний праздники, между ними нужен support-слот 15:00–17:00: ехать помогать Саше быстро привести пространство в порядок.",
   "Во время праздников нужен семейный буфер: за час до и через час после ты с Даней, пока Саша на админке.",
   "Если в среду есть вечерний праздник, добавляем логистику: отвезти Даню к бабушке перед репетицией.",
   "Мягкие weekly-блоки автоматически скрываются, если конфликтуют с праздником, уборкой или семейным буфером.",
@@ -483,6 +484,10 @@ function isEveningEvent(slot: { start: string }): boolean {
   return timeToMinutes(slot.start) >= 17 * 60;
 }
 
+function hasMorningAndEveningEvents(slots: Array<{ start: string }>): boolean {
+  return slots.some((slot) => isMorningEvent(slot)) && slots.some((slot) => isEveningEvent(slot));
+}
+
 function buildTemplateSlots(dateKey: string): ScheduleSlot[] {
   const weekday = parseDate(dateKey).getDay();
   const baseSlots: ScheduleSlot[] = (TEMPLATE_BY_WEEKDAY[weekday] ?? []).map((slot, index) => ({
@@ -543,6 +548,28 @@ function buildCleaningSlots(dateKey: string, todayEvents: ScheduleSlot[]): Sched
         : "Уборка с 11 до 15 — сначала пробежка утром, потом студия",
       tone: "cleanup",
       tags: ["cleanup", "studio"],
+      source: "derived",
+    },
+  ];
+}
+
+function buildBetweenPartySupportSlots(
+  dateKey: string,
+  todayEvents: ScheduleSlot[],
+): ScheduleSlot[] {
+  if (!hasMorningAndEveningEvents(todayEvents)) return [];
+
+  return [
+    {
+      id: `between-parties-cleanup-${dateKey}`,
+      date: dateKey,
+      start: "15:00",
+      end: "17:00",
+      title: "🧹 Помочь Саше с уборкой между праздниками",
+      subtitle:
+        "Если утром и вечером стоят праздники, с 15:00 до 17:00 едешь помочь Саше быстро привести пространство в порядок между слотами.",
+      tone: "cleanup",
+      tags: ["cleanup", "studio", "sasha", "support", "between-parties", "high-load"],
       source: "derived",
     },
   ];
@@ -824,13 +851,15 @@ export function getScheduleForDate(dateLike: Date | string): ScheduleSlot[] {
   const dateKey = toDateKey(dateLike);
   const studioEvents = getStudioEvents(dateKey);
   const cleanupSlots = buildCleaningSlots(dateKey, studioEvents);
+  const betweenPartySupportSlots = buildBetweenPartySupportSlots(dateKey, studioEvents);
   const coverageSlots = buildCoverageSlots(dateKey, studioEvents);
   const customSlots = getCustomSlots(dateKey);
-  const lockedSlots = [...cleanupSlots, ...customSlots];
+  const cleanupLikeSlots = [...cleanupSlots, ...betweenPartySupportSlots];
+  const lockedSlots = [...cleanupLikeSlots, ...customSlots];
   const templateSlots = filterTemplateSlots(buildTemplateSlots(dateKey), lockedSlots);
   const slots = [
     ...templateSlots,
-    ...cleanupSlots,
+    ...cleanupLikeSlots,
     ...coverageSlots,
     ...customSlots,
   ];
@@ -852,11 +881,12 @@ export function getScheduleSummary(dateLike: Date | string): {
   const dateKey = toDateKey(dateLike);
   const studioEvents = getStudioEvents(dateKey);
   const cleanupSlots = buildCleaningSlots(dateKey, studioEvents);
+  const betweenPartySupportSlots = buildBetweenPartySupportSlots(dateKey, studioEvents);
   const coverageSlots = buildCoverageSlots(dateKey, studioEvents);
 
   return {
     parties: studioEvents.length,
-    cleanup: cleanupSlots.length,
+    cleanup: cleanupSlots.length + betweenPartySupportSlots.length,
     family: coverageSlots.length,
   };
 }

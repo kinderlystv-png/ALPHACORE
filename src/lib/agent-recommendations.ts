@@ -9,7 +9,7 @@ import type { Habit } from "./habits";
 import type { JournalEntry } from "./journal";
 import { paramStatus, type MedEntry, type MedParam } from "./medical";
 import type { Project, StatusTone } from "./projects";
-import type { ScheduleSlot } from "./schedule";
+import { timeToMinutes, type ScheduleSlot } from "./schedule";
 import { lsGet, lsSet, uid } from "./storage";
 import { compareTasksByAttention, type Task } from "./tasks";
 
@@ -331,8 +331,26 @@ function formatPressureDay(day: RecommendationSchedulePressureDay): string {
 	return `${formatDateKeyRu(day.date)} · load ${Math.round(day.load)} · ${highlights}`;
 }
 
+function slotDurationMinutes(slot: Pick<ScheduleSlot, "start" | "end">): number {
+	return Math.max(0, timeToMinutes(slot.end) - timeToMinutes(slot.start));
+}
+
 function isStudioPressureSlot(slot: ScheduleSlot): boolean {
 	return slot.source === "studio" || slot.tags.includes("party");
+}
+
+function isCleanupLoadSlot(slot: ScheduleSlot): boolean {
+	return slot.tone === "cleanup";
+}
+
+function isBetweenPartiesSupportSlot(slot: ScheduleSlot): boolean {
+	return slot.tags.includes("between-parties");
+}
+
+function formatCleanupLoadBrief(slot: ScheduleSlot): string {
+	const durationHours = Math.round((slotDurationMinutes(slot) / 60) * 10) / 10;
+	const loadLabel = isBetweenPartiesSupportSlot(slot) ? "между праздниками" : "cleanup-load";
+	return `${formatSlotBrief(slot)} · ${loadLabel} · ${durationHours}ч`;
 }
 
 function buildHotTags(entries: JournalEntry[]): string[] {
@@ -365,7 +383,10 @@ function buildSchedulePressureDays(
 		.map(([date, daySlots]) => {
 			const load = daySlots.reduce((sum, slot) => {
 				if (isStudioPressureSlot(slot)) return sum + 3;
-				if (slot.tone === "cleanup") return sum + 2.5;
+				if (slot.tone === "cleanup") {
+					const durationHours = Math.max(1, slotDurationMinutes(slot) / 60);
+					return sum + Math.min(4, 0.8 + durationHours * 0.9 + (isBetweenPartiesSupportSlot(slot) ? 0.3 : 0));
+				}
 				if (slot.tone === "family") return sum + 1.5;
 				return sum + 1;
 			}, 0);
@@ -611,6 +632,8 @@ function buildHealthRuntimeData(
 ): CandidateRuntimeData {
 	const missing = context.habits.missingToday.slice(0, 3);
 	const flags = context.medical.flags.slice(0, 2);
+	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
+	const hasCleanupLoadToday = cleanupToday.length > 0;
 	const healthJournal =
 		context.journal.recent.find((entry) =>
 			entry.tags.some((tag) => HEALTH_SIGNAL_TAGS.has(tag)),
@@ -629,13 +652,41 @@ function buildHealthRuntimeData(
 		);
 	}
 
+	if (cleanupToday.length > 0) {
+		signals.push(
+			`Сегодня cleanup-нагрузка: ${cleanupToday.map((slot) => formatCleanupLoadBrief(slot)).join(" · ")}`,
+		);
+	}
+
 	if (healthJournal) {
 		signals.push(`Self-report: “${clipText(healthJournal.text, 64)}”`);
 	}
 
+	const habitsLine = missing.length > 0
+		? `Сегодня не закрыты привычки: ${missing.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
+		: `Сегодня уже закрыто: ${
+			context.habits.completedToday
+				.slice(0, 3)
+				.map((habit) => `${habit.emoji} ${habit.name}`)
+				.join("; ") || "нет отмеченных привычек"
+		}.`;
+	const medicalLine = flags.length > 0
+		? `Медсигналы: ${flags.map((flag) => `${flag.param.name} (${formatFlagStatus(flag.status)}, ${flag.entry.date})`).join("; ")}.`
+		: context.medical.latestEntry
+			? `Последняя медицинская запись: ${context.medical.latestEntry.name} от ${context.medical.latestEntry.date}.`
+			: "Свежих медицинских записей пока нет.";
+	const cleanupLine = hasCleanupLoadToday
+		? `Сегодня cleanup-нагрузка: ${cleanupToday.map((slot) => formatCleanupLoadBrief(slot)).join("; ")}. Считать это существенной физической нагрузкой; отдельное cardio по умолчанию не форсировать.`
+		: null;
+	const selfReportLine = healthJournal
+		? `Свежий self-report: "${clipText(healthJournal.text, 120)}".`
+		: "Если строишь план, считай его через реальную энергию дня, а не через идеальную версию меня.";
+
 	return {
 		title:
-			flags.length > 0
+			hasCleanupLoadToday
+				? "Не дублировать cardio на cleanup-дне"
+				: flags.length > 0
 				? "Собрать health floor с учётом анализов"
 				: missing.length >= 2
 					? "Вернуть телесную базу до вечера"
@@ -643,33 +694,26 @@ function buildHealthRuntimeData(
 		context:
 			flags.length > 0
 				? "Есть конкретные медсигналы, поэтому productivity не должна притворяться лечением."
+				: hasCleanupLoadToday
+					? "Сегодня в расписании уже есть cleanup-нагрузка, поэтому бег не должен считаться обязательным по умолчанию."
 				: missing.length > 0
 					? "Сегодня база проседает на уровне привычек, а не на уровне мотивационных речей."
 					: undefined,
 		impact:
-			missing.length > 0 || flags.length > 0
-				? "Попроси агента зафиксировать реалистичный health floor без героизма и без потери медицинского контекста."
+			missing.length > 0 || flags.length > 0 || hasCleanupLoadToday
+				? hasCleanupLoadToday
+					? "Попроси агента собрать щадящий health floor и отдельно решить, нужно ли сегодня вообще дополнительное cardio."
+					: "Попроси агента зафиксировать реалистичный health floor без героизма и без потери медицинского контекста."
 				: undefined,
 		promptLines: [
-			missing.length > 0
-				? `Сегодня не закрыты привычки: ${missing.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
-				: `Сегодня уже закрыто: ${
-					context.habits.completedToday
-						.slice(0, 3)
-						.map((habit) => `${habit.emoji} ${habit.name}`)
-						.join("; ") || "нет отмеченных привычек"
-				}.`,
-			flags.length > 0
-				? `Медсигналы: ${flags.map((flag) => `${flag.param.name} (${formatFlagStatus(flag.status)}, ${flag.entry.date})`).join("; ")}.`
-				: context.medical.latestEntry
-					? `Последняя медицинская запись: ${context.medical.latestEntry.name} от ${context.medical.latestEntry.date}.`
-					: "Свежих медицинских записей пока нет.",
-			healthJournal
-				? `Свежий self-report: "${clipText(healthJournal.text, 120)}".`
-				: "Если строишь план, считай его через реальную энергию дня, а не через идеальную версию меня.",
+			habitsLine,
+			cleanupLine ?? medicalLine,
+			hasCleanupLoadToday ? selfReportLine : selfReportLine,
 		],
 		requestLines: [
-			"Сделай план щадящим: одна минимальная победа до вечера, один follow-up и один запрет на перегруз.",
+			hasCleanupLoadToday
+				? "Если сегодня уже есть cleanup-нагрузка, не форсируй отдельное cardio по умолчанию; максимум mobility или walk, если это помогает восстановлению."
+				: "Сделай план щадящим: одна минимальная победа до вечера, один follow-up и один запрет на перегруз.",
 			flags.length > 0
 				? "Не спорь с медицинскими флагами: сначала объясни безопасный минимум, потом нагрузку."
 				: "Если не хватает энергии, снижай план, а не добавляй чувство вины.",
@@ -678,11 +722,14 @@ function buildHealthRuntimeData(
 		tags: [
 			...missing.map((habit) => habit.id),
 			flags.length > 0 ? "medical-flag" : null,
+			hasCleanupLoadToday ? "cleanup-load" : null,
+			cleanupToday.some(isBetweenPartiesSupportSlot) ? "between-parties" : null,
 			healthJournal ? "self-report" : null,
 		].filter(Boolean) as string[],
 		weightBoost:
 			flags.length * 10 +
 			missing.length * 5 +
+			cleanupToday.length * 6 +
 			(context.habits.completedToday.length === 0 ? 4 : 0),
 	};
 }
@@ -692,6 +739,7 @@ function buildFamilyRuntimeData(
 ): CandidateRuntimeData {
 	const studio = context.schedule.studio.slice(0, 2);
 	const cleanup = context.schedule.cleanup[0] ?? null;
+	const betweenPartySupport = context.schedule.cleanup.find(isBetweenPartiesSupportSlot) ?? null;
 	const birthday = context.projects.birthday;
 	const nextPressureDay =
 		context.schedule.overloadedDays.find((day) =>
@@ -707,6 +755,10 @@ function buildFamilyRuntimeData(
 
 	if (cleanup) {
 		signals.push(`После событий висит уборка: ${formatSlotBrief(cleanup)}`);
+	}
+
+	if (betweenPartySupport) {
+		signals.push(`Между двойными праздниками нужна помощь Саше: ${formatSlotBrief(betweenPartySupport)}`);
 	}
 
 	if (birthday) {
@@ -736,9 +788,14 @@ function buildFamilyRuntimeData(
 			studio.length > 0
 				? `Ближайшие студийные события: ${studio.map(formatSlotBrief).join("; ")}.`
 				: "Явного студийного давления в ближайшие дни нет, но семейную часть всё равно стоит зафиксировать заранее.",
+			betweenPartySupport
+				? `Между двойными праздниками нужен support-слот: ${formatSlotBrief(betweenPartySupport)}; это обязательная помощь Саше с уборкой пространства.`
+				: cleanup
+					? `После событий запланирована уборка: ${formatSlotBrief(cleanup)}.`
+					: "Пока отдельного cleanup-слота не видно.",
 			cleanup
-				? `После событий запланирована уборка: ${formatSlotBrief(cleanup)}.`
-				: "Пока отдельного cleanup-слота не видно.",
+				? `Cleanup-нагрузка на горизонте: ${formatSlotBrief(cleanup)}.`
+				: "",
 			birthday
 				? `Семейный проект: ${birthday.name}; next step: ${birthday.nextStep}; незакрытых deliverables: ${projectOpenDeliverables(birthday)}.`
 				: "Отдельного семейного проекта в системе сейчас нет.",
@@ -893,6 +950,9 @@ function buildRecoveryRuntimeData(
 		["sleep", "stretch", "run"].includes(habit.id),
 	);
 	const sleepMissing = missingRecovery.some((habit) => habit.id === "sleep");
+	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
+	const cleanupUpcoming = context.schedule.cleanup.slice(0, 2);
+	const betweenPartySupport = cleanupUpcoming.filter(isBetweenPartiesSupportSlot);
 	const nextPersonal = context.schedule.personal[0] ?? null;
 	const overloaded = context.schedule.overloadedDays.slice(0, 2);
 	const signals: string[] = [];
@@ -909,9 +969,29 @@ function buildRecoveryRuntimeData(
 		);
 	}
 
+	if (cleanupToday.length > 0) {
+		signals.push(
+			`Сегодня cleanup-нагрузка: ${cleanupToday.map((slot) => formatCleanupLoadBrief(slot)).join(" · ")}`,
+		);
+	} else if (betweenPartySupport.length > 0) {
+		signals.push(
+			`Между двойными праздниками нужна помощь Саше: ${betweenPartySupport.map((slot) => formatSlotBrief(slot)).join(" · ")}`,
+		);
+	} else if (cleanupUpcoming.length > 0) {
+		signals.push(
+			`Впереди cleanup-нагрузка: ${cleanupUpcoming.map((slot) => formatCleanupLoadBrief(slot)).join(" · ")}`,
+		);
+	}
+
 	if (nextPersonal) {
 		signals.push(`Ближайшее personal-окно: ${formatSlotBrief(nextPersonal)}`);
 	}
+
+	const cleanupPriorityLine = cleanupToday.length > 0 || cleanupUpcoming.length > 0
+		? `Cleanup-нагрузка: ${(cleanupToday.length > 0 ? cleanupToday : cleanupUpcoming)
+			.map((slot) => formatCleanupLoadBrief(slot))
+			.join("; ")}. Считать это полноценной физической нагрузкой.`
+		: null;
 
 	return {
 		title:
@@ -921,38 +1001,54 @@ function buildRecoveryRuntimeData(
 					? "Не отдать recovery случайной срочности"
 					: undefined,
 		context:
-			sleepMissing
+			cleanupToday.length > 0
+				? "Сегодня уже есть cleanup-нагрузка, поэтому recovery нужно защищать, а не добивать дополнительным cardio."
+				: sleepMissing
 				? "Сегодня recovery уже проседает на базовом уровне, а не на уровне красивых намерений."
 				: overloaded.length > 0
 					? "Неделя уже местами перегрета — окно отдыха нужно поставить сейчас."
 					: undefined,
 		impact:
-			missingRecovery.length > 0 || overloaded.length > 0 || !nextPersonal
-				? "Попроси агента защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
+			missingRecovery.length > 0 || overloaded.length > 0 || !nextPersonal || cleanupToday.length > 0 || cleanupUpcoming.length > 0
+				? cleanupToday.length > 0 || cleanupUpcoming.length > 0
+					? "Попроси агента считать cleanup полноценной нагрузкой и заранее защитить recovery до того, как долг усталости накопится."
+					: "Попроси агента защитить энергию конкретным слотом, а не абстрактным обещанием отдохнуть потом."
 				: undefined,
 		promptLines: [
 			missingRecovery.length > 0
 				? `Сегодня не закрыты recovery-сигналы: ${missingRecovery.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
 				: "Ключевые recovery-привычки сегодня уже частично отмечены.",
-			nextPersonal
+			cleanupPriorityLine ?? (nextPersonal
 				? `Ближайшее personal-окно: ${formatSlotBrief(nextPersonal)}.`
-				: "Ближайшее personal-окно в расписании не видно.",
-			overloaded.length > 0
+				: "Ближайшее personal-окно в расписании не видно."),
+			betweenPartySupport.length > 0
+				? `Между двойными праздниками есть support-слот помочь Саше: ${betweenPartySupport.map((slot) => formatSlotBrief(slot)).join("; ")}.`
+				: overloaded.length > 0
 				? `Перегруженные дни: ${overloaded.map((day) => formatPressureDay(day)).join("; ")}.`
-				: "Перегруженных дней на горизонте недели не найдено.",
+				: cleanupUpcoming.length > 0
+					? `Впереди cleanup-нагрузка: ${cleanupUpcoming.map((slot) => formatCleanupLoadBrief(slot)).join("; ")}.`
+					: "Перегруженных дней на горизонте недели не найдено.",
 		],
 		requestLines: [
-			"Предложи одно невыбиваемое окно восстановления и чем его защитить от срочности.",
+			cleanupToday.length > 0 || cleanupUpcoming.length > 0
+				? "Считать cleanup полноценной нагрузкой: recovery-окно важнее дополнительного cardio, если нет отдельной спортивной задачи."
+				: "Предложи одно невыбиваемое окно восстановления и чем его защитить от срочности.",
 			"Если день уже перегружен, покажи что именно лучше не делать.",
 		],
 		signals,
 		tags: [
 			sleepMissing ? "sleep" : null,
 			overloaded.length > 0 ? "overload" : null,
+			cleanupToday.length > 0 || cleanupUpcoming.length > 0 ? "cleanup-load" : null,
+			betweenPartySupport.length > 0 ? "between-parties" : null,
 			nextPersonal ? "scheduled-recovery" : "missing-recovery",
 		].filter(Boolean) as string[],
 		weightBoost:
-			(sleepMissing ? 8 : 0) + overloaded.length * 6 + (nextPersonal ? 0 : 6),
+			(sleepMissing ? 8 : 0) +
+			overloaded.length * 6 +
+			cleanupUpcoming.length * 5 +
+			betweenPartySupport.length * 4 +
+			(nextPersonal ? 0 : 6),
 	};
 }
 
@@ -1017,7 +1113,7 @@ function buildPrompt(
 		],
 		health: [
 			"Сделай щадящий health-prompt на сегодня.",
-			"Собери минимальный health floor: сон, растяжка, бег/прогулка, follow-up по анализам.",
+			"Собери минимальный health floor: сон, растяжка, умеренное движение и follow-up по анализам.",
 		],
 		family: [
 			"Сделай prompt для защиты семейной части недели.",
