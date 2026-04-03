@@ -1350,7 +1350,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           {visibleColumns.map((col) => (
             <div
               key={`head-${col.key}`}
-              className={`sticky top-0 z-30 border-b border-r border-b-zinc-800/60 px-2 py-1.5 ${
+              className={`sticky top-0 z-30 overflow-hidden border-b border-r border-b-zinc-800/60 px-2 py-1.5 ${
                 col.isPast
                   ? "bg-zinc-950"
                   : col.isToday
@@ -1422,6 +1422,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   )}
                 </div>
               )}
+
+              <div
+                className={`pointer-events-none absolute inset-y-0 right-0 w-0.5 ${
+                  col.isToday
+                    ? "bg-linear-to-b from-sky-200/15 via-sky-300/55 to-sky-200/15"
+                    : "bg-linear-to-b from-zinc-200/10 via-zinc-300/38 to-zinc-200/10"
+                }`}
+              />
             </div>
           ))}
 
@@ -1451,7 +1459,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           ? "bg-zinc-900/15"
                           : ""
                     } ${!col.isPast && dropTarget === col.key ? "bg-sky-500/5" : ""} ${
-                      col.isToday ? "border-r-sky-400/30" : "border-r-zinc-700/55"
+                      col.isToday ? "border-r-sky-400/18" : "border-r-zinc-700/30"
                     }`}
                     style={{ height: ROW_H }}
                     onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
@@ -1506,11 +1514,18 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         style={{ width: supportLaneWidth + SLOT_SIDE_INSET_PX }}
                       />
                       <div
-                        className="pointer-events-none absolute inset-y-0 w-px bg-fuchsia-300/28"
+                        className="pointer-events-none absolute inset-y-0 w-px bg-fuchsia-300/14"
                         style={{ left: supportLaneDividerLeft }}
                       />
                     </>
                   )}
+                  <div
+                    className={`pointer-events-none absolute inset-y-0 right-0 w-0.5 ${
+                      col.isToday
+                        ? "bg-linear-to-b from-sky-200/18 via-sky-300/60 to-sky-200/18"
+                        : "bg-linear-to-b from-zinc-100/10 via-zinc-200/42 to-zinc-100/10"
+                    }`}
+                  />
                   {col.slots.map((slot) => {
                   const slotInstanceKey = `${slot.date}:${slot.id}`;
                   if (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date) {
