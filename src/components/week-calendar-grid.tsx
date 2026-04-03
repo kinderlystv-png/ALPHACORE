@@ -1646,22 +1646,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       {isChildcareBackground ? (
                         <>
                           <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-amber-400/10 via-orange-400/6 to-transparent" />
-                          <div className="relative">
-                            <p className="text-[9px] font-medium uppercase tracking-[0.18em] text-amber-200/65">
-                              С Даней · фоновое окно
-                            </p>
-                            <p className="mt-1 text-[10px] font-semibold leading-tight text-amber-50/80">
-                              {slot.start}–{slot.end}
-                            </p>
-                            <p className={`mt-0.5 font-semibold leading-snug text-amber-50/82 ${height >= 72 ? "line-clamp-4 text-[11px]" : "truncate text-[10px]"}`}>
-                              {slot.title}
-                            </p>
-                            {height > 64 && (
-                              <p className="mt-1 line-clamp-2 text-[9px] leading-tight text-amber-100/55">
-                                Саша на админке, ты с Даней.
-                              </p>
-                            )}
-                          </div>
+                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-amber-200/35 via-orange-300/18 to-transparent" />
                         </>
                       ) : (
                         <>
