@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { addCustomEvent, getCustomEvents, type ScheduleTone } from "@/lib/schedule";
+import {
+  addCustomEvent,
+  getCustomEvents,
+  getScheduleForDate,
+  timeToMinutes,
+  type ScheduleSlot,
+  type ScheduleTone,
+} from "@/lib/schedule";
 import { addTask, getTasks, type TaskPriority } from "@/lib/tasks";
 import { useHeysSync } from "@/lib/use-heys-sync";
 import type { HeysDayRecord, HeysHealthSignals } from "@/lib/heys-bridge";
@@ -69,6 +76,16 @@ type MetricActionPlan = {
 type ActionFeedback = {
   tone: "success" | "info";
   text: string;
+};
+
+type SlotCandidate = {
+  start: string;
+  end: string;
+  dateOffset?: number;
+};
+
+type ResolvedSlotPlan = MetricActionPlan["slot"] & {
+  date: string;
 };
 
 function Sparkline({
@@ -256,6 +273,157 @@ function resolveSlotDate(start: string, offset = 0): string {
   }
 
   return date.toISOString().slice(0, 10);
+}
+
+function formatDateLabel(dateKey: string): string {
+  if (dateKey === todayDateKey()) return "сегодня";
+  if (dateKey === todayDateKey(1)) return "завтра";
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(new Date(`${dateKey}T00:00:00`));
+}
+
+function overlapsTimeRange(
+  start: string,
+  end: string,
+  slot: Pick<ScheduleSlot, "start" | "end">,
+): boolean {
+  return timeToMinutes(start) < timeToMinutes(slot.end) && timeToMinutes(end) > timeToMinutes(slot.start);
+}
+
+function getDayLoad(dateKey: string): {
+  slots: ScheduleSlot[];
+  score: number;
+  parties: number;
+  cleanup: number;
+  family: number;
+} {
+  const slots = getScheduleForDate(dateKey);
+  const parties = slots.filter((slot) => slot.tone === "kinderly").length;
+  const cleanup = slots.filter((slot) => slot.tone === "cleanup").length;
+  const family = slots.filter((slot) => slot.tone === "family").length;
+
+  return {
+    slots,
+    parties,
+    cleanup,
+    family,
+    score: parties * 6 + cleanup * 5 + family * 2 + slots.length,
+  };
+}
+
+function isSlotCandidateUsable(dateKey: string, candidate: SlotCandidate): boolean {
+  if (dateKey !== todayDateKey()) return true;
+
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  return nowMinutes < timeToMinutes(candidate.start) - 5;
+}
+
+function getAutopilotSlotCandidates(metricKey: MetricKey): SlotCandidate[] {
+  switch (metricKey) {
+    case "sleep":
+      return [
+        { start: "23:15", end: "23:45", dateOffset: 0 },
+        { start: "23:15", end: "23:45", dateOffset: 1 },
+        { start: "23:30", end: "23:55", dateOffset: 1 },
+      ];
+    case "bedtime":
+      return [
+        { start: "23:30", end: "23:55", dateOffset: 0 },
+        { start: "23:30", end: "23:55", dateOffset: 1 },
+        { start: "23:15", end: "23:40", dateOffset: 2 },
+      ];
+    case "steps":
+      return [
+        { start: "17:30", end: "17:50", dateOffset: 0 },
+        { start: "12:30", end: "12:50", dateOffset: 1 },
+        { start: "17:00", end: "17:20", dateOffset: 1 },
+        { start: "12:30", end: "12:50", dateOffset: 2 },
+      ];
+    case "training":
+      return [
+        { start: "08:00", end: "09:00", dateOffset: 1 },
+        { start: "18:30", end: "19:30", dateOffset: 2 },
+        { start: "08:00", end: "09:00", dateOffset: 3 },
+        { start: "18:30", end: "19:30", dateOffset: 4 },
+      ];
+    case "weight":
+      return [
+        { start: "19:30", end: "19:50", dateOffset: 0 },
+        { start: "19:30", end: "19:50", dateOffset: 1 },
+      ];
+    case "mood":
+      return [
+        { start: "20:45", end: "21:05", dateOffset: 0 },
+        { start: "20:45", end: "21:05", dateOffset: 1 },
+      ];
+    case "wellbeing":
+      return [
+        { start: "20:30", end: "21:00", dateOffset: 0 },
+        { start: "20:30", end: "21:00", dateOffset: 1 },
+        { start: "21:00", end: "21:30", dateOffset: 2 },
+      ];
+    case "water":
+      return [
+        { start: "11:30", end: "11:40", dateOffset: 0 },
+        { start: "15:30", end: "15:40", dateOffset: 0 },
+        { start: "11:30", end: "11:40", dateOffset: 1 },
+      ];
+    case "stress":
+      return [
+        { start: "16:30", end: "16:50", dateOffset: 0 },
+        { start: "20:30", end: "20:50", dateOffset: 0 },
+        { start: "20:30", end: "20:50", dateOffset: 1 },
+      ];
+    default:
+      return [{ start: "20:00", end: "20:15", dateOffset: 0 }];
+  }
+}
+
+function resolveAutopilotSlot(metricKey: MetricKey, plan: MetricActionPlan): ResolvedSlotPlan | null {
+  for (const candidate of getAutopilotSlotCandidates(metricKey)) {
+    const date = resolveSlotDate(candidate.start, candidate.dateOffset ?? 0);
+    const load = getDayLoad(date);
+
+    if (!isSlotCandidateUsable(date, candidate)) continue;
+    if (load.slots.some((slot) => overlapsTimeRange(candidate.start, candidate.end, slot))) continue;
+    if (load.cleanup > 0 && ["steps", "training", "wellbeing"].includes(metricKey)) continue;
+    if (metricKey === "training" && load.parties > 0) continue;
+    if (metricKey === "steps" && load.parties > 1) continue;
+
+    return {
+      ...plan.slot,
+      date,
+      start: candidate.start,
+      end: candidate.end,
+    };
+  }
+
+  return null;
+}
+
+function resolveAutopilotTaskDate(metricKey: MetricKey, priority: TaskPriority): string {
+  const offsets = priority === "p1" ? [0, 1, 2] : [1, 2, 3, 4];
+  const ranked = offsets
+    .map((offset) => {
+      const date = todayDateKey(offset);
+      const load = getDayLoad(date);
+      const extraPenalty =
+        (metricKey === "training" && load.parties > 0 ? 8 : 0) +
+        ((metricKey === "wellbeing" || metricKey === "stress") && load.cleanup > 0 ? 5 : 0);
+
+      return {
+        date,
+        score: load.score + offset * 1.5 + extraPenalty,
+      };
+    })
+    .sort((left, right) => left.score - right.score);
+
+  return ranked[0]?.date ?? todayDateKey(priority === "p1" ? 0 : 1);
 }
 
 function extractBedtimeSpark(days: HeysDayRecord[]): SparkPoint[] {
@@ -1167,11 +1335,91 @@ export function HeysHealthPanel() {
 
   function handleApplyRecommendation(): void {
     if (topActionPlan.recommended === "slot") {
-      createSlotFromPlan(topActionPlan);
+      const resolvedSlot = resolveAutopilotSlot(topMetric.key, topActionPlan);
+
+      if (resolvedSlot) {
+        const existingSlot = getCustomEvents().find(
+          (event) =>
+            event.title === resolvedSlot.title &&
+            event.start === resolvedSlot.start &&
+            event.end === resolvedSlot.end &&
+            event.date >= todayDateKey(),
+        );
+
+        if (existingSlot) {
+          setActionFeedback({
+            tone: "info",
+            text: `Автопилот: слот уже стоит ${formatDateLabel(existingSlot.date)} в ${existingSlot.start}`,
+          });
+          return;
+        }
+
+        addCustomEvent({
+          date: resolvedSlot.date,
+          start: resolvedSlot.start,
+          end: resolvedSlot.end,
+          title: resolvedSlot.title,
+          tone: resolvedSlot.tone,
+          tags: [...resolvedSlot.tags, "autopilot"],
+          kind: "event",
+        });
+
+        setActionFeedback({
+          tone: "success",
+          text: `Автопилот: слот поставлен ${formatDateLabel(resolvedSlot.date)} в ${resolvedSlot.start}`,
+        });
+        return;
+      }
+
+      const fallbackDate = resolveAutopilotTaskDate(topMetric.key, topActionPlan.task.priority);
+      const existingTask = getTasks().find(
+        (task) => task.title === topActionPlan.task.title && (task.status === "active" || task.status === "inbox"),
+      );
+
+      if (existingTask) {
+        setActionFeedback({
+          tone: "info",
+          text: `Автопилот: задача уже есть (${existingTask.title})`,
+        });
+        return;
+      }
+
+      addTask(topActionPlan.task.title, {
+        priority: topActionPlan.task.priority,
+        dueDate: fallbackDate,
+        status: topActionPlan.task.priority === "p1" ? "active" : "inbox",
+      });
+
+      setActionFeedback({
+        tone: "success",
+        text: `Автопилот: календарь плотный — добавил задачу на ${formatDateLabel(fallbackDate)}`,
+      });
       return;
     }
 
-    createTaskFromPlan(topActionPlan);
+    const dueDate = resolveAutopilotTaskDate(topMetric.key, topActionPlan.task.priority);
+    const existingTask = getTasks().find(
+      (task) => task.title === topActionPlan.task.title && (task.status === "active" || task.status === "inbox"),
+    );
+
+    if (existingTask) {
+      setActionFeedback({
+        tone: "info",
+        text: `Автопилот: задача уже есть (${existingTask.title})`,
+      });
+      return;
+    }
+
+    addTask(topActionPlan.task.title, {
+      priority: topActionPlan.task.priority,
+      dueDate,
+      status: topActionPlan.task.priority === "p1" ? "active" : "inbox",
+    });
+
+    setActionFeedback({
+      tone: "success",
+      text: `Автопилот: задача поставлена на ${formatDateLabel(dueDate)}`,
+    });
   }
 
   return (
@@ -1223,8 +1471,8 @@ export function HeysHealthPanel() {
               </button>
               <span className="text-[11px] text-zinc-400">
                 {topActionPlan.recommended === "slot"
-                  ? `создаст слот «${topActionPlan.slot.title}»`
-                  : `создаст задачу «${topActionPlan.task.title}»`}
+                  ? `автопилот подберёт окно для «${topActionPlan.slot.title}»`
+                  : `автопилот поставит задачу «${topActionPlan.task.title}»`}
               </span>
             </div>
             <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
