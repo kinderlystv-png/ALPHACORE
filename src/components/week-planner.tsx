@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
 import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import {
   formatCompletionLabel,
@@ -370,7 +371,8 @@ export function WeekPlanner({
                           : isYesterdayMutedSlot
                             ? "text-zinc-500"
                             : "opacity-70";
-                        const shouldShowQuickReschedule = !isCompleted && slot.date <= todayKey;
+                        const shouldShowCarryoverDecision = !isCompleted && slot.date < todayKey;
+                        const shouldShowQuickReschedule = !isCompleted && slot.date === todayKey;
 
                         return (
                           <div
@@ -433,6 +435,17 @@ export function WeekPlanner({
                               <p className={`mt-1 line-clamp-2 text-[10px] ${subtitleCls}`}>
                                 {slot.subtitle}
                               </p>
+                            )}
+                            {shouldShowCarryoverDecision && (
+                              <SlotCarryoverDecision
+                                slot={slot}
+                                todayKey={todayKey}
+                                requiresApproval={requiresApproval}
+                                isCompleted={isCompleted}
+                                compact
+                                className="mt-2"
+                                onApplied={() => setVersion((current) => current + 1)}
+                              />
                             )}
                             {shouldShowQuickReschedule && (
                               <SlotQuickRescheduleActions

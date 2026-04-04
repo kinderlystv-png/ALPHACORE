@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProjectSelectManager } from "@/components/project-select-manager";
+import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
 import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import {
   formatCompletionLabel,
@@ -2268,6 +2269,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         const dayIndex = columns.findIndex((column) => column.key === slot.date);
         const prevDay = dayIndex > 0 ? columns[dayIndex - 1]?.key : null;
         const nextDay = dayIndex >= 0 && dayIndex < columns.length - 1 ? columns[dayIndex + 1]?.key : null;
+        const shouldShowCarryoverDecision = !isCompletedSlot && slot.date < today;
+        const shouldShowQuickReschedule = !isCompletedSlot && slot.date === today;
 
         const actionBtnCls =
           "rounded-2xl border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-left text-[12px] font-medium text-zinc-200 transition hover:border-zinc-600 hover:text-zinc-50 disabled:cursor-not-allowed disabled:opacity-40";
@@ -2401,7 +2404,21 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 </div>
               )}
 
-              {!isCompletedSlot && (
+              {shouldShowCarryoverDecision && (
+                <SlotCarryoverDecision
+                  slot={slot}
+                  todayKey={today}
+                  requiresApproval={requiresApproval}
+                  isCompleted={isCompletedSlot}
+                  className="mb-3"
+                  onApplied={() => {
+                    setVersion((value) => value + 1);
+                    setQuickMenu(null);
+                  }}
+                />
+              )}
+
+              {shouldShowQuickReschedule && (
                 <SlotQuickRescheduleActions
                   slot={slot}
                   todayKey={today}
@@ -2510,7 +2527,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 Удалить
               </button>
 
-              {slot.taskId && (
+              {slot.taskId && !shouldShowCarryoverDecision && (
                 <button
                   type="button"
                   onClick={() => unscheduleQuickSlot(slot)}

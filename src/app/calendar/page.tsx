@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
 import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import { WeekPlanner } from "@/components/week-planner";
 import {
@@ -173,7 +174,8 @@ export default function CalendarPage() {
                 : isYesterdayMutedSlot
                   ? "text-zinc-500"
                   : "opacity-70";
-              const shouldShowQuickReschedule = !isCompleted && selectedDate <= today;
+              const shouldShowCarryoverDecision = !isCompleted && slot.date < today;
+              const shouldShowQuickReschedule = !isCompleted && slot.date === today;
 
               return (
                 <div
@@ -231,6 +233,16 @@ export default function CalendarPage() {
                             </span>
                           ))}
                         </div>
+                      )}
+                      {shouldShowCarryoverDecision && (
+                        <SlotCarryoverDecision
+                          slot={slot}
+                          todayKey={today}
+                          requiresApproval={requiresApproval}
+                          isCompleted={isCompleted}
+                          className="mt-3"
+                          onApplied={() => setVersion((current) => current + 1)}
+                        />
                       )}
                       {shouldShowQuickReschedule && (
                         <SlotQuickRescheduleActions
