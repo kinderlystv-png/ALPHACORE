@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { addCustomEvent, getCustomEvents, type ScheduleTone } from "@/lib/schedule";
+import { addTask, getTasks, type TaskPriority } from "@/lib/tasks";
 import { useHeysSync } from "@/lib/use-heys-sync";
 import type { HeysDayRecord, HeysHealthSignals } from "@/lib/heys-bridge";
 
@@ -43,6 +45,29 @@ type MetricDefinition = {
     action: string;
     stats: DrilldownStat[];
   };
+};
+
+type MetricActionPlan = {
+  task: {
+    title: string;
+    priority: TaskPriority;
+    dueOffset?: number;
+    success: string;
+  };
+  slot: {
+    title: string;
+    tone: ScheduleTone;
+    start: string;
+    end: string;
+    dateOffset?: number;
+    tags: string[];
+    success: string;
+  };
+};
+
+type ActionFeedback = {
+  tone: "success" | "info";
+  text: string;
 };
 
 function Sparkline({
@@ -209,6 +234,29 @@ function parseSleepStartToHour(value: string | null): number | null {
   return total < 12 ? total + 24 : total;
 }
 
+function todayDateKey(offset = 0): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
+function resolveSlotDate(start: string, offset = 0): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + offset);
+
+  if (offset === 0) {
+    const [hour, minute] = start.split(":").map(Number);
+    const now = new Date();
+    if (now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute) {
+      date.setDate(date.getDate() + 1);
+    }
+  }
+
+  return date.toISOString().slice(0, 10);
+}
+
 function extractBedtimeSpark(days: HeysDayRecord[]): SparkPoint[] {
   return days
     .map((day) => ({
@@ -275,6 +323,173 @@ function getDefaultMetricKey(h: HeysHealthSignals): MetricKey {
   return "sleep";
 }
 
+function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
+  switch (metricKey) {
+    case "sleep":
+      return {
+        task: {
+          title: "Защитить вечерний shutdown и сон",
+          priority: "p1",
+          success: "HEYS → задача: вечерний shutdown добавлен",
+        },
+        slot: {
+          title: "🌙 Вечерний shutdown",
+          tone: "personal",
+          start: "23:15",
+          end: "23:45",
+          tags: ["heys", "heys-action", "sleep", "shutdown", "recovery"],
+          success: "HEYS → слот: вечерний shutdown защищён в календаре",
+        },
+      };
+    case "bedtime":
+      return {
+        task: {
+          title: "Сдвинуть подготовку ко сну на 15 минут раньше",
+          priority: "p1",
+          success: "HEYS → задача: сдвиг засыпания добавлен",
+        },
+        slot: {
+          title: "🌙 Подготовка ко сну",
+          tone: "personal",
+          start: "23:30",
+          end: "23:55",
+          tags: ["heys", "heys-action", "bedtime", "sleep"],
+          success: "HEYS → слот: подготовка ко сну защищена",
+        },
+      };
+    case "steps":
+      return {
+        task: {
+          title: "Добавить 2 walking windows по 10–15 минут",
+          priority: "p1",
+          success: "HEYS → задача: walking windows добавлены",
+        },
+        slot: {
+          title: "🚶 Walking window",
+          tone: "health",
+          start: "17:30",
+          end: "17:50",
+          tags: ["heys", "heys-action", "steps", "walk", "neat"],
+          success: "HEYS → слот: walking window добавлен в календарь",
+        },
+      };
+    case "training":
+      return {
+        task: {
+          title: "Защитить тренировочный слот на неделе",
+          priority: "p2",
+          dueOffset: 1,
+          success: "HEYS → задача: тренировочный слот добавлен",
+        },
+        slot: {
+          title: "🏋️ Тренировка / движение",
+          tone: "health",
+          start: "18:30",
+          end: "19:30",
+          dateOffset: 1,
+          tags: ["heys", "heys-action", "training", "movement"],
+          success: "HEYS → слот: тренировочный блок защищён",
+        },
+      };
+    case "weight":
+      return {
+        task: {
+          title: "Собрать мягкий контур: сон + шаги + еда",
+          priority: "p2",
+          success: "HEYS → задача: мягкий контур веса добавлен",
+        },
+        slot: {
+          title: "⚖️ Контур веса / ужин без хаоса",
+          tone: "review",
+          start: "19:30",
+          end: "19:50",
+          tags: ["heys", "heys-action", "weight", "review"],
+          success: "HEYS → слот: контур веса добавлен в календарь",
+        },
+      };
+    case "mood":
+      return {
+        task: {
+          title: "Сделать короткий review и телесный reset",
+          priority: "p2",
+          success: "HEYS → задача: mood reset добавлен",
+        },
+        slot: {
+          title: "😊 Review + reset",
+          tone: "review",
+          start: "20:45",
+          end: "21:05",
+          tags: ["heys", "heys-action", "mood", "review"],
+          success: "HEYS → слот: review + reset защищён",
+        },
+      };
+    case "wellbeing":
+      return {
+        task: {
+          title: "Облегчить день и защитить recovery",
+          priority: "p1",
+          success: "HEYS → задача: recovery-защита добавлена",
+        },
+        slot: {
+          title: "💪 Recovery block",
+          tone: "personal",
+          start: "20:30",
+          end: "21:00",
+          tags: ["heys", "heys-action", "wellbeing", "recovery"],
+          success: "HEYS → слот: recovery block добавлен",
+        },
+      };
+    case "water":
+      return {
+        task: {
+          title: "Поставить 2 water checkpoints",
+          priority: "p2",
+          success: "HEYS → задача: water checkpoints добавлены",
+        },
+        slot: {
+          title: "💧 Water checkpoint",
+          tone: "health",
+          start: "11:30",
+          end: "11:40",
+          tags: ["heys", "heys-action", "water", "hydration"],
+          success: "HEYS → слот: water checkpoint добавлен",
+        },
+      };
+    case "stress":
+      return {
+        task: {
+          title: "Снизить шум и добавить recovery-слот",
+          priority: "p1",
+          success: "HEYS → задача: anti-stress действие добавлено",
+        },
+        slot: {
+          title: "🧘 Recovery / снижение шума",
+          tone: "personal",
+          start: "16:30",
+          end: "16:50",
+          tags: ["heys", "heys-action", "stress", "recovery"],
+          success: "HEYS → слот: anti-stress окно защищено",
+        },
+      };
+    default:
+      return {
+        task: {
+          title: "Проверить сигнал HEYS и превратить его в действие",
+          priority: "p2",
+          success: "HEYS → задача добавлена",
+        },
+        slot: {
+          title: "🫀 HEYS check",
+          tone: "review",
+          start: "20:00",
+          end: "20:15",
+          tags: ["heys", "heys-action"],
+          success: "HEYS → слот добавлен",
+        },
+      };
+  }
+}
+
 function getPrimaryActionState(h: HeysHealthSignals): {
   tone: "good" | "watch" | "critical";
   title: string;
@@ -339,11 +554,19 @@ function getPrimaryActionState(h: HeysHealthSignals): {
 export function HeysHealthPanel() {
   const { signals: h, snapshot, loading, error, lastSynced, refresh } = useHeysSync();
   const [selectedMetricKey, setSelectedMetricKey] = useState<MetricKey | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
   const defaultMetricKey = h ? getDefaultMetricKey(h) : "sleep";
 
   useEffect(() => {
     setSelectedMetricKey((current) => current ?? defaultMetricKey);
   }, [defaultMetricKey]);
+
+  useEffect(() => {
+    if (!actionFeedback) return;
+
+    const timeoutId = window.setTimeout(() => setActionFeedback(null), 2600);
+    return () => window.clearTimeout(timeoutId);
+  }, [actionFeedback]);
 
   if (loading && !snapshot) {
     return (
@@ -859,6 +1082,67 @@ export function HeysHealthPanel() {
     metrics.find((metric) => metric.key === selectedMetricKey) ??
     metrics.find((metric) => metric.key === defaultMetricKey) ??
     metrics[0]!;
+  const selectedActionPlan = getMetricActionPlan(selectedMetric.key);
+
+  function handleCreateTaskAction(): void {
+    const dueDate = todayDateKey(selectedActionPlan.task.dueOffset ?? 0);
+    const existing = getTasks().find(
+      (task) =>
+        task.title === selectedActionPlan.task.title &&
+        task.dueDate === dueDate &&
+        (task.status === "active" || task.status === "inbox"),
+    );
+
+    if (existing) {
+      setActionFeedback({
+        tone: "info",
+        text: `Такая задача уже есть: ${selectedActionPlan.task.title}`,
+      });
+      return;
+    }
+
+    addTask(selectedActionPlan.task.title, {
+      priority: selectedActionPlan.task.priority,
+      dueDate,
+      status: selectedActionPlan.task.priority === "p1" ? "active" : "inbox",
+    });
+
+    setActionFeedback({ tone: "success", text: selectedActionPlan.task.success });
+  }
+
+  function handleCreateSlotAction(): void {
+    const date = resolveSlotDate(
+      selectedActionPlan.slot.start,
+      selectedActionPlan.slot.dateOffset ?? 0,
+    );
+
+    const existing = getCustomEvents(date).find(
+      (event) =>
+        event.title === selectedActionPlan.slot.title &&
+        event.start === selectedActionPlan.slot.start &&
+        event.end === selectedActionPlan.slot.end,
+    );
+
+    if (existing) {
+      setActionFeedback({
+        tone: "info",
+        text: `Такой слот уже есть: ${selectedActionPlan.slot.title}`,
+      });
+      return;
+    }
+
+    addCustomEvent({
+      date,
+      start: selectedActionPlan.slot.start,
+      end: selectedActionPlan.slot.end,
+      title: selectedActionPlan.slot.title,
+      tone: selectedActionPlan.slot.tone,
+      tags: selectedActionPlan.slot.tags,
+      kind: "event",
+    });
+
+    setActionFeedback({ tone: "success", text: selectedActionPlan.slot.success });
+  }
 
   return (
     <div className="rounded-2xl border border-sky-500/15 bg-linear-to-br from-sky-950/8 to-zinc-950 p-4">
@@ -994,6 +1278,34 @@ export function HeysHealthPanel() {
             <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3">
               <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Следующее действие</p>
               <p className="mt-1 text-sm leading-6 text-zinc-200">{selectedMetric.drilldown.action}</p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCreateTaskAction}
+                  className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1.5 text-[11px] text-sky-200 transition hover:border-sky-400/40"
+                >
+                  ＋ В задачи
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateSlotAction}
+                  className="rounded-lg border border-violet-500/20 bg-violet-500/10 px-2.5 py-1.5 text-[11px] text-violet-200 transition hover:border-violet-400/40"
+                >
+                  🗓 Защитить слот
+                </button>
+                {actionFeedback && (
+                  <span
+                    className={`rounded-full border px-2 py-1 text-[10px] ${
+                      actionFeedback.tone === "success"
+                        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                        : "border-zinc-700 bg-zinc-900/50 text-zinc-300"
+                    }`}
+                  >
+                    {actionFeedback.text}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>

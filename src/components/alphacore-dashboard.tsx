@@ -316,6 +316,8 @@ export function AlphacoreDashboard() {
         keys.some((key) =>
           [
             "alphacore_tasks",
+            "alphacore_schedule_custom",
+            "alphacore_schedule_overrides",
             "alphacore_notes",
             "alphacore_habits",
             "alphacore_medical",
