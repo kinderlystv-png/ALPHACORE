@@ -4,6 +4,11 @@ import { dateStr, lsGet, lsSet, uid } from "./storage";
 
 export type TaskPriority = "p1" | "p2" | "p3";
 export type TaskStatus = "inbox" | "active" | "done" | "archived";
+export type AutomationOrigin = {
+  source: "heys";
+  metricKey?: string;
+  via?: "task" | "slot" | "autopilot";
+};
 
 export type Task = {
   id: string;
@@ -14,6 +19,7 @@ export type Task = {
   status: TaskStatus;
   dueDate?: string;
   createdAt: string;
+  origin?: AutomationOrigin;
   completedAt?: string;
   focusSessions?: number;
   focusMinutes?: number;
@@ -22,7 +28,7 @@ export type Task = {
 };
 
 type AddTaskOptions = Partial<
-  Pick<Task, "id" | "project" | "projectId" | "priority" | "dueDate" | "status">
+  Pick<Task, "id" | "project" | "projectId" | "priority" | "dueDate" | "status" | "origin">
 >;
 
 const KEY = "alphacore_tasks";
@@ -102,6 +108,7 @@ export function addTask(
     status: opts?.status ?? "inbox",
     dueDate: opts?.dueDate,
     createdAt: new Date().toISOString(),
+    origin: opts?.origin,
   };
   tasks.unshift(t);
   save(tasks);

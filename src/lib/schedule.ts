@@ -1,5 +1,12 @@
 import { lsGet, lsSet } from "./storage";
-import { addTask, deleteTask, getTasks, updateTask, type TaskPriority } from "./tasks";
+import {
+  addTask,
+  deleteTask,
+  getTasks,
+  updateTask,
+  type AutomationOrigin,
+  type TaskPriority,
+} from "./tasks";
 
 export type ScheduleTone =
   | "kinderly"
@@ -694,6 +701,8 @@ export type CustomEvent = {
   title: string;
   tone: ScheduleTone;
   tags: string[];
+  createdAt?: string;
+  origin?: AutomationOrigin;
   kind?: "task" | "event";
   taskId?: string | null;
 };
@@ -799,12 +808,14 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
       priority: defaultCustomEventTaskPriority(event),
       dueDate: event.date,
       status: "active",
+      origin: event.origin,
     });
   } else {
     updateTask(linkedTask.id, {
       title: event.title,
       dueDate: event.date,
       status: "active",
+      origin: linkedTask.origin ?? event.origin,
     });
   }
 
@@ -830,7 +841,12 @@ export function getScheduledTaskIds(dateKey?: string): string[] {
 export function addCustomEvent(event: Omit<CustomEvent, "id">): CustomEvent {
   const events = loadCustomEvents();
   const id = `custom-${Date.now().toString(36)}`;
-  const full = syncCustomEventTask({ id, kind: "task", ...event });
+  const full = syncCustomEventTask({
+    id,
+    createdAt: new Date().toISOString(),
+    kind: "task",
+    ...event,
+  });
   events.push(full);
   saveCustomEvents(events);
   return full;

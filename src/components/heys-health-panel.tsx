@@ -6,10 +6,17 @@ import {
   getCustomEvents,
   getScheduleForDate,
   timeToMinutes,
+  type CustomEvent,
   type ScheduleSlot,
   type ScheduleTone,
 } from "@/lib/schedule";
-import { addTask, getTasks, type TaskPriority } from "@/lib/tasks";
+import {
+  addTask,
+  getTasks,
+  type AutomationOrigin,
+  type Task,
+  type TaskPriority,
+} from "@/lib/tasks";
 import { useHeysSync } from "@/lib/use-heys-sync";
 import type { HeysDayRecord, HeysHealthSignals } from "@/lib/heys-bridge";
 
@@ -86,6 +93,29 @@ type SlotCandidate = {
 
 type ResolvedSlotPlan = MetricActionPlan["slot"] & {
   date: string;
+};
+
+type WeeklySlotOption = ResolvedSlotPlan & {
+  loadScore: number;
+};
+
+type CorrelationInsight = {
+  id: string;
+  metricKey: MetricKey;
+  title: string;
+  detail: string;
+  tone: MetricStatus | "neutral";
+};
+
+type TraceItem = {
+  id: string;
+  kind: "task" | "slot";
+  title: string;
+  subtitle: string;
+  statusLabel: string;
+  statusTone: MetricStatus | "neutral";
+  metricKey: MetricKey | null;
+  createdAt: number;
 };
 
 function Sparkline({
@@ -385,25 +415,7 @@ function getAutopilotSlotCandidates(metricKey: MetricKey): SlotCandidate[] {
 }
 
 function resolveAutopilotSlot(metricKey: MetricKey, plan: MetricActionPlan): ResolvedSlotPlan | null {
-  for (const candidate of getAutopilotSlotCandidates(metricKey)) {
-    const date = resolveSlotDate(candidate.start, candidate.dateOffset ?? 0);
-    const load = getDayLoad(date);
-
-    if (!isSlotCandidateUsable(date, candidate)) continue;
-    if (load.slots.some((slot) => overlapsTimeRange(candidate.start, candidate.end, slot))) continue;
-    if (load.cleanup > 0 && ["steps", "training", "wellbeing"].includes(metricKey)) continue;
-    if (metricKey === "training" && load.parties > 0) continue;
-    if (metricKey === "steps" && load.parties > 1) continue;
-
-    return {
-      ...plan.slot,
-      date,
-      start: candidate.start,
-      end: candidate.end,
-    };
-  }
-
-  return null;
+  return getAutopilotSlotOptions(metricKey, plan)[0] ?? null;
 }
 
 function resolveAutopilotTaskDate(metricKey: MetricKey, priority: TaskPriority): string {
@@ -424,6 +436,50 @@ function resolveAutopilotTaskDate(metricKey: MetricKey, priority: TaskPriority):
     .sort((left, right) => left.score - right.score);
 
   return ranked[0]?.date ?? todayDateKey(priority === "p1" ? 0 : 1);
+}
+
+function getAutopilotSlotOptions(
+  metricKey: MetricKey,
+  plan: MetricActionPlan,
+): WeeklySlotOption[] {
+  const ranked = getAutopilotSlotCandidates(metricKey)
+    .map((candidate) => {
+      const date = resolveSlotDate(candidate.start, candidate.dateOffset ?? 0);
+      const load = getDayLoad(date);
+
+      if (!isSlotCandidateUsable(date, candidate)) return null;
+      if (load.slots.some((slot) => overlapsTimeRange(candidate.start, candidate.end, slot))) {
+        return null;
+      }
+      if (load.cleanup > 0 && ["steps", "training", "wellbeing"].includes(metricKey)) {
+        return null;
+      }
+      if (metricKey === "training" && load.parties > 0) return null;
+      if (metricKey === "steps" && load.parties > 1) return null;
+
+      return {
+        ...plan.slot,
+        date,
+        start: candidate.start,
+        end: candidate.end,
+        loadScore: load.score,
+      } satisfies WeeklySlotOption;
+    })
+    .filter((option): option is WeeklySlotOption => option != null)
+    .sort(
+      (left, right) =>
+        left.loadScore - right.loadScore ||
+        left.date.localeCompare(right.date) ||
+        timeToMinutes(left.start) - timeToMinutes(right.start),
+    );
+
+  const seen = new Set<string>();
+  return ranked.filter((option) => {
+    const key = `${option.date}-${option.start}-${option.end}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function extractBedtimeSpark(days: HeysDayRecord[]): SparkPoint[] {
@@ -482,6 +538,371 @@ function toneCardClass(tone: MetricStatus | "neutral" = "neutral"): string {
   if (tone === "warn") return "border-amber-500/15 bg-amber-500/6";
   if (tone === "good") return "border-emerald-500/15 bg-emerald-500/6";
   return "border-zinc-800/60 bg-zinc-900/25";
+}
+
+function toneBadgeClass(tone: MetricStatus | "neutral" = "neutral"): string {
+  if (tone === "bad") return "border-rose-500/20 bg-rose-500/10 text-rose-200";
+  if (tone === "warn") return "border-amber-500/20 bg-amber-500/10 text-amber-200";
+  if (tone === "good") return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+  return "border-zinc-800 bg-zinc-900/60 text-zinc-300";
+}
+
+function createHeysOrigin(
+  metricKey: MetricKey,
+  via: AutomationOrigin["via"],
+): AutomationOrigin {
+  return {
+    source: "heys",
+    metricKey,
+    via,
+  };
+}
+
+function toMetricKey(value: string | null | undefined): MetricKey | null {
+  switch (value) {
+    case "sleep":
+    case "bedtime":
+    case "steps":
+    case "training":
+    case "weight":
+    case "mood":
+    case "wellbeing":
+    case "water":
+    case "stress":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function getMetricLabel(metricKey: MetricKey | null): string {
+  switch (metricKey) {
+    case "sleep":
+      return "Сон";
+    case "bedtime":
+      return "Отход ко сну";
+    case "steps":
+      return "Шаги";
+    case "training":
+      return "Тренировки";
+    case "weight":
+      return "Вес";
+    case "mood":
+      return "Настроение";
+    case "wellbeing":
+      return "Самочувствие";
+    case "water":
+      return "Вода";
+    case "stress":
+      return "Стресс";
+    default:
+      return "HEYS";
+  }
+}
+
+function getMetricEmoji(metricKey: MetricKey | null): string {
+  switch (metricKey) {
+    case "sleep":
+      return "😴";
+    case "bedtime":
+      return "🌙";
+    case "steps":
+      return "🚶";
+    case "training":
+      return "🏋️";
+    case "weight":
+      return "⚖️";
+    case "mood":
+      return "😊";
+    case "wellbeing":
+      return "💪";
+    case "water":
+      return "💧";
+    case "stress":
+      return "🧘";
+    default:
+      return "🫀";
+  }
+}
+
+function getViaLabel(via: AutomationOrigin["via"] | undefined): string {
+  if (via === "autopilot") return "автопилот";
+  if (via === "slot") return "слот";
+  return "задача";
+}
+
+function isLateSleepStart(value: string | null): boolean {
+  const hour = parseSleepStartToHour(value);
+  return hour != null && hour >= 25;
+}
+
+function averageFromDays(
+  days: HeysDayRecord[],
+  selector: (day: HeysDayRecord) => number | null | undefined,
+): number | null {
+  const values = days
+    .map(selector)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildCorrelationInsights(
+  days: HeysDayRecord[],
+  profileStepsGoal: number | null | undefined,
+  sleepGoal: number | null | undefined,
+): CorrelationInsight[] {
+  const candidates: Array<CorrelationInsight & { score: number }> = [];
+
+  const lateDays = days.filter((day) => isLateSleepStart(day.sleepStart));
+  const earlyDays = days.filter(
+    (day) => day.sleepStart != null && !isLateSleepStart(day.sleepStart),
+  );
+  const lateWellbeing = averageFromDays(
+    lateDays,
+    (day) => day.wellbeingAvg ?? day.wellbeingMorning,
+  );
+  const earlyWellbeing = averageFromDays(
+    earlyDays,
+    (day) => day.wellbeingAvg ?? day.wellbeingMorning,
+  );
+
+  if (
+    lateDays.length >= 2 &&
+    earlyDays.length >= 2 &&
+    lateWellbeing != null &&
+    earlyWellbeing != null
+  ) {
+    const delta = earlyWellbeing - lateWellbeing;
+    if (delta >= 0.4) {
+      candidates.push({
+        id: "bedtime-vs-wellbeing",
+        metricKey: "bedtime",
+        title: `До 01:00 самочувствие выше на ${fmtNum(delta)}`,
+        detail: `В более ранние дни среднее самочувствие ${fmtNum(earlyWellbeing)}/10 против ${fmtNum(lateWellbeing)}/10 после 01:00.`,
+        tone: "good",
+        score: delta + 0.3,
+      });
+    }
+  }
+
+  const sleepThreshold = Math.max((sleepGoal ?? 8) - 0.5, 6.5);
+  const enoughSleepDays = days.filter((day) => (day.sleepHours ?? 0) >= sleepThreshold);
+  const shortSleepDays = days.filter(
+    (day) => day.sleepHours != null && day.sleepHours < sleepThreshold,
+  );
+  const enoughSleepMood = averageFromDays(
+    enoughSleepDays,
+    (day) => day.moodAvg ?? day.moodMorning,
+  );
+  const shortSleepMood = averageFromDays(
+    shortSleepDays,
+    (day) => day.moodAvg ?? day.moodMorning,
+  );
+
+  if (
+    enoughSleepDays.length >= 2 &&
+    shortSleepDays.length >= 2 &&
+    enoughSleepMood != null &&
+    shortSleepMood != null
+  ) {
+    const delta = enoughSleepMood - shortSleepMood;
+    if (delta >= 0.4) {
+      candidates.push({
+        id: "sleep-vs-mood",
+        metricKey: "sleep",
+        title: `Сон даёт +${fmtNum(delta)} к настроению`,
+        detail: `Когда сна хотя бы ${fmtNum(sleepThreshold)}ч, настроение в среднем ${fmtNum(enoughSleepMood)}/10 против ${fmtNum(shortSleepMood)}/10 при более коротких ночах.`,
+        tone: "good",
+        score: delta,
+      });
+    }
+  }
+
+  const stepsThreshold = Math.max(5000, Math.round((profileStepsGoal ?? 7000) * 0.85));
+  const activeDays = days.filter((day) => (day.steps ?? 0) >= stepsThreshold);
+  const lowMovementDays = days.filter(
+    (day) => day.steps != null && day.steps < stepsThreshold,
+  );
+  const activeStress = averageFromDays(
+    activeDays,
+    (day) => day.stressAvg ?? day.stressMorning,
+  );
+  const lowMovementStress = averageFromDays(
+    lowMovementDays,
+    (day) => day.stressAvg ?? day.stressMorning,
+  );
+
+  if (
+    activeDays.length >= 2 &&
+    lowMovementDays.length >= 2 &&
+    activeStress != null &&
+    lowMovementStress != null
+  ) {
+    const delta = lowMovementStress - activeStress;
+    if (delta >= 0.4) {
+      candidates.push({
+        id: "steps-vs-stress",
+        metricKey: "steps",
+        title: `Шаги снимают около ${fmtNum(delta)} стресса`,
+        detail: `Когда шагов хотя бы ${stepsThreshold}, средний стресс ${fmtNum(activeStress)}/10 против ${fmtNum(lowMovementStress)}/10 в малоподвижные дни.`,
+        tone: "good",
+        score: delta,
+      });
+    }
+  }
+
+  const hydratedDays = days.filter((day) => (day.waterMl ?? 0) >= 1800);
+  const lowWaterDays = days.filter((day) => day.waterMl != null && day.waterMl < 1800);
+  const hydratedWellbeing = averageFromDays(
+    hydratedDays,
+    (day) => day.wellbeingAvg ?? day.wellbeingMorning,
+  );
+  const lowWaterWellbeing = averageFromDays(
+    lowWaterDays,
+    (day) => day.wellbeingAvg ?? day.wellbeingMorning,
+  );
+
+  if (
+    hydratedDays.length >= 2 &&
+    lowWaterDays.length >= 2 &&
+    hydratedWellbeing != null &&
+    lowWaterWellbeing != null
+  ) {
+    const delta = hydratedWellbeing - lowWaterWellbeing;
+    if (delta >= 0.4) {
+      candidates.push({
+        id: "water-vs-wellbeing",
+        metricKey: "water",
+        title: `Вода возвращает +${fmtNum(delta)} к самочувствию`,
+        detail: `При гидрации 1800+ мл среднее самочувствие ${fmtNum(hydratedWellbeing)}/10 против ${fmtNum(lowWaterWellbeing)}/10 в сухие дни.`,
+        tone: "good",
+        score: delta,
+      });
+    }
+  }
+
+  return candidates
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3)
+    .map(({ score: _score, ...insight }) => insight);
+}
+
+function extractMetricKeyFromEvent(event: CustomEvent): MetricKey | null {
+  const originMetric = toMetricKey(event.origin?.metricKey);
+  if (originMetric) return originMetric;
+
+  for (const tag of event.tags) {
+    const metricKey = toMetricKey(tag);
+    if (metricKey) return metricKey;
+  }
+
+  return null;
+}
+
+function parseEventCreatedAt(event: CustomEvent): number {
+  if (event.createdAt) {
+    const parsed = new Date(event.createdAt).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const match = event.id.match(/^custom-([0-9a-z]+)$/i);
+  if (match?.[1]) {
+    const decoded = Number.parseInt(match[1], 36);
+    if (Number.isFinite(decoded)) return decoded;
+  }
+
+  return new Date(`${event.date}T${event.start}:00`).getTime();
+}
+
+function getTraceStatusForTask(task: Task): {
+  label: string;
+  tone: MetricStatus | "neutral";
+} {
+  if (task.status === "done") return { label: "выполнено", tone: "good" };
+  if (task.status === "active") {
+    if (task.dueDate && task.dueDate < todayDateKey()) {
+      return { label: "просрочено", tone: "bad" };
+    }
+
+    return { label: "в работе", tone: "warn" };
+  }
+
+  return { label: "в inbox", tone: "neutral" };
+}
+
+function getTraceStatusForEvent(event: CustomEvent): {
+  label: string;
+  tone: MetricStatus | "neutral";
+} {
+  const now = Date.now();
+  const start = new Date(`${event.date}T${event.start}:00`).getTime();
+  const end = new Date(`${event.date}T${event.end}:00`).getTime();
+
+  if (now < start) return { label: "в календаре", tone: "good" };
+  if (now <= end) return { label: "идёт сейчас", tone: "good" };
+  return { label: "окно прошло", tone: "neutral" };
+}
+
+function buildTraceItems(tasks: Task[], events: CustomEvent[]): TraceItem[] {
+  const taskItems = tasks
+    .filter((task) => task.origin?.source === "heys")
+    .map((task) => {
+      const metricKey = toMetricKey(task.origin?.metricKey);
+      const status = getTraceStatusForTask(task);
+
+      return {
+        id: `task-${task.id}`,
+        kind: "task" as const,
+        title: task.title,
+        subtitle: `${getMetricEmoji(metricKey)} ${getMetricLabel(metricKey)} · ${getViaLabel(task.origin?.via)}${task.dueDate ? ` · ${formatDateLabel(task.dueDate)}` : ""}`,
+        statusLabel: status.label,
+        statusTone: status.tone,
+        metricKey,
+        createdAt: new Date(task.createdAt).getTime(),
+      };
+    });
+
+  const slotItems = events
+    .filter((event) => event.origin?.source === "heys" || event.tags.includes("heys-action"))
+    .map((event) => {
+      const metricKey = extractMetricKeyFromEvent(event);
+      const status = getTraceStatusForEvent(event);
+
+      return {
+        id: `slot-${event.id}`,
+        kind: "slot" as const,
+        title: event.title,
+        subtitle: `${getMetricEmoji(metricKey)} ${getMetricLabel(metricKey)} · ${getViaLabel(event.origin?.via ?? "slot")} · ${formatDateLabel(event.date)} · ${event.start}`,
+        statusLabel: status.label,
+        statusTone: status.tone,
+        metricKey,
+        createdAt: parseEventCreatedAt(event),
+      };
+    });
+
+  return [...slotItems, ...taskItems]
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, 6);
+}
+
+function formatTraceTimestamp(timestamp: number): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+function getWeekSlotLoadLabel(loadScore: number): {
+  label: string;
+  tone: MetricStatus | "neutral";
+} {
+  if (loadScore <= 4) return { label: "лёгкий день", tone: "good" };
+  if (loadScore <= 8) return { label: "умеренно", tone: "warn" };
+  return { label: "плотно", tone: "bad" };
 }
 
 function getDefaultMetricKey(h: HeysHealthSignals): MetricKey {
@@ -1264,8 +1685,22 @@ export function HeysHealthPanel() {
   const topMetric = metrics.find((metric) => metric.key === defaultMetricKey) ?? metrics[0]!;
   const topActionPlan = getMetricActionPlan(topMetric.key);
   const selectedActionPlan = getMetricActionPlan(selectedMetric.key);
+  const weeklySlotOptions =
+    topActionPlan.recommended === "slot"
+      ? getAutopilotSlotOptions(topMetric.key, topActionPlan).slice(0, 3)
+      : [];
+  const correlationInsights = buildCorrelationInsights(
+    days,
+    snapshot.profile?.stepsGoal,
+    snapshot.profile?.sleepHoursGoal,
+  );
+  const traceItems = buildTraceItems(getTasks(), getCustomEvents());
 
-  function createTaskFromPlan(plan: MetricActionPlan): void {
+  function createTaskFromPlan(
+    plan: MetricActionPlan,
+    metricKey: MetricKey,
+    via: AutomationOrigin["via"] = "task",
+  ): void {
     const dueDate = todayDateKey(plan.task.dueOffset ?? 0);
     const existing = getTasks().find(
       (task) =>
@@ -1286,51 +1721,82 @@ export function HeysHealthPanel() {
       priority: plan.task.priority,
       dueDate,
       status: plan.task.priority === "p1" ? "active" : "inbox",
+      origin: createHeysOrigin(metricKey, via),
     });
 
     setActionFeedback({ tone: "success", text: plan.task.success });
   }
 
-  function createSlotFromPlan(plan: MetricActionPlan): void {
-    const date = resolveSlotDate(
-      plan.slot.start,
-      plan.slot.dateOffset ?? 0,
-    );
-
-    const existing = getCustomEvents(date).find(
+  function createSlotFromResolvedPlan(
+    plan: ResolvedSlotPlan,
+    metricKey: MetricKey,
+    via: AutomationOrigin["via"] = "slot",
+    successText: string = plan.success,
+  ): void {
+    const existing = getCustomEvents(plan.date).find(
       (event) =>
-        event.title === plan.slot.title &&
-        event.start === plan.slot.start &&
-        event.end === plan.slot.end,
+        event.title === plan.title && event.start === plan.start && event.end === plan.end,
     );
 
     if (existing) {
       setActionFeedback({
         tone: "info",
-        text: `Такой слот уже есть: ${plan.slot.title}`,
+        text: `Такой слот уже есть: ${plan.title}`,
       });
       return;
     }
 
     addCustomEvent({
-      date,
-      start: plan.slot.start,
-      end: plan.slot.end,
-      title: plan.slot.title,
-      tone: plan.slot.tone,
-      tags: plan.slot.tags,
+      date: plan.date,
+      start: plan.start,
+      end: plan.end,
+      title: plan.title,
+      tone: plan.tone,
+      tags: plan.tags,
+      origin: createHeysOrigin(metricKey, via),
       kind: "event",
     });
 
-    setActionFeedback({ tone: "success", text: plan.slot.success });
+    setActionFeedback({ tone: "success", text: successText });
+  }
+
+  function createSlotFromPlan(
+    plan: MetricActionPlan,
+    metricKey: MetricKey,
+    via: AutomationOrigin["via"] = "slot",
+  ): void {
+    const date = resolveSlotDate(plan.slot.start, plan.slot.dateOffset ?? 0);
+
+    createSlotFromResolvedPlan(
+      {
+        ...plan.slot,
+        date,
+      },
+      metricKey,
+      via,
+    );
   }
 
   function handleCreateTaskAction(): void {
-    createTaskFromPlan(selectedActionPlan);
+    createTaskFromPlan(selectedActionPlan, selectedMetric.key);
   }
 
   function handleCreateSlotAction(): void {
-    createSlotFromPlan(selectedActionPlan);
+    createSlotFromPlan(selectedActionPlan, selectedMetric.key);
+  }
+
+  function handleCreateSuggestedSlot(option: WeeklySlotOption): void {
+    createSlotFromResolvedPlan(
+      option,
+      topMetric.key,
+      "autopilot",
+      `Окно защищено ${formatDateLabel(option.date)} в ${option.start}`,
+    );
+  }
+
+  function handleTraceItemFocus(metricKey: MetricKey | null): void {
+    if (!metricKey) return;
+    setSelectedMetricKey(metricKey);
   }
 
   function handleApplyRecommendation(): void {
@@ -1354,20 +1820,15 @@ export function HeysHealthPanel() {
           return;
         }
 
-        addCustomEvent({
-          date: resolvedSlot.date,
-          start: resolvedSlot.start,
-          end: resolvedSlot.end,
-          title: resolvedSlot.title,
-          tone: resolvedSlot.tone,
-          tags: [...resolvedSlot.tags, "autopilot"],
-          kind: "event",
-        });
-
-        setActionFeedback({
-          tone: "success",
-          text: `Автопилот: слот поставлен ${formatDateLabel(resolvedSlot.date)} в ${resolvedSlot.start}`,
-        });
+        createSlotFromResolvedPlan(
+          {
+            ...resolvedSlot,
+            tags: [...resolvedSlot.tags, "autopilot"],
+          },
+          topMetric.key,
+          "autopilot",
+          `Автопилот: слот поставлен ${formatDateLabel(resolvedSlot.date)} в ${resolvedSlot.start}`,
+        );
         return;
       }
 
@@ -1388,6 +1849,7 @@ export function HeysHealthPanel() {
         priority: topActionPlan.task.priority,
         dueDate: fallbackDate,
         status: topActionPlan.task.priority === "p1" ? "active" : "inbox",
+        origin: createHeysOrigin(topMetric.key, "autopilot"),
       });
 
       setActionFeedback({
@@ -1414,6 +1876,7 @@ export function HeysHealthPanel() {
       priority: topActionPlan.task.priority,
       dueDate,
       status: topActionPlan.task.priority === "p1" ? "active" : "inbox",
+      origin: createHeysOrigin(topMetric.key, "autopilot"),
     });
 
     setActionFeedback({
@@ -1496,6 +1959,47 @@ export function HeysHealthPanel() {
         </div>
       </div>
 
+      {weeklySlotOptions.length > 0 && (
+        <div className="mb-3 rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                Лучшие окна недели
+              </p>
+              <p className="mt-1 max-w-2xl text-sm text-zinc-300">
+                Автопилот уже ранжировал реальные слоты по загрузке и конфликтам календаря.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {weeklySlotOptions.map((option) => {
+                const load = getWeekSlotLoadLabel(option.loadScore);
+
+                return (
+                  <button
+                    key={`${option.date}-${option.start}-${option.end}`}
+                    type="button"
+                    onClick={() => handleCreateSuggestedSlot(option)}
+                    className="rounded-xl border border-zinc-800/60 bg-zinc-900/40 px-3 py-2 text-left transition hover:border-zinc-700 hover:bg-zinc-900/60"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-200">
+                        {formatDateLabel(option.date)} · {option.start}
+                      </span>
+                      <span className={`rounded-full border px-1.5 py-0.5 text-[9px] ${toneBadgeClass(load.tone)}`}>
+                        {load.label}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                      {topActionPlan.slot.title}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Metrics grid */}
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.filter((metric) => metric.key !== "stress").map((metric) => (
@@ -1536,6 +2040,44 @@ export function HeysHealthPanel() {
             <Sparkline points={stressSpark} color={h.stressAvg > 5 ? "rose" : "emerald"} height={24} width={90} />
           </div>
         </button>
+      )}
+
+      {correlationInsights.length > 0 && (
+        <div className="mt-3 rounded-2xl border border-zinc-800/60 bg-zinc-900/20 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">HEYS → связи</p>
+              <p className="mt-1 text-sm text-zinc-300">
+                Что в твоих данных реально тянет состояние вверх, а не просто выглядит красиво на графике.
+              </p>
+            </div>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+              клик по карточке откроет нужную метрику
+            </p>
+          </div>
+
+          <div className="mt-3 grid gap-2 lg:grid-cols-3">
+            {correlationInsights.map((insight) => (
+              <button
+                key={insight.id}
+                type="button"
+                onClick={() => setSelectedMetricKey(insight.metricKey)}
+                className={`rounded-xl border p-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900/40 ${toneCardClass(insight.tone)}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    {getMetricEmoji(insight.metricKey)} {getMetricLabel(insight.metricKey)}
+                  </p>
+                  <span className={`rounded-full border px-1.5 py-0.5 text-[9px] ${toneBadgeClass(insight.tone)}`}>
+                    паттерн
+                  </span>
+                </div>
+                <p className="mt-2 text-sm font-medium leading-5 text-zinc-100">{insight.title}</p>
+                <p className="mt-2 text-[12px] leading-5 text-zinc-400">{insight.detail}</p>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {selectedMetric && (
@@ -1610,6 +2152,54 @@ export function HeysHealthPanel() {
           </div>
         </div>
       )}
+
+      <div className="mt-3 rounded-2xl border border-zinc-800/60 bg-zinc-900/20 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">HEYS trace</p>
+            <p className="mt-1 text-sm text-zinc-300">
+              Что уже было превращено из сигнала в действие — чтобы видеть замкнулся ли контур, а не только график.
+            </p>
+          </div>
+          <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+            задачи + защищённые окна
+          </p>
+        </div>
+
+        {traceItems.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {traceItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleTraceItemFocus(item.metricKey)}
+                className="flex w-full flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/60 bg-zinc-950/30 px-3 py-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900/40"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs">{item.kind === "slot" ? "🗓" : "✓"}</span>
+                    <p className="truncate text-sm font-medium text-zinc-100">{item.title}</p>
+                  </div>
+                  <p className="mt-1 text-[12px] text-zinc-400">{item.subtitle}</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    {formatTraceTimestamp(item.createdAt)}
+                  </span>
+                  <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(item.statusTone)}`}>
+                    {item.statusLabel}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-3 rounded-xl border border-dashed border-zinc-800/70 bg-zinc-950/25 px-3 py-4 text-sm text-zinc-500">
+            Пока trace пустой — как только сигнал HEYS будет превращён в задачу или слот, он появится здесь.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
