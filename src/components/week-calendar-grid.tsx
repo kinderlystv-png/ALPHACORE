@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ProjectSelectManager } from "@/components/project-select-manager";
 import {
   AREA_COLOR,
   AREA_LEGEND,
@@ -24,6 +25,7 @@ import {
   updateEditableScheduleSlot,
 } from "@/lib/schedule";
 import { writeTaskDragData } from "@/lib/dashboard-events";
+import { getProjects, type Project } from "@/lib/projects";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
 import {
   getTasks,
@@ -133,6 +135,34 @@ function copyTitle(title: string): string {
   const trimmed = title.trim();
   if (trimmed.toLowerCase().endsWith("(копия)")) return trimmed;
   return `${trimmed} (копия)`;
+}
+
+function findProjectIdByLabel(projects: Project[], label?: string | null): string {
+  if (!label) return "";
+  const match = projects.find((project) => project.name === label);
+  return match?.id ?? "";
+}
+
+function getSlotProjectId(
+  slot: Pick<ScheduleSlot, "projectId" | "project">,
+  linkedTask: Pick<Task, "projectId" | "project"> | null,
+  projects: Project[],
+): string {
+  if (slot.projectId) return slot.projectId;
+  if (linkedTask?.projectId) return linkedTask.projectId;
+  return findProjectIdByLabel(projects, slot.project ?? linkedTask?.project);
+}
+
+function getSlotProjectLabel(
+  slot: Pick<ScheduleSlot, "projectId" | "project">,
+  linkedTask: Pick<Task, "projectId" | "project"> | null,
+  projectNameById: Map<string, string>,
+): string | null {
+  if (slot.projectId) return projectNameById.get(slot.projectId) ?? slot.project ?? null;
+  if (linkedTask?.projectId) {
+    return projectNameById.get(linkedTask.projectId) ?? linkedTask.project ?? slot.project ?? null;
+  }
+  return slot.project ?? linkedTask?.project ?? null;
 }
 
 type TimeRange = {
@@ -363,6 +393,7 @@ type QuickMenuState = {
   draftTitle: string;
   draftTone: ScheduleTone;
   draftKind: "task" | "event";
+  draftProjectId: string;
 };
 
 type EdgeCueState = {
@@ -450,7 +481,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return subscribeAppDataChange((keys) => {
       if (
         keys.some((k) =>
-          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides"].includes(k),
+          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides", "alphacore_projects"].includes(k),
         )
       ) {
         setVersion((v) => v + 1);
@@ -459,6 +490,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   }, []);
 
   const days = useMemo(() => (anchor ? buildWindow(anchor) : []), [anchor]);
+  const projects = useMemo(() => getProjects(), [version]);
+  const projectNameById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects],
+  );
 
   // center current-time line on first render / when returning to today
   useEffect(() => {
@@ -1037,6 +1073,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     const mobile = window.innerWidth < 640;
     const desktopHalfWidth = 192;
     const maxTop = Math.max(12, window.innerHeight - QUICK_MENU_ESTIMATED_HEIGHT - 12);
+    const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
 
     setHoveredSlotKey(null);
     setQuickMenu({
@@ -1047,10 +1084,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       draftTitle: slot.title,
       draftTone: slot.tone,
       draftKind: slot.kind === "event" ? "event" : "task",
+      draftProjectId: getSlotProjectId(slot, linkedTask, projects),
     });
-  }, []);
+  }, [linkedTasksById, projects]);
 
-  const updateQuickMenuDraft = useCallback((patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone" | "draftKind">>) => {
+  const updateQuickMenuDraft = useCallback((patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone" | "draftKind" | "draftProjectId">>) => {
     setQuickMenu((current) => (current ? { ...current, ...patch } : current));
   }, []);
 
@@ -1072,6 +1110,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
     const nextTitle = quickMenu.draftTitle.trim();
     if (!nextTitle) return;
+    const selectedProject = getProjects().find((project) => project.id === quickMenu.draftProjectId);
+    const currentProjectId = getSlotProjectId(
+      quickMenu.slot,
+      quickMenu.slot.taskId ? linkedTasksById.get(quickMenu.slot.taskId) ?? null : null,
+      getProjects(),
+    );
 
     const isCustomSlot = quickMenu.slot.id.startsWith("custom-");
     const nextKind = isCustomSlot ? quickMenu.draftKind : quickMenu.slot.kind ?? "event";
@@ -1079,7 +1123,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     if (
       nextTitle === quickMenu.slot.title &&
       quickMenu.draftTone === quickMenu.slot.tone &&
-      nextKind === (quickMenu.slot.kind ?? "event")
+      nextKind === (quickMenu.slot.kind ?? "event") &&
+      quickMenu.draftProjectId === currentProjectId
     ) {
       setQuickMenu(null);
       return;
@@ -1089,10 +1134,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       title: nextTitle,
       tone: quickMenu.draftTone,
       kind: nextKind,
+      projectId: selectedProject?.id,
+      project: selectedProject?.name,
     });
     setVersion((value) => value + 1);
     setQuickMenu(null);
-  }, [quickMenu]);
+  }, [linkedTasksById, quickMenu]);
 
   const duplicateQuickSlot = useCallback(() => {
     if (!quickMenu) return;
@@ -1117,6 +1164,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       tags: [...new Set([...quickMenu.slot.tags, "copy"])],
       kind: quickMenu.draftKind,
       taskId: null,
+      projectId: quickMenu.draftProjectId || undefined,
+      project: getProjects().find((project) => project.id === quickMenu.draftProjectId)?.name,
     });
     setVersion((value) => value + 1);
     setQuickMenu(null);
@@ -1587,6 +1636,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       );
                   const c = toneColor(slot.tone);
                   const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
+                  const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
                   const isCustomSlot = slot.id.startsWith("custom-");
@@ -1706,6 +1756,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
                             {slot.title}
                           </p>
+                          {projectLabel && !isSupportSlot && height > 46 && (
+                            <p className="mt-1 inline-flex max-w-full truncate rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-200">
+                              {projectLabel}
+                            </p>
+                          )}
                           {linkedTask && !isSupportSlot && height > 44 && (
                             <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-zinc-400">
                               {linkedTask.status} · {linkedTask.id.slice(0, 8)}
@@ -1860,6 +1915,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       {quickMenu && (() => {
         const slot = quickMenu.slot;
         const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
+        const currentProjectId = getSlotProjectId(slot, linkedTask, projects);
+        const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
+        const draftProjectLabel = quickMenu.draftProjectId
+          ? projectNameById.get(quickMenu.draftProjectId) ?? projectLabel
+          : null;
         const isCustomSlot = slot.id.startsWith("custom-");
         const isTaskBackedSlot = isCustomSlot && slot.kind !== "event";
         const startMin = timeToMinutes(slot.start);
@@ -1870,7 +1930,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           !draftTitle ||
           (draftTitle === slot.title &&
             quickMenu.draftTone === slot.tone &&
-            quickMenu.draftKind === (slot.kind === "event" ? "event" : "task"));
+            quickMenu.draftKind === (slot.kind === "event" ? "event" : "task") &&
+            quickMenu.draftProjectId === currentProjectId);
         const earlierDisabled = startMin <= HOUR_START * 60;
         const laterDisabled = endMin >= HOUR_END * 60;
         const shorterDisabled = durationMin <= MIN_SLOT_MIN;
@@ -1894,6 +1955,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   <p className="truncate text-[11px] uppercase tracking-[0.16em] text-zinc-500">Быстрые команды</p>
                   <p className="truncate text-sm font-semibold text-zinc-100">{slot.title}</p>
                   <p className="mt-0.5 text-[11px] text-zinc-400">{slot.start}–{slot.end}</p>
+                  {draftProjectLabel && (
+                    <p className="mt-1 inline-flex rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-200">
+                      {draftProjectLabel}
+                    </p>
+                  )}
                   {isCustomSlot && (
                     <p className="mt-1 text-[11px] text-zinc-500">
                       Тип: <span className="text-zinc-300">{slot.kind === "event" ? "event" : "task"}</span>
@@ -1989,6 +2055,35 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   <p className="text-[11px] text-zinc-500">
                     Задача живёт и в task-контуре; событие остаётся только календарным слотом.
                   </p>
+                </div>
+              )}
+
+              {isCustomSlot && (
+                <div className="mb-3 space-y-2">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Проект</p>
+                  <ProjectSelectManager
+                    value={quickMenu.draftProjectId}
+                    projects={projects}
+                    onChange={(projectId) => updateQuickMenuDraft({ draftProjectId: projectId })}
+                    onProjectsMutate={(projectId) => {
+                      setVersion((value) => value + 1);
+                      updateQuickMenuDraft({ draftProjectId: projectId });
+                    }}
+                    creationContextLabel="выбора проекта в календарном слоте"
+                    suggestedAccent={
+                      quickMenu.draftTone === "heys"
+                        ? "orange"
+                        : quickMenu.draftTone === "health"
+                          ? "teal"
+                          : quickMenu.draftTone === "cleanup"
+                            ? "rose"
+                            : quickMenu.draftTone === "personal" || quickMenu.draftTone === "review" || quickMenu.draftTone === "family"
+                              ? "violet"
+                              : "sky"
+                    }
+                    size="sm"
+                    align="right"
+                  />
                 </div>
               )}
 

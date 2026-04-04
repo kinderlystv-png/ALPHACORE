@@ -33,6 +33,8 @@ export type ScheduleSlot = {
   source: ScheduleSource;
   kind?: "task" | "event";
   taskId?: string | null;
+  project?: string;
+  projectId?: string;
 };
 
 export type ScheduleOverride = {
@@ -705,6 +707,8 @@ export type CustomEvent = {
   origin?: AutomationOrigin;
   kind?: "task" | "event";
   taskId?: string | null;
+  project?: string;
+  projectId?: string;
 };
 
 const CUSTOM_KEY = "alphacore_schedule_custom";
@@ -808,6 +812,8 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
       priority: defaultCustomEventTaskPriority(event),
       dueDate: event.date,
       status: "active",
+      project: event.project,
+      projectId: event.projectId,
       origin: event.origin,
     });
   } else {
@@ -815,6 +821,8 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
       title: event.title,
       dueDate: event.date,
       status: "active",
+      project: event.project,
+      projectId: event.projectId,
       origin: linkedTask.origin ?? event.origin,
     });
   }
@@ -925,6 +933,8 @@ export function updateEditableScheduleSlot(
           tags: updated.tags,
           kind: updated.kind,
           taskId: updated.taskId,
+          project: updated.project,
+          projectId: updated.projectId,
           source: "derived",
         }
       : null;
@@ -965,6 +975,8 @@ function getCustomSlots(dateKey: string): ScheduleSlot[] {
     tags: e.tags,
     kind: e.kind ?? "task",
     taskId: e.taskId ?? null,
+    project: e.project,
+    projectId: e.projectId,
     source: "derived" as const,
   }));
 }

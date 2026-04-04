@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { ProjectSelectManager } from "@/components/project-select-manager";
 import { type Project, getProjects } from "@/lib/projects";
 import { subscribeAppDataChange } from "@/lib/storage";
 import {
@@ -137,7 +138,7 @@ export default function TasksPage() {
     const title = input.trim();
     if (!title) return;
 
-    const project = projects.find((item) => item.id === newTaskProjectId);
+    const project = getProjects().find((item) => item.id === newTaskProjectId);
 
     addTask(title, {
       priority: prio,
@@ -164,14 +165,14 @@ export default function TasksPage() {
 
   const handleSetProject = useCallback(
     (id: string, projectId: string) => {
-      const project = projects.find((item) => item.id === projectId);
+      const project = getProjects().find((item) => item.id === projectId);
       updateTask(id, {
         projectId: project?.id,
         project: project?.name,
       });
       reload();
     },
-    [projects, reload],
+    [reload],
   );
 
   const handleToggle = useCallback(
@@ -240,18 +241,18 @@ export default function TasksPage() {
             placeholder="Новая задача…"
             className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
           />
-          <select
+          <ProjectSelectManager
             value={newTaskProjectId}
-            onChange={(event) => setNewTaskProjectId(event.target.value)}
-            className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none"
-          >
-            <option value="">Без проекта</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
+            projects={projects}
+            onChange={setNewTaskProjectId}
+            onProjectsMutate={(projectId) => {
+              reload();
+              setNewTaskProjectId(projectId);
+            }}
+            creationContextLabel="выбора проекта в задаче"
+            suggestedAccent="violet"
+            size="md"
+          />
           <select
             value={prio}
             onChange={(event) => setPrio(event.target.value as "p1" | "p2" | "p3")}
@@ -265,7 +266,7 @@ export default function TasksPage() {
             type="date"
             value={dueDate}
             onChange={(event) => setDueDate(event.target.value)}
-            className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none [color-scheme:dark]"
+            className="scheme-dark rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none"
           />
           <button
             type="button"
@@ -404,20 +405,17 @@ export default function TasksPage() {
                         type="date"
                         value={task.dueDate ?? ""}
                         onChange={(event) => handleSetDue(task.id, event.target.value)}
-                        className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none [color-scheme:dark]"
+                        className="scheme-dark rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
                       />
-                      <select
+                      <ProjectSelectManager
                         value={getTaskProjectId(task)}
-                        onChange={(event) => handleSetProject(task.id, event.target.value)}
-                        className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-400 outline-none"
-                      >
-                        <option value="">Без проекта</option>
-                        {projects.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {project.name}
-                          </option>
-                        ))}
-                      </select>
+                        projects={projects}
+                        onChange={(projectId) => handleSetProject(task.id, projectId)}
+                        onProjectsMutate={() => reload()}
+                        creationContextLabel="редактирования задачи"
+                        suggestedAccent="violet"
+                        size="sm"
+                      />
                     </div>
                   )}
                 </div>
