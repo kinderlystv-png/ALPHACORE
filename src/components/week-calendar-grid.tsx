@@ -1500,7 +1500,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               </button>
             </div>
           )}
-
           {AREA_LEGEND.map((a) => (
             <span
               key={a.key}
@@ -1591,7 +1590,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                             ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
                             : `cursor-grab ${c.border} ${c.bg} ${c.text}`
                         }`}
-                        title={t.title}
                       >
                         {t.title}
                       </span>
@@ -1817,7 +1815,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         e.stopPropagation();
                         openQuickMenu(e.currentTarget, slot);
                       }}
-                      title={`${slot.start}–${slot.end} ${slot.title}`}
                     >
                       {isChildcareBackground ? (
                         <>
@@ -1902,7 +1899,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       key={`done-${marker.id}`}
                       className={`pointer-events-none absolute inset-x-1 overflow-hidden rounded-lg border bg-zinc-950/90 px-2 py-0.5 shadow-[0_10px_22px_rgba(0,0,0,0.22)] backdrop-blur-sm ${color.border}`}
                       style={{ top: marker.top, height: COMPLETION_MARKER_H, zIndex: 16 }}
-                      title={`${marker.timeLabel} · ${marker.task.title}`}
                     >
                       <div className="flex items-center gap-1.5">
                         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
