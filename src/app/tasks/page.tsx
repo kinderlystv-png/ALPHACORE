@@ -334,26 +334,32 @@ export default function TasksPage() {
     [getTaskProjectLabel, projectFilter, projectNameById],
   );
 
-  const handleAdd = useCallback(() => {
-    const title = input.trim();
-    if (!title) return;
-
-    const project = getProjects().find((item) => item.id === newTaskProjectId);
-
-    addTask(title, {
-      priority: prio,
-      dueDate: dueDate || undefined,
-      projectId: project?.id,
-      project: project?.name,
-    });
-
+  const resetComposer = useCallback(() => {
     setInput("");
     setPrio("p2");
     setDueDate("");
     setNewTaskProjectId("");
+  }, []);
+
+  const handleAdd = useCallback((mode: "planned" | "done" = "planned") => {
+    const title = input.trim();
+    if (!title) return;
+
+    const project = getProjects().find((item) => item.id === newTaskProjectId);
+    const isQuickDone = mode === "done";
+
+    addTask(title, {
+      priority: isQuickDone ? "p2" : prio,
+      dueDate: isQuickDone ? undefined : dueDate || undefined,
+      projectId: project?.id,
+      project: project?.name,
+      status: isQuickDone ? "done" : undefined,
+    });
+
+    resetComposer();
     reload();
     inputRef.current?.focus();
-  }, [dueDate, input, newTaskProjectId, prio, projects, reload]);
+  }, [dueDate, input, newTaskProjectId, prio, reload, resetComposer]);
 
   const handleSetDue = useCallback(
     (id: string, date: string) => {
@@ -551,10 +557,21 @@ export default function TasksPage() {
           />
           <button
             type="button"
-            onClick={handleAdd}
+            onClick={() => handleAdd()}
             className="rounded-xl bg-zinc-50 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
+            title="Добавить задачу в список"
+            aria-label="Добавить задачу в список"
           >
             +
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAdd("done")}
+            className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200 transition hover:border-amber-400/40 hover:bg-amber-500/15"
+            title="Добавить сразу в выполненные — приоритет и дата не учитываются"
+            aria-label="Добавить сразу в выполненные"
+          >
+            +⚡
           </button>
         </div>
 

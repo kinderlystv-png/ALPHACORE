@@ -5,6 +5,7 @@ export const STORAGE_KEYS = [
   "alphacore_medical",
   "alphacore_projects",
   "alphacore_journal",
+  "alphacore_heys_activity_sync",
   "alphacore_agent_prompt_feedback",
   "alphacore_agent_clarification_feedback",
   "alphacore_pomodoro",

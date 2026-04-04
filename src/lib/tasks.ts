@@ -32,7 +32,10 @@ export type Task = {
 };
 
 type AddTaskOptions = Partial<
-  Pick<Task, "id" | "project" | "projectId" | "priority" | "dueDate" | "status" | "origin">
+  Pick<
+    Task,
+    "id" | "project" | "projectId" | "priority" | "dueDate" | "status" | "origin" | "completedAt"
+  >
 >;
 
 const KEY = "alphacore_tasks";
@@ -103,16 +106,18 @@ export function addTask(
   opts?: AddTaskOptions,
 ): Task {
   const tasks = getTasks();
+  const status = opts?.status ?? "inbox";
   const t: Task = {
     id: opts?.id ?? uid(),
     title,
     project: opts?.project,
     projectId: opts?.projectId,
     priority: opts?.priority ?? "p2",
-    status: opts?.status ?? "inbox",
+    status,
     dueDate: opts?.dueDate,
     createdAt: new Date().toISOString(),
     origin: opts?.origin,
+    completedAt: status === "done" ? (opts?.completedAt ?? new Date().toISOString()) : undefined,
   };
   tasks.unshift(t);
   save(tasks);

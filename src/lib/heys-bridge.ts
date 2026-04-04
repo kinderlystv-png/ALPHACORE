@@ -25,11 +25,33 @@ export type HeysDayRecord = {
   waterMl: number | null;
   deficitPct: number | null;
   trainingCount: number;
+  trainings: HeysTrainingRecord[];
   trainingTypes: string[];
   trainingTimes: string[];
+  householdMin: number;
+  householdTime: string | null;
+  householdActivities: HeysHouseholdActivity[];
   mealCount: number;
   mealTimes: string[];
   mealCheckins: HeysMealCheckin[];
+};
+
+export type HeysTrainingRecord = {
+  id: string;
+  time: string | null;
+  type: string | null;
+  durationMin: number;
+  zones: [number, number, number, number];
+  mood: number | null;
+  wellbeing: number | null;
+  stress: number | null;
+  comment: string | null;
+};
+
+export type HeysHouseholdActivity = {
+  id: string;
+  time: string | null;
+  minutes: number;
 };
 
 export type HeysIntradayMetricKey = "mood" | "stress" | "wellbeing";
@@ -151,6 +173,43 @@ function normalizeTime(value: unknown): string | null {
   if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
 
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function normalizeZones(value: unknown): [number, number, number, number] {
+  const source = Array.isArray(value) ? value : [];
+  return [0, 1, 2, 3].map((index) => {
+    const parsed = toNumber(source[index]);
+    return parsed != null && parsed > 0 ? Math.round(parsed) : 0;
+  }) as [number, number, number, number];
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value != null;
+}
+
+function defaultTrainingDuration(type: string | null): number {
+  switch ((type ?? "").trim().toLowerCase()) {
+    case "strength":
+      return 60;
+    case "hobby":
+      return 30;
+    case "cardio":
+    default:
+      return 45;
+  }
+}
+
+function getTrainingDurationMinutes(training: Record<string, unknown>): number {
+  const zones = normalizeZones(training.z);
+  const fromZones = zones.reduce((sum, value) => sum + value, 0);
+  if (fromZones > 0) return fromZones;
+
+  const fromDuration = toNumber(training.duration);
+  if (fromDuration != null && fromDuration > 0) {
+    return Math.round(fromDuration);
+  }
+
+  return defaultTrainingDuration(typeof training.type === "string" ? training.type : null);
 }
 
 function compareTimes(left: string | null, right: string | null): number {
@@ -461,14 +520,73 @@ async function fetchDayRecord(date: string): Promise<HeysDayRecord | null> {
 
   const trainings = Array.isArray(raw.trainings) ? raw.trainings : [];
   const meals = Array.isArray(raw.meals) ? raw.meals : [];
-  const realTrainings = trainings.filter(
-    (t: Record<string, unknown>) =>
-      t.time && Array.isArray(t.z) && (t.z as number[]).some((z: number) => z > 0),
-  );
-  const trainingTimes = realTrainings
-    .map((t: Record<string, unknown>) => normalizeTime(t.time))
+  const parsedTrainings = trainings
+    .map((training, index) => {
+      const trainingRecord = training as Record<string, unknown>;
+      const time = normalizeTime(trainingRecord.time);
+      const durationMin = getTrainingDurationMinutes(trainingRecord);
+      const zones = normalizeZones(trainingRecord.z);
+
+      if (time == null || durationMin <= 0) {
+        return null;
+      }
+
+      return {
+        id: String(trainingRecord.id ?? `training-${date}-${index}`),
+        time,
+        type: typeof trainingRecord.type === "string" && trainingRecord.type.trim() !== ""
+          ? trainingRecord.type
+          : null,
+        durationMin,
+        zones,
+        mood: toNumber(trainingRecord.mood),
+        wellbeing: toNumber(trainingRecord.wellbeing),
+        stress: toNumber(trainingRecord.stress),
+        comment: typeof trainingRecord.comment === "string" && trainingRecord.comment.trim() !== ""
+          ? trainingRecord.comment
+          : null,
+      };
+    })
+    .filter(isPresent)
+    .sort((left, right) => compareTimes(left.time, right.time));
+  const trainingTimes = parsedTrainings
+    .map((training) => training.time)
     .filter((value): value is string => value != null)
     .sort(compareTimes);
+  const householdActivitiesRaw = Array.isArray(raw.householdActivities)
+    ? raw.householdActivities
+    : [];
+  const parsedHouseholdActivities = householdActivitiesRaw
+    .map((activity, index) => {
+      const activityRecord = activity as Record<string, unknown>;
+      const minutes = toNumber(activityRecord.minutes);
+      const time = normalizeTime(activityRecord.time);
+
+      if (minutes == null || minutes <= 0) {
+        return null;
+      }
+
+      return {
+        id: String(activityRecord.id ?? `household-${date}-${index}`),
+        time,
+        minutes: Math.round(minutes),
+      };
+    })
+    .filter(isPresent)
+    .sort((left, right) => compareTimes(left.time, right.time));
+  const householdTime = normalizeTime(raw.householdTime);
+  const householdMin = toNumber(raw.householdMin);
+  const householdActivities = parsedHouseholdActivities.length > 0
+    ? parsedHouseholdActivities
+    : householdMin != null && householdMin > 0
+      ? [
+          {
+            id: `household-${date}-legacy`,
+            time: householdTime,
+            minutes: Math.round(householdMin),
+          } satisfies HeysHouseholdActivity,
+        ]
+      : [];
   const mealTimes = meals
     .map((meal) => normalizeTime((meal as Record<string, unknown>).time))
     .filter((value): value is string => value != null)
@@ -517,11 +635,15 @@ async function fetchDayRecord(date: string): Promise<HeysDayRecord | null> {
     dayComment: (raw.dayComment as string) ?? null,
     waterMl: toNumber(raw.waterMl),
     deficitPct: toNumber(raw.deficitPct),
-    trainingCount: realTrainings.length,
-    trainingTypes: realTrainings.map(
-      (t: Record<string, unknown>) => (t.type as string) ?? "unknown",
-    ),
+    trainingCount: parsedTrainings.length,
+    trainings: parsedTrainings,
+    trainingTypes: parsedTrainings.map((training) => training.type ?? "unknown"),
     trainingTimes,
+    householdMin: householdMin != null && householdMin > 0
+      ? Math.round(householdMin)
+      : householdActivities.reduce((sum, activity) => sum + activity.minutes, 0),
+    householdTime,
+    householdActivities,
     mealCount: meals.length,
     mealTimes,
     mealCheckins,
