@@ -18,6 +18,7 @@ import {
   isHeysSyncedScheduleSlot,
   isEditableScheduleSlot,
   removeEditableScheduleSlot,
+  upsertTaskSlot,
   unscheduleCustomTaskEvent,
   type ScheduleSlot,
   type ScheduleSource,
@@ -26,7 +27,7 @@ import {
   timeToMinutes,
   updateEditableScheduleSlot,
 } from "@/lib/schedule";
-import { writeTaskDragData } from "@/lib/dashboard-events";
+import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { getProjects, type Project } from "@/lib/projects";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
 import {
@@ -160,6 +161,64 @@ function copyTitle(title: string): string {
   const trimmed = title.trim();
   if (trimmed.toLowerCase().endsWith("(копия)")) return trimmed;
   return `${trimmed} (копия)`;
+}
+
+function toneFromArea(area: LifeArea): ScheduleTone {
+  switch (area) {
+    case "health":
+      return "health";
+    case "family":
+      return "family";
+    case "reflection":
+      return "review";
+    case "recovery":
+      return "personal";
+    case "operations":
+      return "cleanup";
+    case "work":
+    default:
+      return "work";
+  }
+}
+
+function inferTaskSlotTone(task: Task): ScheduleTone {
+  const projectLabel = `${task.projectId ?? ""} ${task.project ?? ""}`.toLowerCase();
+
+  if (projectLabel.includes("kinderly")) return "kinderly";
+  if (projectLabel.includes("heys")) return "heys";
+
+  return toneFromArea(taskArea(task));
+}
+
+function buildTaskSlotTags(task: Task): string[] {
+  const projectTag = (task.projectId ?? task.project ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return [...new Set([
+    "task",
+    "task-slot",
+    task.priority,
+    task.status,
+    ...(projectTag ? [projectTag] : []),
+  ])];
+}
+
+function getTaskDropStartMinutes(
+  event: React.DragEvent<HTMLDivElement>,
+  hour: number,
+): number {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const pointerOffset = event.clientY - rect.top;
+  const minuteOffset = pointerOffset >= rect.height / 2 ? STEP_MIN : 0;
+
+  return clamp(
+    hour * 60 + minuteOffset,
+    HOUR_START * 60,
+    HOUR_END * 60 - DEFAULT_CUSTOM_DURATION_MIN,
+  );
 }
 
 function findProjectIdByLabel(projects: Project[], label?: string | null): string {
@@ -389,6 +448,7 @@ type EditableSlotDraft = {
   title: string;
   tone: ScheduleTone;
   tags: string[];
+  kind: "task" | "event";
 };
 
 type PointerEditMode = "move" | "resize-start" | "resize-end" | "create";
@@ -692,6 +752,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       title: slot.title,
       tone: slot.tone,
       tags: slot.tags,
+      kind: slot.kind === "event" ? "event" : "task",
     };
   }, []);
 
@@ -723,11 +784,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       const draftIsAmbient = originalSlot
         ? isSupportLaneSlot(originalSlot) || isChildcareBackgroundSlot(originalSlot)
         : false;
+      const draftIsTaskLike = draft.kind !== "event";
       const siblings = getScheduleForDate(draft.date).filter((slot) => {
         if (slot.id === originalSlot?.id) return false;
         if (isSupportLaneSlot(slot)) return false;
         if (isChildcareBackgroundSlot(slot)) return false;
         if (draftIsAmbient) return false;
+        if (draftIsTaskLike && !slot.id.startsWith("custom-")) return false;
         return true;
       });
       return siblings.find((slot) => slotsOverlap(draft, slot)) ?? null;
@@ -914,6 +977,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             title: "Новый слот",
             tone: "work" as ScheduleTone,
             tags: ["custom"],
+            kind: "task" as const,
           };
 
       const next: ActivePointerEdit = {
@@ -961,6 +1025,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           title: draft.title,
           tone: draft.tone,
           tags: draft.tags,
+          kind: draft.kind,
         });
         setVersion((value) => value + 1);
         vibrateIfAvailable(8);
@@ -1317,6 +1382,55 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setDrag({ type: "task", taskId, originDay });
   }, []);
 
+  const moveTaskToDay = useCallback((taskId: string, targetDay: string) => {
+    const task = linkedTasksById.get(taskId);
+    if (!task) return false;
+    if (task.dueDate === targetDay) return false;
+
+    updateTask(taskId, { dueDate: targetDay });
+    return true;
+  }, [linkedTasksById]);
+
+  const scheduleTaskFromDrop = useCallback((
+    taskId: string,
+    targetDay: string,
+    startMinutes: number,
+  ) => {
+    const task = linkedTasksById.get(taskId);
+    if (!task) return false;
+
+    const draft: EditableSlotDraft = {
+      id: null,
+      date: targetDay,
+      start: minutesToCalendarTime(startMinutes),
+      end: minutesToCalendarTime(startMinutes + DEFAULT_CUSTOM_DURATION_MIN),
+      title: task.title,
+      tone: inferTaskSlotTone(task),
+      tags: buildTaskSlotTags(task),
+      kind: "task",
+    };
+
+    const blockingSlot = getBlockingSlot(draft, null);
+    if (blockingSlot) {
+      return false;
+    }
+
+    const scheduled = upsertTaskSlot({
+      taskId,
+      date: draft.date,
+      start: draft.start,
+      end: draft.end,
+      title: draft.title,
+      tone: draft.tone,
+      tags: draft.tags,
+    });
+
+    if (!scheduled) return false;
+
+    setVersion((value) => value + 1);
+    return true;
+  }, [getBlockingSlot, linkedTasksById]);
+
   const onDragOver = useCallback((e: React.DragEvent, dayKey: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -1327,19 +1441,33 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setDropTarget(null);
   }, []);
 
-  const onDrop = useCallback(
+  const onDropToDayHeader = useCallback(
     (e: React.DragEvent, targetDay: string) => {
       e.preventDefault();
       setDropTarget(null);
-      if (!drag) return;
+      const taskId = readTaskDragId(e.dataTransfer) ?? drag?.taskId ?? null;
+      if (!taskId) return;
 
-      if (drag.type === "task" && drag.originDay !== targetDay) {
-        updateTask(drag.taskId, { dueDate: targetDay });
-      }
+      moveTaskToDay(taskId, targetDay);
 
       setDrag(null);
     },
-    [drag],
+    [drag?.taskId, moveTaskToDay],
+  );
+
+  const onDropToTimeCell = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, targetDay: string, hour: number) => {
+      e.preventDefault();
+      setDropTarget(null);
+      const taskId = readTaskDragId(e.dataTransfer) ?? drag?.taskId ?? null;
+      if (!taskId) return;
+
+      const startMinutes = getTaskDropStartMinutes(e, hour);
+      scheduleTaskFromDrop(taskId, targetDay, startMinutes);
+
+      setDrag(null);
+    },
+    [drag?.taskId, scheduleTaskFromDrop],
   );
 
   const onDragEnd = useCallback(() => {
@@ -1541,6 +1669,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 col.isToday ? "border-r-sky-400/35" : "border-r-zinc-700/70"
               }`}
               style={{ height: HEADER_H }}
+              onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
+              onDragLeave={!col.isPast ? onDragLeave : undefined}
+              onDrop={(e) => !col.isPast && onDropToDayHeader(e, col.key)}
             >
               <p
                 className={`text-center text-[9px] uppercase tracking-[0.18em] ${
@@ -1642,7 +1773,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     style={{ height: ROW_H }}
                     onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
                     onDragLeave={!col.isPast ? onDragLeave : undefined}
-                    onDrop={(e) => !col.isPast && onDrop(e, col.key)}
+                    onDrop={(e) => !col.isPast && onDropToTimeCell(e, col.key, hour)}
                     onPointerDown={(e) => {
                       if (col.isPast) return;
                       queuePointerEdit("create", e, col.key, null);

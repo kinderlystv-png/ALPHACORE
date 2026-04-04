@@ -980,6 +980,70 @@ export function getScheduledTaskIds(dateKey?: string): string[] {
     .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0);
 }
 
+export function getScheduledTaskSlot(taskId: string): CustomEvent | null {
+  return (
+    loadCustomEvents().find(
+      (event) => isTaskLikeCustomEvent(event) && event.taskId === taskId,
+    ) ?? null
+  );
+}
+
+export function upsertTaskSlot(input: {
+  taskId: string;
+  date: string;
+  start: string;
+  end: string;
+  title?: string;
+  tone?: ScheduleTone;
+  tags?: string[];
+}): CustomEvent | null {
+  const linkedTask = getTasks().find((task) => task.id === input.taskId) ?? null;
+  const existing = getScheduledTaskSlot(input.taskId);
+  const title = (input.title ?? linkedTask?.title ?? existing?.title ?? "").trim();
+
+  if (!title) return null;
+
+  const tone = input.tone ?? existing?.tone ?? "work";
+  const tags = uniqueTags(
+    input.tags && input.tags.length > 0
+      ? input.tags
+      : existing?.tags ?? ["task", "task-slot"],
+  );
+  const projectId = linkedTask?.projectId ?? existing?.projectId;
+  const project = linkedTask?.project ?? existing?.project;
+  const origin = linkedTask?.origin ?? existing?.origin;
+
+  if (existing) {
+    return updateCustomEvent(existing.id, {
+      date: input.date,
+      start: input.start,
+      end: input.end,
+      title,
+      tone,
+      tags,
+      kind: "task",
+      taskId: input.taskId,
+      projectId,
+      project,
+      origin,
+    });
+  }
+
+  return addCustomEvent({
+    date: input.date,
+    start: input.start,
+    end: input.end,
+    title,
+    tone,
+    tags,
+    kind: "task",
+    taskId: input.taskId,
+    projectId,
+    project,
+    origin,
+  });
+}
+
 export function addCustomEvent(event: Omit<CustomEvent, "id">): CustomEvent {
   const events = loadCustomEvents();
   const id = createCustomEventId();
