@@ -51,6 +51,8 @@ export function SlotCarryoverDecision({
     return null;
   }
 
+  const primaryAction = actions[0] ?? null;
+
   const wrapperClassName = className ? `space-y-2 ${className}` : "space-y-2";
   const surfaceClassName = compact
     ? decision.tone === "rose"
@@ -80,6 +82,13 @@ export function SlotCarryoverDecision({
     : decision.tone === "rose"
       ? "text-xs leading-5 text-rose-100/80"
       : "text-xs leading-5 text-amber-100/80";
+  const hintClassName = compact
+    ? decision.tone === "rose"
+      ? "text-[10px] leading-4 text-rose-100/70"
+      : "text-[10px] leading-4 text-amber-100/70"
+    : decision.tone === "rose"
+      ? "text-[11px] leading-5 text-rose-100/72"
+      : "text-[11px] leading-5 text-amber-100/72";
   const baseButtonClassName = compact
     ? "rounded-full border px-2 py-1 text-[10px] font-medium transition"
     : "rounded-full border px-2.5 py-1.5 text-[11px] font-medium transition";
@@ -133,6 +142,10 @@ export function SlotCarryoverDecision({
             );
           })}
         </div>
+
+        {primaryAction?.hint && (
+          <p className={`mt-2 ${hintClassName}`}>{primaryAction.hint}</p>
+        )}
       </div>
     </div>
   );

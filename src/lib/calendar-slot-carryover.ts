@@ -17,6 +17,7 @@ export type SlotCarryoverAction =
       type: "move-slot";
       buttonLabel: string;
       description: string;
+      hint?: string;
       priority: "primary" | "secondary";
       dateKey: string;
     }
@@ -25,6 +26,7 @@ export type SlotCarryoverAction =
       type: "unschedule-task";
       buttonLabel: string;
       description: string;
+      hint?: string;
       priority: "primary" | "secondary";
     }
   | {
@@ -32,12 +34,13 @@ export type SlotCarryoverAction =
       type: "compress-slot";
       buttonLabel: string;
       description: string;
+      hint?: string;
       priority: "primary" | "secondary";
       end: string;
     };
 
 type SlotCarryoverDecisionInput = {
-  slot: Pick<ScheduleSlot, "date" | "start" | "end" | "taskId" | "tone">;
+  slot: Pick<ScheduleSlot, "date" | "start" | "end" | "title" | "tags" | "taskId" | "tone">;
   todayKey: string;
   requiresApproval: boolean;
   isCompleted: boolean;
@@ -49,8 +52,14 @@ type CarryoverDayPressure = {
   parties: number;
   cleanup: number;
   family: number;
+  planningWindows: number;
+  recoveryWindows: number;
+  familyWindows: number;
+  isWeekend: boolean;
   loadScore: number;
 };
+
+type CarryoverWindowPreference = "cleanup" | "recovery" | "planning" | "family" | "general";
 
 function diffDays(fromDateKey: string, toDateKey: string): number {
   const fromDate = new Date(`${fromDateKey}T00:00:00`);
@@ -84,11 +93,61 @@ function getPreferredMoveTargets(slotDate: string, todayKey: string, staleDays: 
   return [todayKey, tomorrowKey, plusTwoKey];
 }
 
+function isRecoveryWindowLike(slot: Pick<ScheduleSlot, "tone" | "title" | "tags">): boolean {
+  const title = slot.title.toLowerCase();
+
+  if (slot.tone === "personal") return true;
+  if (slot.tags.includes("recovery") || slot.tags.includes("rest") || slot.tags.includes("stretch")) return true;
+
+  return (
+    title.includes("восстанов") ||
+    title.includes("отдых") ||
+    title.includes("сон") ||
+    title.includes("stretch") ||
+    title.includes("walk")
+  );
+}
+
+function isPlanningWindowLike(slot: Pick<ScheduleSlot, "tone" | "title" | "tags">): boolean {
+  const title = slot.title.toLowerCase();
+
+  if (slot.tone === "review" || slot.tone === "work" || slot.tone === "heys") return true;
+  if (slot.tags.includes("planning") || slot.tags.includes("review")) return true;
+
+  return (
+    title.includes("план") ||
+    title.includes("review") ||
+    title.includes("стратег") ||
+    title.includes("decision") ||
+    title.includes("sprint")
+  );
+}
+
+function isFamilyWindowLike(slot: Pick<ScheduleSlot, "tone" | "title" | "tags">): boolean {
+  const title = slot.title.toLowerCase();
+
+  return slot.tone === "family" || slot.tags.includes("family") || title.includes("сем") || title.includes("доч");
+}
+
+function getCarryoverWindowPreference(
+  slot: Pick<ScheduleSlot, "tone" | "title" | "tags" | "taskId">,
+): CarryoverWindowPreference {
+  if (slot.tone === "cleanup") return "cleanup";
+  if (slot.tone === "family" || isFamilyWindowLike(slot)) return "family";
+  if (slot.tone === "personal" || isRecoveryWindowLike(slot)) return "recovery";
+  if (slot.tone === "work" || slot.tone === "review" || slot.tone === "heys" || slot.taskId) return "planning";
+  return "general";
+}
+
 function getCarryoverDayPressure(dateKey: string): CarryoverDayPressure {
   const slots = getScheduleForDate(dateKey);
   const parties = slots.filter((slot) => slot.tone === "kinderly").length;
   const cleanup = slots.filter((slot) => slot.tone === "cleanup").length;
   const family = slots.filter((slot) => slot.tone === "family").length;
+  const planningWindows = slots.filter(isPlanningWindowLike).length;
+  const recoveryWindows = slots.filter(isRecoveryWindowLike).length;
+  const familyWindows = slots.filter(isFamilyWindowLike).length;
+  const date = new Date(`${dateKey}T00:00:00`);
 
   return {
     dateKey,
@@ -96,42 +155,66 @@ function getCarryoverDayPressure(dateKey: string): CarryoverDayPressure {
     parties,
     cleanup,
     family,
+    planningWindows,
+    recoveryWindows,
+    familyWindows,
+    isWeekend: [0, 6].includes(date.getDay()),
     loadScore: parties * 6 + cleanup * 5 + family * 2 + slots.length,
   };
 }
 
 function buildCarryoverMoveHint(
-  slot: Pick<ScheduleSlot, "tone">,
+  slot: Pick<ScheduleSlot, "tone" | "title" | "tags" | "taskId">,
   pressure: CarryoverDayPressure,
+  buttonLabel: string,
 ): string {
+  const preference = getCarryoverWindowPreference(slot);
+
   if (slot.tone === "cleanup") {
-    if (pressure.parties === 0 && pressure.cleanup === 0) return "без party и cleanup";
-    if (pressure.parties === 0) return "без party-нагрузки";
-    if (pressure.cleanup === 0) return "без второго cleanup";
+    if (pressure.parties === 0 && pressure.cleanup === 0) return `${buttonLabel} спокойнее: без party и cleanup`;
+    if (pressure.parties === 0) return `${buttonLabel} спокойнее: без party-нагрузки`;
+    if (pressure.cleanup === 0) return `${buttonLabel} чище по операционке: без второго cleanup`;
   }
 
-  if ((slot.tone === "personal" || slot.tone === "health") && pressure.parties === 0 && pressure.cleanup === 0) {
-    return "день спокойнее";
+  if (preference === "recovery") {
+    if (pressure.recoveryWindows > 0 && pressure.parties === 0 && pressure.cleanup === 0) {
+      return `${buttonLabel} лучше под recovery: есть тихое окно и меньше шума`;
+    }
+
+    if (pressure.recoveryWindows > 0) return `${buttonLabel} подходит под recovery: уже есть спокойный контур`;
+    if (pressure.parties === 0 && pressure.cleanup === 0) return `${buttonLabel} тише по нагрузке`;
   }
 
-  if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) {
-    return "нагрузка ниже";
+  if (preference === "planning") {
+    if (pressure.planningWindows > 0 && pressure.parties === 0 && pressure.cleanup === 0) {
+      return `${buttonLabel} лучше под задачу: есть planning-окно и меньше шума`;
+    }
+
+    if (pressure.planningWindows > 0) return `${buttonLabel} удобнее: в дне уже есть рабочее окно`;
+    if (pressure.parties === 0 && pressure.cleanup === 0) return `${buttonLabel} легче для фокуса`;
   }
 
-  if (pressure.cleanup === 0 && pressure.loadScore <= 9) return "без cleanup";
-  if (pressure.parties === 0 && pressure.loadScore <= 9) return "без party";
-  if (pressure.loadScore <= 7) return "день мягче";
+  if (preference === "family") {
+    if (pressure.familyWindows > 0) return `${buttonLabel} ближе к семейному контуру`;
+    if (pressure.isWeekend) return `${buttonLabel} мягче по ритму: выходной`;
+  }
 
-  return "контур спокойнее";
+  if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) return `${buttonLabel} спокойнее по дню`;
+  if (pressure.cleanup === 0 && pressure.loadScore <= 9) return `${buttonLabel} без cleanup`;
+  if (pressure.parties === 0 && pressure.loadScore <= 9) return `${buttonLabel} без party`;
+  if (pressure.loadScore <= 7) return `${buttonLabel} мягче по нагрузке`;
+
+  return `${buttonLabel} выглядит спокойнее по контуру`;
 }
 
 function scoreCarryoverMoveTarget(
-  slot: Pick<ScheduleSlot, "tone" | "taskId">,
+  slot: Pick<ScheduleSlot, "tone" | "title" | "tags" | "taskId">,
   pressure: CarryoverDayPressure,
   todayKey: string,
   staleDays: number,
 ): number {
   const daysAhead = diffDays(pressure.dateKey, todayKey);
+  const preference = getCarryoverWindowPreference(slot);
   let score = pressure.loadScore + daysAhead * 3;
 
   if (pressure.parties > 0) {
@@ -146,12 +229,27 @@ function scoreCarryoverMoveTarget(
     score += 2;
   }
 
+  if (preference === "planning") {
+    if (pressure.planningWindows > 0) score -= 6;
+    if (pressure.isWeekend && pressure.planningWindows === 0) score += 2;
+  }
+
+  if (preference === "recovery") {
+    if (pressure.recoveryWindows > 0) score -= 7;
+    if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) score -= 4;
+  }
+
+  if (preference === "family") {
+    if (pressure.familyWindows > 0) score -= 5;
+    if (pressure.isWeekend) score -= 4;
+  }
+
   if (slot.taskId) {
     if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) score -= 5;
   } else if (slot.tone === "cleanup") {
     if (pressure.parties === 0 && pressure.cleanup === 0) score -= 6;
     if (pressure.dateKey === todayKey) score += 2;
-  } else if (slot.tone === "personal" || slot.tone === "health") {
+  } else if (preference === "recovery") {
     if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) score -= 7;
   } else {
     if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) score -= 4;
@@ -169,13 +267,14 @@ function scoreCarryoverMoveTarget(
 }
 
 function getRankedCarryoverMoveTargets(
-  slot: Pick<ScheduleSlot, "date" | "tone" | "taskId">,
+  slot: Pick<ScheduleSlot, "date" | "title" | "tags" | "tone" | "taskId">,
   todayKey: string,
   staleDays: number,
 ): Array<{
   dateKey: string;
   buttonLabel: string;
   description: string;
+  hint: string;
   score: number;
 }> {
   const candidateDates = Array.from({ length: 7 }, (_, index) => shiftDateKey(todayKey, index))
@@ -185,13 +284,14 @@ function getRankedCarryoverMoveTargets(
     .map((dateKey) => {
       const labels = getSlotQuickRescheduleLabel(dateKey, todayKey);
       const pressure = getCarryoverDayPressure(dateKey);
-      const hint = buildCarryoverMoveHint(slot, pressure);
+      const hint = buildCarryoverMoveHint(slot, pressure, labels.buttonLabel);
       const score = scoreCarryoverMoveTarget(slot, pressure, todayKey, staleDays);
 
       return {
         dateKey,
         buttonLabel: labels.buttonLabel,
         description: `${labels.description} · ${hint}`,
+        hint,
         score,
       };
     })
@@ -308,6 +408,7 @@ export function getSlotCarryoverActions({
         type: "move-slot" as const,
         buttonLabel: target.buttonLabel,
         description: target.description,
+        hint: target.hint,
         priority,
         dateKey: target.dateKey,
       } satisfies SlotCarryoverAction;
@@ -320,6 +421,7 @@ export function getSlotCarryoverActions({
         type: "unschedule-task",
         buttonLabel: "В список без слота",
         description: "убрать слот и оставить задачу активной",
+        hint: "Этот хвост проще вернуть в список, чем держать жёстким слотом в уже прожитом дне.",
         priority: "primary" as const,
       },
       ...preferredMoveActions.map((action, index) => {
@@ -341,6 +443,7 @@ export function getSlotCarryoverActions({
         type: "compress-slot",
         buttonLabel: `Сжать до ${compressTargetMin}м`,
         description: `оставить короткую версию до ${minutesToClock(compressedEndMinutes)}`,
+        hint: `Длинный хвост проще ужать до ${compressTargetMin} минут, чем тащить целиком через перегруженные дни.`,
         priority: "primary" as const,
         end: minutesToClock(compressedEndMinutes),
       },
