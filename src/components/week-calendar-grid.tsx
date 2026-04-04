@@ -8,6 +8,7 @@ import {
   AREA_LEGEND,
   type LifeArea,
   taskArea,
+  taskColor,
   toneColor,
 } from "@/lib/life-areas";
 import {
@@ -127,6 +128,21 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
   if (!task.dueDate) return isToday && task.status === "active";
   if (task.dueDate === dayKey) return true;
   return isToday && task.dueDate < today;
+}
+
+function isOverdueUndoneTask(
+  task: Pick<Task, "dueDate" | "status">,
+  today: string,
+): boolean {
+  const dueDate = task.dueDate;
+  return task.status !== "done" && typeof dueDate === "string" && dueDate < today;
+}
+
+function isYesterdayUndoneTask(
+  task: Pick<Task, "dueDate" | "status">,
+  today: string,
+): boolean {
+  return isOverdueUndoneTask(task, today) && task.dueDate === shiftDateKey(today, -1);
 }
 
 function formatHour(hour: number): string {
@@ -1686,9 +1702,16 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               {col.tasks.length > 0 && (
                 <div className="mt-1.5 flex flex-col gap-1">
                   {col.tasks.map((t) => {
-                    const chipTone = col.isPast
-                        ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
-                        : "border-zinc-700/80 bg-zinc-900/75 text-zinc-200 shadow-[0_6px_16px_rgba(0,0,0,0.14)]";
+                    const c = taskColor(t);
+                    const isYesterdayCarryover = isYesterdayUndoneTask(t, today);
+                    const isOverdueCarryover = isOverdueUndoneTask(t, today);
+                    const chipTone = isYesterdayCarryover
+                      ? "border-rose-400/55 bg-linear-to-br from-rose-500/24 via-red-500/18 to-rose-950/34 text-rose-50 shadow-[0_8px_18px_rgba(127,29,29,0.24)]"
+                      : isOverdueCarryover
+                        ? "border-amber-400/55 bg-linear-to-br from-amber-500/24 via-orange-500/16 to-amber-950/34 text-amber-50 shadow-[0_8px_18px_rgba(120,53,15,0.22)]"
+                        : col.isPast
+                          ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
+                          : `${c.border} ${c.bg} ${c.text}`;
 
                     return (
                       <span
@@ -1780,9 +1803,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
             {visibleColumns.map((col) => {
-              const hasPendingSlot = col.slots.some((slot) => {
-                const approvalState = getScheduleSlotApprovalState(slot);
-                return approvalState.requiresApproval && !approvalState.isCompleted;
+              const hasOverdueTaskSlot = col.slots.some((slot) => {
+                const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
+                if (!linkedTask || !isOverdueUndoneTask(linkedTask, today)) return false;
+                return !getScheduleSlotApprovalState(slot).isCompleted;
               });
 
               return (
@@ -1790,9 +1814,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   key={`overlay-${col.key}`}
                   className={`relative ${
                     col.isPast
-                      ? hasPendingSlot
-                        ? "opacity-100"
-                        : "opacity-55"
+                      ? hasOverdueTaskSlot
+                        ? "opacity-80"
+                        : "opacity-30 grayscale"
                       : ""
                   }`}
                 >
@@ -1844,8 +1868,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const approvalState = getScheduleSlotApprovalState(slot);
                   const requiresApproval = approvalState.requiresApproval;
                   const isCompletedSlot = approvalState.isCompleted;
-                  const isPendingSlot = requiresApproval && !isCompletedSlot;
-                  const isBackgroundSlot = !requiresApproval;
+                  const isOverdueCarryoverTask = Boolean(
+                    linkedTask && isOverdueUndoneTask(linkedTask, today) && !isCompletedSlot,
+                  );
+                  const isYesterdayCarryoverTask = Boolean(
+                    linkedTask && isYesterdayUndoneTask(linkedTask, today) && !isCompletedSlot,
+                  );
                   const completionLabel = formatCompletionLabel(approvalState.completedAt);
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
                   const isHeysSynced = isHeysSyncedScheduleSlot(slot);
@@ -1896,26 +1924,38 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         ? "opacity-70"
                         : "opacity-0";
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
-                  const primaryTextClass = isPendingSlot ? "text-rose-50" : "text-zinc-300";
-                  const secondaryTextClass = isPendingSlot ? "text-rose-100/80" : "text-zinc-500";
+                  const primaryTextClass = isCompletedSlot
+                    ? "text-emerald-50"
+                    : isYesterdayCarryoverTask
+                      ? "text-rose-50"
+                      : isOverdueCarryoverTask
+                        ? "text-amber-50"
+                        : c.text;
+                  const secondaryTextClass = isCompletedSlot
+                    ? "text-emerald-100/80"
+                    : isYesterdayCarryoverTask
+                      ? "text-rose-100/80"
+                      : isOverdueCarryoverTask
+                        ? "text-amber-100/80"
+                        : "text-zinc-500";
                   const shellTone = isChildcareBackground
-                    ? `${c.border} ${c.bg} opacity-55`
-                    : isPendingSlot
-                      ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42"
+                    ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
                     : isCompletedSlot
-                      ? "border-zinc-700/80 bg-zinc-900/72"
-                      : `${c.border} ${c.bg} opacity-60`;
+                      ? "border-emerald-400/55 bg-linear-to-br from-emerald-400/32 via-emerald-500/22 to-emerald-950/42"
+                      : isYesterdayCarryoverTask
+                        ? "border-rose-500/50 bg-linear-to-br from-rose-500/22 via-red-500/16 to-rose-950/34"
+                        : isOverdueCarryoverTask
+                          ? "border-amber-500/50 bg-linear-to-br from-amber-500/20 via-orange-500/14 to-amber-950/32"
+                          : `${c.border} ${c.bg}`;
                   const shellDepth = isChildcareBackground
                     ? "shadow-none"
                     : isBlockingSlot
                       ? "ring-2 ring-rose-400/80 shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_14px_28px_rgba(127,29,29,0.28)]"
-                      : isPendingSlot
-                        ? "ring-1 ring-rose-300/20 shadow-[0_12px_28px_rgba(127,29,29,0.28)]"
                       : isSelectedSlot
                         ? "ring-1 ring-white/12 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_10px_24px_rgba(0,0,0,0.22)]"
-                        : isBackgroundSlot
-                          ? "shadow-none"
-                          : "shadow-[0_6px_18px_rgba(0,0,0,0.12)]";
+                        : isHeysSynced
+                          ? "shadow-[0_0_0_1px_rgba(251,146,60,0.24),0_10px_24px_rgba(0,0,0,0.22)]"
+                          : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]";
                   const slotZIndex = isChildcareBackground ? 0 : isSelectedSlot ? 14 : isSupportSlot ? 11 : 12;
 
                   return (
@@ -1953,8 +1993,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     >
                       {isChildcareBackground ? (
                         <>
-                          <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-white/4 via-white/2 to-transparent" />
-                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-white/10 via-white/5 to-transparent" />
+                          <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-amber-400/10 via-orange-400/6 to-transparent" />
+                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-amber-200/35 via-orange-300/18 to-transparent" />
                         </>
                       ) : (
                         <>
@@ -1991,8 +2031,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                                     title={isCompletedSlot ? "Снять подтверждение" : "Подтвердить выполнение"}
                                     className={`relative z-10 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
                                       isCompletedSlot
-                                        ? "border-zinc-600/80 bg-zinc-900/85 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-                                        : "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
+                                        ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
+                                        : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                                     }`}
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -2006,7 +2046,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                                   </button>
                                 )}
                               </div>
-                              <p className={`mt-0.5 font-medium leading-snug ${primaryTextClass} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? "line-through decoration-zinc-500/40 opacity-85" : ""}`}>
+                              <p className={`mt-0.5 font-medium leading-snug ${primaryTextClass} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? "line-through decoration-emerald-100/45 opacity-90" : ""}`}>
                                 {slot.title}
                               </p>
                             </div>
@@ -2017,7 +2057,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                             </p>
                           )}
                           {completionLabel && !isSupportSlot && height > 44 && (
-                            <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-zinc-500">
+                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isCompletedSlot ? "text-emerald-100/85" : secondaryTextClass}`}>
                               {completionLabel}
                             </p>
                           )}

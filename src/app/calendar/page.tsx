@@ -139,20 +139,7 @@ export default function CalendarPage() {
               const approvalState = getScheduleSlotApprovalState(slot);
               const requiresApproval = approvalState.requiresApproval;
               const isCompleted = approvalState.isCompleted;
-              const isPendingSlot = requiresApproval && !isCompleted;
               const completionLabel = formatCompletionLabel(approvalState.completedAt);
-              const shellCls = isPendingSlot
-                ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"
-                : isCompleted
-                  ? "border-zinc-700/80 bg-zinc-900/72 text-zinc-300"
-                  : `${SCHEDULE_TONE_CLS[slot.tone]} opacity-60`;
-              const timeCls = isPendingSlot ? "text-rose-100/85" : "text-zinc-500";
-              const titleCls = isPendingSlot
-                ? "text-rose-50"
-                : isCompleted
-                  ? "text-zinc-400 line-through decoration-zinc-500/40 opacity-85"
-                  : "text-zinc-300";
-              const subtitleCls = isPendingSlot ? "text-rose-100/75" : "text-zinc-500";
               const sourceLabel =
                 slot.source === "studio"
                   ? "schedule.xlsx"
@@ -163,12 +150,12 @@ export default function CalendarPage() {
               return (
                 <div
                   key={slot.id}
-                  className={`rounded-xl border px-4 py-3 ${shellCls}`}
+                  className={`rounded-xl border px-4 py-3 ${isCompleted ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50" : SCHEDULE_TONE_CLS[slot.tone]}`}
                 >
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <p className={`font-mono text-xs ${timeCls}`}>
+                        <p className={`font-mono text-xs ${isCompleted ? "text-emerald-100/85" : "opacity-70"}`}>
                           {formatScheduleTimeRange(slot.start, slot.end)}
                         </p>
                         {requiresApproval && (
@@ -180,8 +167,8 @@ export default function CalendarPage() {
                             }}
                             className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold leading-none transition ${
                               isCompleted
-                                ? "border-zinc-600/80 bg-zinc-900/85 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-                                : "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
+                                ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
+                                : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                             }`}
                             aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
                             title={isCompleted ? "Снять подтверждение" : "Подтвердить выполнение"}
@@ -190,16 +177,16 @@ export default function CalendarPage() {
                           </button>
                         )}
                       </div>
-                      <p className={`mt-1 min-w-0 text-sm font-medium ${titleCls}`}>
+                      <p className={`mt-1 min-w-0 text-sm font-medium ${isCompleted ? "text-emerald-50 line-through decoration-emerald-100/45 opacity-90" : ""}`}>
                           {slot.title}
                       </p>
                       {completionLabel && (
-                        <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                        <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100/85">
                           {completionLabel}
                         </p>
                       )}
                       {slot.subtitle && (
-                        <p className={`mt-1 text-xs ${subtitleCls}`}>{slot.subtitle}</p>
+                        <p className="mt-1 text-xs opacity-70">{slot.subtitle}</p>
                       )}
                       {slot.tags.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -214,7 +201,7 @@ export default function CalendarPage() {
                         </div>
                       )}
                     </div>
-                    <div className={`flex shrink-0 flex-wrap items-center gap-2 ${isPendingSlot ? "" : "opacity-70"}`}>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
                       {heysBadgeLabel && (
                         <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-orange-200">
                           {heysBadgeLabel}
