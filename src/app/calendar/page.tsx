@@ -29,9 +29,14 @@ function formatCompletionLabel(completedAt?: string | null): string | null {
 
 export default function CalendarPage() {
   const [version, setVersion] = useState(0);
+  const [isHydrated, setIsHydrated] = useState(false);
   const monthDates = useMemo(() => getMonthDates(new Date()), []);
   const today = monthDates.find((item) => item.isToday)?.key ?? monthDates[0]?.key;
   const [selectedDate, setSelectedDate] = useState(today);
+
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   useEffect(() => {
     return subscribeAppDataChange((keys) => {
@@ -46,8 +51,21 @@ export default function CalendarPage() {
   }, []);
 
   const selected = monthDates.find((item) => item.key === selectedDate) ?? monthDates[0];
-  const slots = useMemo(() => getScheduleForDate(selectedDate), [selectedDate, version]);
-  const summary = useMemo(() => getScheduleSummary(selectedDate), [selectedDate, version]);
+  const slots = useMemo(
+    () => (isHydrated ? getScheduleForDate(selectedDate) : []),
+    [isHydrated, selectedDate, version],
+  );
+  const summary = useMemo(
+    () =>
+      isHydrated
+        ? getScheduleSummary(selectedDate)
+        : {
+            parties: 0,
+            cleanup: 0,
+            family: 0,
+          },
+    [isHydrated, selectedDate, version],
+  );
 
   return (
     <AppShell>

@@ -145,7 +145,12 @@ export function WeekPlanner({
   ctaLabel,
 }: WeekPlannerProps) {
   const [version, setVersion] = useState(0);
+  const [isHydrated, setIsHydrated] = useState(false);
   const todayKey = dateStr();
+
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   useEffect(() => {
     return subscribeAppDataChange((keys) => {
@@ -162,6 +167,27 @@ export function WeekPlanner({
   const horizonStart = useMemo(() => toDate(anchorDate), [anchorDate]);
 
   const days = useMemo<PlannerDay[]>(() => {
+    if (!isHydrated) {
+      return buildHorizon(horizonStart).map((date) => {
+        const key = dateStr(date);
+
+        return {
+          key,
+          dayLabel: new Intl.DateTimeFormat("ru-RU", {
+            weekday: "short",
+          }).format(date),
+          dateLabel: new Intl.DateTimeFormat("ru-RU", {
+            day: "numeric",
+            month: "short",
+          }).format(date),
+          hint: dayHint(key, todayKey),
+          isToday: key === todayKey,
+          tasks: [],
+          slots: [],
+        };
+      });
+    }
+
     const openTasks = getActionableTasks(todayKey);
 
     return buildHorizon(horizonStart).map((date) => {
@@ -186,7 +212,7 @@ export function WeekPlanner({
         slots: getScheduleForDate(key),
       };
     });
-  }, [horizonStart, todayKey, version]);
+  }, [horizonStart, isHydrated, todayKey, version]);
 
   const totalTasks = days.reduce((acc, day) => acc + day.tasks.length, 0);
   const totalSlots = days.reduce((acc, day) => acc + day.slots.length, 0);
