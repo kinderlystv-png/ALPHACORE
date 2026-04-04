@@ -141,6 +141,19 @@ type ImpactConfig = {
   windowLabel: string;
 };
 
+type LearnedActionStat = {
+  id: string;
+  metricKey: MetricKey;
+  actionKind: "task" | "slot";
+  improved: number;
+  worse: number;
+  flat: number;
+  pending: number;
+  resolved: number;
+  score: number;
+  confidence: "low" | "medium" | "high";
+};
+
 function Sparkline({
   points,
   color = "sky",
@@ -652,6 +665,14 @@ function getViaLabel(via: AutomationOrigin["via"] | undefined): string {
   if (via === "autopilot") return "автопилот";
   if (via === "slot") return "слот";
   return "задача";
+}
+
+function getActionKindLabel(actionKind: "task" | "slot"): string {
+  return actionKind === "slot" ? "защищённые окна" : "конкретные задачи";
+}
+
+function getActionKindShortLabel(actionKind: "task" | "slot"): string {
+  return actionKind === "slot" ? "слоты" : "задачи";
 }
 
 function isLateSleepStart(value: string | null): boolean {
@@ -1285,6 +1306,113 @@ function summarizeTraceImpact(items: TraceItem[]): {
   );
 }
 
+function buildLearningStats(
+  tasks: Task[],
+  events: CustomEvent[],
+  days: HeysDayRecord[],
+  weightGoal: number | null | undefined,
+): LearnedActionStat[] {
+  const buckets = new Map<
+    string,
+    Omit<LearnedActionStat, "score" | "confidence">
+  >();
+
+  const touchBucket = (metricKey: MetricKey, actionKind: "task" | "slot", impact: ImpactEvaluation) => {
+    const id = `${metricKey}-${actionKind}`;
+    const current = buckets.get(id) ?? {
+      id,
+      metricKey,
+      actionKind,
+      improved: 0,
+      worse: 0,
+      flat: 0,
+      pending: 0,
+      resolved: 0,
+    };
+
+    if (impact.kind === "improved") {
+      current.improved += 1;
+      current.resolved += 1;
+    } else if (impact.kind === "worse") {
+      current.worse += 1;
+      current.resolved += 1;
+    } else if (impact.kind === "flat") {
+      current.flat += 1;
+      current.resolved += 1;
+    } else {
+      current.pending += 1;
+    }
+
+    buckets.set(id, current);
+  };
+
+  tasks
+    .filter((task) => task.origin?.source === "heys")
+    .forEach((task) => {
+      const metricKey = toMetricKey(task.origin?.metricKey);
+      if (!metricKey) return;
+
+      touchBucket(
+        metricKey,
+        "task",
+        evaluateTraceImpactForTask(task, metricKey, days, weightGoal),
+      );
+    });
+
+  events
+    .filter((event) => event.origin?.source === "heys" || event.tags.includes("heys-action"))
+    .forEach((event) => {
+      const metricKey = extractMetricKeyFromEvent(event);
+      if (!metricKey) return;
+
+      touchBucket(
+        metricKey,
+        "slot",
+        evaluateTraceImpactForEvent(event, metricKey, days, weightGoal),
+      );
+    });
+
+  return [...buckets.values()]
+    .map((bucket) => {
+      const score = bucket.improved * 2 - bucket.worse * 2 - bucket.flat * 0.5;
+      const confidence: LearnedActionStat["confidence"] =
+        bucket.resolved >= 3 ? "high" : bucket.resolved >= 2 ? "medium" : "low";
+
+      return {
+        ...bucket,
+        score,
+        confidence,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.improved - left.improved ||
+        right.resolved - left.resolved,
+    );
+}
+
+function getPreferredLearningForMetric(
+  metricKey: MetricKey,
+  stats: LearnedActionStat[],
+): LearnedActionStat | null {
+  return (
+    stats.find(
+      (stat) => stat.metricKey === metricKey && stat.resolved > 0 && stat.score > 0,
+    ) ??
+    stats.find(
+      (stat) => stat.metricKey === metricKey && stat.improved > 0,
+    ) ??
+    null
+  );
+}
+
+function getConfidenceLabel(confidence: LearnedActionStat["confidence"]): string {
+  if (confidence === "high") return "уверенно";
+  if (confidence === "medium") return "уже видно";
+  return "пока тонко";
+}
+
 function getDefaultMetricKey(h: HeysHealthSignals): MetricKey {
   if (h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7) return "bedtime";
   if (h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7) return "steps";
@@ -1650,6 +1778,8 @@ export function HeysHealthPanel() {
     snapshot.month.daysWithData > 0
       ? snapshot.month.lateBedtimeDays / snapshot.month.daysWithData
       : null;
+  const tasks = getTasks();
+  const customEvents = getCustomEvents();
   const metrics: MetricDefinition[] = [
     {
       key: "sleep",
@@ -2065,8 +2195,22 @@ export function HeysHealthPanel() {
   const topMetric = metrics.find((metric) => metric.key === defaultMetricKey) ?? metrics[0]!;
   const topActionPlan = getMetricActionPlan(topMetric.key);
   const selectedActionPlan = getMetricActionPlan(selectedMetric.key);
+  const learningStats = buildLearningStats(
+    tasks,
+    customEvents,
+    days,
+    snapshot.profile?.weightGoal,
+  );
+  const topMetricLearning = getPreferredLearningForMetric(topMetric.key, learningStats);
+  const selectedMetricLearning = getPreferredLearningForMetric(selectedMetric.key, learningStats);
+  const learnedHighlights = learningStats
+    .filter((stat) => stat.improved > 0 && stat.resolved > 0)
+    .slice(0, 3);
+  const effectiveTopRecommendation = topMetricLearning?.actionKind ?? topActionPlan.recommended;
+  const isLearnedOverride =
+    topMetricLearning != null && topMetricLearning.actionKind !== topActionPlan.recommended;
   const weeklySlotOptions =
-    topActionPlan.recommended === "slot"
+    effectiveTopRecommendation === "slot"
       ? getAutopilotSlotOptions(topMetric.key, topActionPlan).slice(0, 3)
       : [];
   const correlationInsights = buildCorrelationInsights(
@@ -2075,8 +2219,8 @@ export function HeysHealthPanel() {
     snapshot.profile?.sleepHoursGoal,
   );
   const traceItems = buildTraceItems(
-    getTasks(),
-    getCustomEvents(),
+    tasks,
+    customEvents,
     days,
     snapshot.profile?.weightGoal,
   );
@@ -2186,7 +2330,7 @@ export function HeysHealthPanel() {
   }
 
   function handleApplyRecommendation(): void {
-    if (topActionPlan.recommended === "slot") {
+    if (effectiveTopRecommendation === "slot") {
       const resolvedSlot = resolveAutopilotSlot(topMetric.key, topActionPlan);
 
       if (resolvedSlot) {
@@ -2319,10 +2463,15 @@ export function HeysHealthPanel() {
                 ✨ Применить рекомендацию
               </button>
               <span className="text-[11px] text-zinc-400">
-                {topActionPlan.recommended === "slot"
+                {effectiveTopRecommendation === "slot"
                   ? `автопилот подберёт окно для «${topActionPlan.slot.title}»`
                   : `автопилот поставит задачу «${topActionPlan.task.title}»`}
               </span>
+              {topMetricLearning && (
+                <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(topMetricLearning.score > 0 ? "good" : "warn")}`}>
+                  работает лучше: {getActionKindShortLabel(topMetricLearning.actionKind)}
+                </span>
+              )}
             </div>
             <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
               Кликни по метрике ниже, чтобы раскрыть контекст и следующий шаг.
@@ -2330,6 +2479,16 @@ export function HeysHealthPanel() {
           </div>
           <div className="max-w-md space-y-2">
             <p className="text-[11px] leading-5 text-zinc-400">{actionState.hint}</p>
+            {topMetricLearning ? (
+              <p className="text-[11px] leading-5 text-zinc-400">
+                Learning layer: по метрике «{getMetricLabel(topMetric.key)}» лучше всего заходят {getActionKindLabel(topMetricLearning.actionKind)} — {topMetricLearning.improved} из {topMetricLearning.resolved} закрытых циклов дали улучшение, {getConfidenceLabel(topMetricLearning.confidence)}.
+                {isLearnedOverride ? " Поэтому автопилот смещён в сторону этого рычага." : ""}
+              </p>
+            ) : (
+              <p className="text-[11px] leading-5 text-zinc-400">
+                Learning layer ещё собирает resolved cycles — пока автопилот опирается в основном на текущий сигнал, а не на личную статистику эффекта.
+              </p>
+            )}
             {actionFeedback && (
               <span
                 className={`inline-flex rounded-full border px-2 py-1 text-[10px] ${
@@ -2466,6 +2625,48 @@ export function HeysHealthPanel() {
         </div>
       )}
 
+      {learnedHighlights.length > 0 && (
+        <div className="mt-3 rounded-2xl border border-zinc-800/60 bg-zinc-900/20 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Что реально работает</p>
+              <p className="mt-1 text-sm text-zinc-300">
+                Здесь не теория, а уже наблюдённые рычаги, которые у тебя давали сдвиг по сигналу.
+              </p>
+            </div>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+              top learned levers
+            </p>
+          </div>
+
+          <div className="mt-3 grid gap-2 lg:grid-cols-3">
+            {learnedHighlights.map((stat) => (
+              <button
+                key={stat.id}
+                type="button"
+                onClick={() => setSelectedMetricKey(stat.metricKey)}
+                className="rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900/40"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    {getMetricEmoji(stat.metricKey)} {getMetricLabel(stat.metricKey)}
+                  </p>
+                  <span className={`rounded-full border px-1.5 py-0.5 text-[9px] ${toneBadgeClass("good")}`}>
+                    {getActionKindShortLabel(stat.actionKind)}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm font-medium text-zinc-100">
+                  {stat.improved} из {stat.resolved} циклов дали улучшение
+                </p>
+                <p className="mt-1 text-[12px] leading-5 text-zinc-400">
+                  {getActionKindLabel(stat.actionKind)} · {getConfidenceLabel(stat.confidence)} · flat {stat.flat}{stat.worse > 0 ? ` · хуже ${stat.worse}` : ""}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {selectedMetric && (
         <div className={`mt-3 rounded-2xl border p-4 ${toneCardClass(selectedMetric.status ?? "neutral")}`}>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -2517,6 +2718,11 @@ export function HeysHealthPanel() {
             <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3">
               <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Следующее действие</p>
               <p className="mt-1 text-sm leading-6 text-zinc-200">{selectedMetric.drilldown.action}</p>
+              {selectedMetricLearning && (
+                <p className="mt-2 text-[11px] leading-5 text-zinc-400">
+                  По этой метрике у тебя лучше всего срабатывают {getActionKindLabel(selectedMetricLearning.actionKind)} — {selectedMetricLearning.improved}/{selectedMetricLearning.resolved} улучшений.
+                </p>
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
