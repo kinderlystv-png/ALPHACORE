@@ -11,6 +11,7 @@ import {
   type ProjectAccent,
   getProjects,
 } from "@/lib/projects";
+import { addCompletedFactSlot, type ScheduleTone } from "@/lib/schedule";
 import { subscribeAppDataChange } from "@/lib/storage";
 import {
   type Task,
@@ -275,6 +276,13 @@ function dueBadge(due?: string): { cls: string; label: string } | null {
   };
 }
 
+function inferComposerFactTone(project: Project | undefined): ScheduleTone {
+  const label = `${project?.id ?? ""} ${project?.name ?? ""}`.toLowerCase();
+  if (label.includes("kinderly")) return "kinderly";
+  if (label.includes("heys")) return "heys";
+  return "work";
+}
+
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -348,13 +356,22 @@ export default function TasksPage() {
     const project = getProjects().find((item) => item.id === newTaskProjectId);
     const isQuickDone = mode === "done";
 
-    addTask(title, {
-      priority: isQuickDone ? "p2" : prio,
-      dueDate: isQuickDone ? undefined : dueDate || undefined,
-      projectId: project?.id,
-      project: project?.name,
-      status: isQuickDone ? "done" : undefined,
-    });
+    if (isQuickDone) {
+      addCompletedFactSlot({
+        title,
+        priority: prio,
+        projectId: project?.id,
+        project: project?.name,
+        tone: inferComposerFactTone(project),
+      });
+    } else {
+      addTask(title, {
+        priority: prio,
+        dueDate: dueDate || undefined,
+        projectId: project?.id,
+        project: project?.name,
+      });
+    }
 
     resetComposer();
     reload();
@@ -568,7 +585,7 @@ export default function TasksPage() {
             type="button"
             onClick={() => handleAdd("done")}
             className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200 transition hover:border-amber-400/40 hover:bg-amber-500/15"
-            title="Добавить сразу в выполненные — приоритет и дата не учитываются"
+            title="Зафиксировать как завершённый слот на текущее время — дата не учитывается"
             aria-label="Добавить сразу в выполненные"
           >
             +⚡

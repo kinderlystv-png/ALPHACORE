@@ -24,6 +24,7 @@ import { ensureJournalSeed, type JournalEntry } from "@/lib/journal";
 import { allParamNames, getEntries, paramStatus } from "@/lib/medical";
 import { addNote } from "@/lib/notes";
 import { getProjects, type Project } from "@/lib/projects";
+import { addCompletedFactSlot } from "@/lib/schedule";
 import { subscribeAppDataChange } from "@/lib/storage";
 import {
   activateTask,
@@ -448,22 +449,26 @@ export function AlphacoreDashboard() {
       if (!draft.title) return;
 
       const isQuickDone = status === "done";
-      const task = addTask(draft.title, {
-        priority: isQuickDone ? "p2" : draft.priority,
-        dueDate: isQuickDone ? undefined : draft.dueDate,
-        status: isQuickDone ? "done" : undefined,
-      });
-
-      if (status === "active") {
-        updateTask(task.id, { status: "active" });
-      }
 
       if (isQuickDone) {
+        addCompletedFactSlot({
+          title: draft.title,
+          priority: draft.priority,
+        });
         setFlash({
           tone: "success",
-          text: `Сделанное зафиксировано: ${draft.title}`,
+          text: `Зафиксирован завершённый слот: ${draft.title}`,
         });
       } else {
+        const task = addTask(draft.title, {
+          priority: draft.priority,
+          dueDate: draft.dueDate,
+        });
+
+        if (status === "active") {
+          updateTask(task.id, { status: "active" });
+        }
+
         setFlash({
           tone: "success",
           text: `Задача добавлена: ${draft.priority.toUpperCase()} · ${dueLabel(draft.dueDate)} · ${status}`,
@@ -877,7 +882,7 @@ export function AlphacoreDashboard() {
                   type="button"
                   onClick={() => handleQuickAdd("done")}
                   className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/40 hover:bg-amber-500/15"
-                  title="Зафиксировать уже сделанную задачу сразу в completed"
+                  title="Зафиксировать уже сделанное как завершённый слот в календаре"
                   aria-label="Зафиксировать уже сделанную задачу"
                 >
                   +⚡
@@ -890,7 +895,7 @@ export function AlphacoreDashboard() {
                 Будет создано: <span className="text-zinc-200">{quickTaskDraft.title}</span> ·{" "}
                 <span className="text-zinc-300">{quickTaskDraft.priority.toUpperCase()}</span> ·{" "}
                 <span className="text-zinc-300">{dueLabel(quickTaskDraft.dueDate)}</span>
-                <span className="text-amber-300"> · +⚡ сразу пишет в done</span>
+                <span className="text-amber-300"> · +⚡ создаёт завершённый слот на текущее время</span>
               </p>
             )}
 
@@ -916,7 +921,7 @@ export function AlphacoreDashboard() {
               )}
 
               <span className="ml-auto text-[10px] text-zinc-600">
-                ⌘K или / · Enter → inbox · ⇧Enter → active · +⚡ → done
+                ⌘K или / · Enter → inbox · ⇧Enter → active · +⚡ → завершённый слот
               </span>
             </div>
           </div>

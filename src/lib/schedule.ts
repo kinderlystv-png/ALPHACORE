@@ -1,4 +1,4 @@
-import { lsGet, lsSet, uid } from "./storage";
+import { dateStr, lsGet, lsSet, uid } from "./storage";
 import {
   addTask,
   deleteTask,
@@ -634,6 +634,82 @@ function uniqueTags(tags: string[]): string[] {
   return [...new Set(tags)];
 }
 
+function inferFactSlotTone(
+  title: string,
+  project?: string,
+  projectId?: string,
+): ScheduleTone {
+  const label = `${projectId ?? ""} ${project ?? ""} ${title}`.toLowerCase();
+
+  if (label.includes("kinderly")) return "kinderly";
+  if (label.includes("heys")) return "heys";
+
+  if (
+    ["sleep", "bedtime", "shutdown", "recovery", "rest", "сон", "отдых", "шутдаун"].some(
+      (token) => label.includes(token),
+    )
+  ) {
+    return "personal";
+  }
+
+  if (
+    ["run", "stretch", "health", "water", "doctor", "анализ", "врач", "трен", "растяж", "вода"].some(
+      (token) => label.includes(token),
+    )
+  ) {
+    return "health";
+  }
+
+  if (
+    ["family", "danya", "minecraft", "сем", "даня", "кот", "мама", "пап"].some((token) =>
+      label.includes(token),
+    )
+  ) {
+    return "family";
+  }
+
+  if (
+    ["cleanup", "admin", "ops", "уборк", "логист", "быт", "машин", "контейнер"].some(
+      (token) => label.includes(token),
+    )
+  ) {
+    return "cleanup";
+  }
+
+  if (
+    ["review", "planning", "journal", "brief", "план", "рефлекс", "осмыс"].some(
+      (token) => label.includes(token),
+    )
+  ) {
+    return "review";
+  }
+
+  return "work";
+}
+
+function buildCompletedFactSlotWindow(
+  completedAt: Date,
+  durationMin: number,
+): { date: string; start: string; end: string } {
+  const safeDuration = Math.min(
+    Math.max(durationMin, FACT_SLOT_MIN_DURATION_MIN),
+    FACT_SLOT_DAY_END_MIN - FACT_SLOT_DAY_START_MIN,
+  );
+  const rawMinutes = completedAt.getHours() * 60 + completedAt.getMinutes();
+  const snappedEndMinutes = Math.ceil(rawMinutes / 30) * 30;
+  const endMinutes = Math.max(
+    FACT_SLOT_DAY_START_MIN + safeDuration,
+    Math.min(FACT_SLOT_DAY_END_MIN, snappedEndMinutes),
+  );
+  const startMinutes = Math.max(FACT_SLOT_DAY_START_MIN, endMinutes - safeDuration);
+
+  return {
+    date: dateStr(completedAt),
+    start: minutesToTime(startMinutes),
+    end: minutesToTime(endMinutes),
+  };
+}
+
 function overlaps(
   left: Pick<ScheduleSlot, "start" | "end">,
   right: Pick<ScheduleSlot, "start" | "end">,
@@ -870,6 +946,10 @@ export type CustomEvent = {
 const CUSTOM_KEY = "alphacore_schedule_custom";
 const OVERRIDE_KEY = "alphacore_schedule_overrides";
 const CUSTOM_EVENT_ID_PREFIX = "custom-";
+const FACT_SLOT_DEFAULT_DURATION_MIN = 60;
+const FACT_SLOT_MIN_DURATION_MIN = 30;
+const FACT_SLOT_DAY_START_MIN = 5 * 60;
+const FACT_SLOT_DAY_END_MIN = 24 * 60;
 
 let customEventNormalizationScheduled = false;
 
@@ -1202,6 +1282,65 @@ export function addCustomEvent(event: Omit<CustomEvent, "id">): CustomEvent {
   events.push(full);
   saveCustomEvents(events);
   return full;
+}
+
+export function addCompletedFactSlot(input: {
+  title: string;
+  completedAt?: string;
+  durationMin?: number;
+  tone?: ScheduleTone;
+  tags?: string[];
+  priority?: TaskPriority;
+  project?: string;
+  projectId?: string;
+  origin?: AutomationOrigin;
+}): CustomEvent | null {
+  const title = input.title.trim();
+  if (!title) return null;
+
+  const completedAt = input.completedAt ? new Date(input.completedAt) : new Date();
+  if (Number.isNaN(completedAt.getTime())) return null;
+
+  const window = buildCompletedFactSlotWindow(
+    completedAt,
+    input.durationMin ?? FACT_SLOT_DEFAULT_DURATION_MIN,
+  );
+  const tone = input.tone ?? inferFactSlotTone(title, input.project, input.projectId);
+  const tags = uniqueTags([
+    "task",
+    "task-slot",
+    "fact",
+    "done",
+    input.priority ?? "p2",
+    ...(input.tags ?? []),
+  ]);
+
+  const event = addCustomEvent({
+    date: window.date,
+    start: window.start,
+    end: window.end,
+    title,
+    tone,
+    tags,
+    kind: "task",
+    project: input.project,
+    projectId: input.projectId,
+    origin: input.origin,
+  });
+
+  const linkedTaskId = event.taskId ?? event.id;
+  updateTask(linkedTaskId, {
+    title,
+    dueDate: window.date,
+    status: "done",
+    completedAt: completedAt.toISOString(),
+    priority: input.priority ?? "p2",
+    project: input.project,
+    projectId: input.projectId,
+    origin: input.origin,
+  });
+
+  return event;
 }
 
 export function removeCustomEvent(id: string): boolean {
