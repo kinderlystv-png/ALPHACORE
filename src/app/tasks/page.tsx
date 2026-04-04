@@ -720,12 +720,13 @@ export default function TasksPage() {
             className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
           />
 
-          <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto_minmax(11rem,12rem)_auto] xl:items-start">
-            <div className="min-w-0">
+          <div className="flex flex-col gap-2 lg:flex-row lg:flex-nowrap lg:items-start">
+            <div className="min-w-0 lg:flex-1">
               <ProjectSelectManager
                 value={newTaskProjectId}
                 projects={projects}
                 quickProjects={popularProjects}
+                desktopSingleRow
                 onChange={setNewTaskProjectId}
                 onProjectsMutate={(projectId) => {
                   reload();
@@ -737,7 +738,7 @@ export default function TasksPage() {
               />
             </div>
 
-            <div className="justify-self-start">
+            <div className="lg:shrink-0">
               <PrioritySwitch value={prio} onChange={(priority) => setPrio(priority)} size="md" />
             </div>
 
@@ -745,10 +746,10 @@ export default function TasksPage() {
               type="date"
               value={dueDate}
               onChange={(event) => setDueDate(event.target.value)}
-              className="scheme-dark min-h-10 w-full rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none"
+              className="scheme-dark min-h-10 w-full rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none lg:w-44 lg:shrink-0"
             />
 
-            <div className="flex flex-wrap items-stretch gap-2 xl:justify-self-end">
+            <div className="flex flex-wrap items-stretch gap-2 lg:ml-auto lg:shrink-0 lg:flex-nowrap">
               <button
                 type="button"
                 onClick={() => handleAdd()}

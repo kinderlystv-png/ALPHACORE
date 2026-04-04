@@ -14,6 +14,7 @@ type ProjectSelectManagerProps = {
   value: string;
   projects: Project[];
   quickProjects?: Project[];
+  desktopSingleRow?: boolean;
   onChange: (projectId: string) => void;
   onProjectsMutate?: (projectId: string) => void;
   noneLabel?: string;
@@ -42,6 +43,7 @@ export function ProjectSelectManager({
   value,
   projects,
   quickProjects,
+  desktopSingleRow = false,
   onChange,
   onProjectsMutate,
   noneLabel = "Без проекта",
@@ -141,7 +143,13 @@ export function ProjectSelectManager({
       : "rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
   const panelAlignCls = align === "right" ? "right-0" : "left-0";
   const quickProjectBtnCls =
-    "flex min-w-0 items-center gap-2 rounded-xl border px-3 py-3 text-xs transition";
+    `flex min-w-0 items-center gap-2 rounded-xl border px-3 py-3 text-xs transition ${
+      desktopSingleRow ? "shrink-0" : ""
+    }`;
+  const controlsWrapCls = desktopSingleRow ? "flex min-w-0 items-center gap-1.5 lg:flex-nowrap" : "flex min-w-0 flex-wrap items-center gap-1.5";
+  const quickProjectsWrapCls = desktopSingleRow
+    ? "flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pr-1 lg:flex-nowrap"
+    : "flex min-w-0 flex-1 flex-wrap items-center gap-1.5";
 
   function closeOverlays(): void {
     setShowAllProjects(false);
@@ -209,9 +217,9 @@ export function ProjectSelectManager({
 
   return (
     <div ref={rootRef} className="relative w-full min-w-0">
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <div className={controlsWrapCls}>
         {usesQuickProjects ? (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          <div className={quickProjectsWrapCls}>
             {visibleQuickProjects.map((project) => {
               const isActive = value === project.id;
 
@@ -242,7 +250,9 @@ export function ProjectSelectManager({
                 setShowAllProjects((current) => !current);
               }}
               aria-expanded={showAllProjects}
-              className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
+              className={`rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100 ${
+                desktopSingleRow ? "shrink-0" : ""
+              }`}
             >
               {showAllProjects ? "Скрыть список" : "Показать все"}
             </button>

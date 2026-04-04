@@ -28,11 +28,18 @@ function formatCompletionLabel(completedAt?: string | null): string | null {
   return `подтверждено ${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
 }
 
+function shiftDateKey(dateKey: string, days: number): string {
+  const date = new Date(`${dateKey}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export default function CalendarPage() {
   const [version, setVersion] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
   const monthDates = useMemo(() => getMonthDates(new Date()), []);
   const today = monthDates.find((item) => item.isToday)?.key ?? monthDates[0]?.key;
+  const yesterdayKey = useMemo(() => shiftDateKey(today, -1), [today]);
   const [selectedDate, setSelectedDate] = useState(today);
 
   useEffect(() => {
@@ -139,7 +146,39 @@ export default function CalendarPage() {
               const approvalState = getScheduleSlotApprovalState(slot);
               const requiresApproval = approvalState.requiresApproval;
               const isCompleted = approvalState.isCompleted;
+              const isYesterdayDay = selectedDate === yesterdayKey;
+              const isPendingSlot = requiresApproval && !isCompleted;
+              const isYesterdayPendingSlot = isYesterdayDay && isPendingSlot;
+              const isYesterdayMutedSlot = isYesterdayDay && !isYesterdayPendingSlot;
               const completionLabel = formatCompletionLabel(approvalState.completedAt);
+              const shellCls = isYesterdayPendingSlot
+                ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"
+                : isYesterdayMutedSlot
+                  ? "border-zinc-700/80 bg-zinc-900/72 text-zinc-300 opacity-80"
+                  : isCompleted
+                    ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50"
+                    : SCHEDULE_TONE_CLS[slot.tone];
+              const timeCls = isYesterdayPendingSlot
+                ? "text-rose-100/85"
+                : isYesterdayMutedSlot
+                  ? "text-zinc-500"
+                  : isCompleted
+                    ? "text-emerald-100/85"
+                    : "opacity-70";
+              const titleCls = isYesterdayPendingSlot
+                ? "text-rose-50"
+                : isYesterdayMutedSlot
+                  ? isCompleted
+                    ? "text-zinc-400 line-through decoration-zinc-500/40 opacity-85"
+                    : "text-zinc-400"
+                  : isCompleted
+                    ? "text-emerald-50 line-through decoration-emerald-100/45 opacity-90"
+                    : "";
+              const subtitleCls = isYesterdayPendingSlot
+                ? "text-rose-100/75"
+                : isYesterdayMutedSlot
+                  ? "text-zinc-500"
+                  : "opacity-70";
               const sourceLabel =
                 slot.source === "studio"
                   ? "schedule.xlsx"
@@ -150,12 +189,12 @@ export default function CalendarPage() {
               return (
                 <div
                   key={slot.id}
-                  className={`rounded-xl border px-4 py-3 ${isCompleted ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50" : SCHEDULE_TONE_CLS[slot.tone]}`}
+                  className={`rounded-xl border px-4 py-3 ${shellCls}`}
                 >
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <p className={`font-mono text-xs ${isCompleted ? "text-emerald-100/85" : "opacity-70"}`}>
+                        <p className={`font-mono text-xs ${timeCls}`}>
                           {formatScheduleTimeRange(slot.start, slot.end)}
                         </p>
                         {requiresApproval && (
@@ -166,9 +205,13 @@ export default function CalendarPage() {
                               setVersion((current) => current + 1);
                             }}
                             className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold leading-none transition ${
-                              isCompleted
-                                ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
-                                : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                              isYesterdayDay
+                                ? isCompleted
+                                  ? "border-zinc-600/80 bg-zinc-900/85 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                                  : "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
+                                : isCompleted
+                                  ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
+                                  : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                             }`}
                             aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
                             title={isCompleted ? "Снять подтверждение" : "Подтвердить выполнение"}
@@ -177,16 +220,16 @@ export default function CalendarPage() {
                           </button>
                         )}
                       </div>
-                      <p className={`mt-1 min-w-0 text-sm font-medium ${isCompleted ? "text-emerald-50 line-through decoration-emerald-100/45 opacity-90" : ""}`}>
+                      <p className={`mt-1 min-w-0 text-sm font-medium ${titleCls}`}>
                           {slot.title}
                       </p>
                       {completionLabel && (
-                        <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100/85">
+                        <p className={`mt-1 text-[10px] uppercase tracking-[0.14em] ${isYesterdayDay ? "text-zinc-500" : "text-emerald-100/85"}`}>
                           {completionLabel}
                         </p>
                       )}
                       {slot.subtitle && (
-                        <p className="mt-1 text-xs opacity-70">{slot.subtitle}</p>
+                        <p className={`mt-1 text-xs ${subtitleCls}`}>{slot.subtitle}</p>
                       )}
                       {slot.tags.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -201,7 +244,7 @@ export default function CalendarPage() {
                         </div>
                       )}
                     </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <div className={`flex shrink-0 flex-wrap items-center gap-2 ${isYesterdayMutedSlot ? "opacity-70" : ""}`}>
                       {heysBadgeLabel && (
                         <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-orange-200">
                           {heysBadgeLabel}

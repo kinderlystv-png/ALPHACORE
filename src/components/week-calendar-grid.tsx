@@ -562,6 +562,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const reboundTimerRef = useRef<number | null>(null);
   const reboundFrameRef = useRef<number | null>(null);
   const today = todayKey();
+  const yesterdayKey = shiftDateKey(today, -1);
 
   useEffect(() => {
     setAnchor(getTodayWindowAnchor());
@@ -1703,15 +1704,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 <div className="mt-1.5 flex flex-col gap-1">
                   {col.tasks.map((t) => {
                     const c = taskColor(t);
-                    const isYesterdayCarryover = isYesterdayUndoneTask(t, today);
-                    const isOverdueCarryover = isOverdueUndoneTask(t, today);
-                    const chipTone = isYesterdayCarryover
-                      ? "border-rose-400/55 bg-linear-to-br from-rose-500/24 via-red-500/18 to-rose-950/34 text-rose-50 shadow-[0_8px_18px_rgba(127,29,29,0.24)]"
-                      : isOverdueCarryover
-                        ? "border-amber-400/55 bg-linear-to-br from-amber-500/24 via-orange-500/16 to-amber-950/34 text-amber-50 shadow-[0_8px_18px_rgba(120,53,15,0.22)]"
-                        : col.isPast
-                          ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
-                          : `${c.border} ${c.bg} ${c.text}`;
 
                     return (
                       <span
@@ -1724,7 +1716,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           onDragStartTask(t.id, col.key);
                         }}
                         onDragEnd={onDragEnd}
-                        className={`block w-full truncate rounded-md border px-2 py-1 text-left text-[10px] font-medium leading-tight ${!col.isPast ? "cursor-grab" : ""} ${chipTone}`}
+                        className={`block w-full truncate rounded-md border px-2 py-1 text-left text-[10px] font-medium leading-tight ${
+                          col.isPast
+                            ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
+                            : `cursor-grab ${c.border} ${c.bg} ${c.text}`
+                        }`}
                       >
                         {t.title}
                       </span>
