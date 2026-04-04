@@ -151,6 +151,89 @@ async function taskDone(args) {
   console.info(`✅ Done: ${task.title}`);
 }
 
+async function taskUpdate(args) {
+  const { positional, flags } = parseArgs(args);
+  const id = positional[0];
+  if (!id) {
+    console.error(
+      'Usage: task update <id> [--title "..."] [--priority p1|p2|p3] [--status inbox|active|done|archived] [--due YYYY-MM-DD] [--clear-due] [--project name] [--clear-project]',
+    );
+    process.exit(1);
+  }
+
+  const tasks = (await getKey("alphacore_tasks")) ?? [];
+  const task = tasks.find((t) => t.id === id || t.id.startsWith(id));
+  if (!task) {
+    console.error(`❌ Task not found: ${id}`);
+    process.exit(1);
+  }
+
+  if (flags.priority && !["p1", "p2", "p3"].includes(flags.priority)) {
+    console.error("❌ Invalid priority. Use p1, p2, or p3.");
+    process.exit(1);
+  }
+
+  if (flags.status && !["inbox", "active", "done", "archived"].includes(flags.status)) {
+    console.error("❌ Invalid status. Use inbox, active, done, or archived.");
+    process.exit(1);
+  }
+
+  if (flags.due && flags["clear-due"]) {
+    console.error("❌ Use either --due or --clear-due, not both.");
+    process.exit(1);
+  }
+
+  if (flags.project && flags["clear-project"]) {
+    console.error("❌ Use either --project or --clear-project, not both.");
+    process.exit(1);
+  }
+
+  const hasChanges = Boolean(
+    flags.title ||
+      flags.priority ||
+      flags.status ||
+      flags.due ||
+      flags["clear-due"] ||
+      flags.project ||
+      flags["clear-project"],
+  );
+
+  if (!hasChanges) {
+    console.error(
+      '❌ Nothing to update. Pass at least one of: --title, --priority, --status, --due, --clear-due, --project, --clear-project.',
+    );
+    process.exit(1);
+  }
+
+  if (flags.title) task.title = flags.title;
+  if (flags.priority) task.priority = flags.priority;
+  if (flags["clear-due"]) task.dueDate = undefined;
+  else if (flags.due) task.dueDate = flags.due;
+
+  if (flags["clear-project"]) {
+    task.project = undefined;
+    task.projectId = undefined;
+  } else if (flags.project) {
+    task.project = flags.project;
+    task.projectId = undefined;
+  }
+
+  if (flags.status) {
+    task.status = flags.status;
+    if (flags.status === "done") {
+      task.completedAt = task.completedAt ?? new Date().toISOString();
+    } else {
+      task.completedAt = undefined;
+    }
+  }
+
+  await putKey("alphacore_tasks", tasks);
+
+  const due = task.dueDate ? ` due:${task.dueDate}` : "";
+  const proj = task.project ? ` [${task.project}]` : "";
+  console.info(`✅ Task updated: ${task.title}${proj}${due} (${task.id})`);
+}
+
 // ── Journal commands ─────────────────────────────────────────────────────────
 
 async function journalAdd(args) {
@@ -678,6 +761,7 @@ Usage: npm run alpha -- <command> [args]
 Commands:
   task add "title" [--priority p1|p2|p3] [--due YYYY-MM-DD] [--project name]
   task list [--status inbox|active|done] [--limit N]
+  task update <id> [--title "..."] [--priority p1|p2|p3] [--status inbox|active|done|archived] [--due YYYY-MM-DD] [--clear-due] [--project name] [--clear-project]
   task done <id>
   journal add "text" [--tags tag1,tag2] [--author user|assistant]
   journal list [--limit N]
@@ -714,6 +798,7 @@ async function main() {
     case "task":
       if (action === "add") return taskAdd(rest);
       if (action === "list") return taskList(rest);
+      if (action === "update") return taskUpdate(rest);
       if (action === "done") return taskDone(rest);
       break;
     case "journal":
