@@ -8,6 +8,7 @@ import {
   formatCompletionLabel,
   getSlotAttentionState,
 } from "@/lib/calendar-slot-attention";
+import { getScheduleSlotExplainability } from "@/lib/calendar-slot-explainability";
 import {
   formatScheduleTimeRange,
   getHeysSyncedSlotBadgeLabel,
@@ -142,6 +143,7 @@ export default function CalendarPage() {
               });
               const { isYesterdayPendingSlot, isYesterdayMutedSlot } = attentionState;
               const completionLabel = formatCompletionLabel(approvalState.completedAt);
+              const explainability = getScheduleSlotExplainability(slot);
               const shellCls = isYesterdayPendingSlot
                 ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"
                 : isYesterdayMutedSlot
@@ -170,12 +172,6 @@ export default function CalendarPage() {
                 : isYesterdayMutedSlot
                   ? "text-zinc-500"
                   : "opacity-70";
-              const sourceLabel =
-                slot.source === "studio"
-                  ? "schedule.xlsx"
-                  : slot.source === "derived"
-                    ? "rule"
-                    : "week";
 
               return (
                 <div
@@ -241,9 +237,16 @@ export default function CalendarPage() {
                           {heysBadgeLabel}
                         </span>
                       )}
-                      <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white/70">
-                        {sourceLabel}
-                      </span>
+                      {explainability.showBadges && explainability.primaryBadge && (
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${isYesterdayMutedSlot ? "border-zinc-700 text-zinc-500" : "border-white/10 text-white/70"}`}>
+                          {explainability.primaryBadge}
+                        </span>
+                      )}
+                      {explainability.showBadges && explainability.secondaryBadge && (
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${isYesterdayMutedSlot ? "border-zinc-700 text-zinc-500" : "border-white/10 text-white/70"}`}>
+                          {explainability.secondaryBadge}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

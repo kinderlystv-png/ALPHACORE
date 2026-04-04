@@ -9,6 +9,7 @@ import {
   getYesterdayKey,
   shiftDateKey,
 } from "@/lib/calendar-slot-attention";
+import { getScheduleSlotExplainability } from "@/lib/calendar-slot-explainability";
 import {
   AREA_COLOR,
   AREA_LEGEND,
@@ -1876,6 +1877,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
                   const isHeysSynced = isHeysSyncedScheduleSlot(slot);
                   const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
+                  const explainability = getScheduleSlotExplainability(slot);
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
                   const isBlockingSlot =
@@ -2069,6 +2071,20 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                             <p className={`mt-1 inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[9px] font-medium ${isYesterdayMutedSlot ? "border-zinc-700 bg-zinc-900/80 text-zinc-500" : "border-violet-500/20 bg-violet-500/10 text-violet-200"}`}>
                               {projectLabel}
                             </p>
+                          )}
+                          {explainability.showBadges && !isSupportSlot && height > 52 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {explainability.primaryBadge && (
+                                <span className={`inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[8px] font-medium uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "border-zinc-700 bg-zinc-900/80 text-zinc-500" : "border-white/10 bg-black/10 text-white/70"}`}>
+                                  {explainability.primaryBadge}
+                                </span>
+                              )}
+                              {explainability.secondaryBadge && (
+                                <span className={`inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[8px] font-medium uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "border-zinc-700 bg-zinc-900/80 text-zinc-500" : "border-white/10 bg-black/10 text-white/70"}`}>
+                                  {explainability.secondaryBadge}
+                                </span>
+                              )}
+                            </div>
                           )}
                           {completionLabel && !isSupportSlot && height > 44 && (
                             <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "text-zinc-500" : isCompletedSlot ? "text-emerald-100/85" : secondaryTextClass}`}>
