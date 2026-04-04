@@ -114,8 +114,31 @@ type TraceItem = {
   subtitle: string;
   statusLabel: string;
   statusTone: MetricStatus | "neutral";
+  impact: ImpactEvaluation;
   metricKey: MetricKey | null;
   createdAt: number;
+};
+
+type ImpactEvaluation = {
+  kind: "pending" | "needs-completion" | "improved" | "worse" | "flat" | "no-data";
+  label: string;
+  detail: string;
+  tone: MetricStatus | "neutral";
+};
+
+type ImpactConfig = {
+  direction: "higher" | "lower";
+  mode: "avg" | "sum";
+  threshold: number;
+  beforeCount: number;
+  afterCount: number;
+  minBefore: number;
+  minAfter: number;
+  waitDays: number;
+  getValue: (day: HeysDayRecord, weightGoal: number | null | undefined) => number | null;
+  formatChange: (rawDelta: number, outcome: "improved" | "worse" | "flat") => string;
+  formatValue: (value: number) => string;
+  windowLabel: string;
 };
 
 function Sparkline({
@@ -648,6 +671,336 @@ function averageFromDays(
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function averageNumbers(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function sumNumbers(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+function dateDiffDays(laterDateKey: string, earlierDateKey: string): number {
+  const later = new Date(`${laterDateKey}T00:00:00`).getTime();
+  const earlier = new Date(`${earlierDateKey}T00:00:00`).getTime();
+  return Math.round((later - earlier) / 86_400_000);
+}
+
+function dateKeyFromTimestamp(timestamp: number): string {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function getImpactConfig(metricKey: MetricKey): ImpactConfig {
+  switch (metricKey) {
+    case "sleep":
+      return {
+        direction: "higher",
+        mode: "avg",
+        threshold: 0.4,
+        beforeCount: 3,
+        afterCount: 2,
+        minBefore: 1,
+        minAfter: 1,
+        waitDays: 2,
+        getValue: (day) => day.sleepHours,
+        formatChange: (rawDelta) => `${rawDelta >= 0 ? "+" : ""}${fmtNum(rawDelta)}ч сна`,
+        formatValue: (value) => `${fmtNum(value)}ч`,
+        windowLabel: "смотрим 3 дня до / 2 дня после",
+      };
+    case "bedtime":
+      return {
+        direction: "lower",
+        mode: "avg",
+        threshold: 0.25,
+        beforeCount: 3,
+        afterCount: 2,
+        minBefore: 1,
+        minAfter: 1,
+        waitDays: 2,
+        getValue: (day) => parseSleepStartToHour(day.sleepStart),
+        formatChange: (rawDelta, outcome) => {
+          const minutes = Math.round(Math.abs(rawDelta) * 60);
+          if (outcome === "improved") return `${minutes} мин раньше`;
+          if (outcome === "worse") return `${minutes} мин позже`;
+          return `≈ ${minutes} мин без сдвига`;
+        },
+        formatValue: (value) => fmtClock(value),
+        windowLabel: "смотрим 3 дня до / 2 дня после",
+      };
+    case "steps":
+      return {
+        direction: "higher",
+        mode: "avg",
+        threshold: 800,
+        beforeCount: 3,
+        afterCount: 2,
+        minBefore: 1,
+        minAfter: 1,
+        waitDays: 2,
+        getValue: (day) => day.steps,
+        formatChange: (rawDelta) => `${rawDelta >= 0 ? "+" : ""}${fmtNum(rawDelta, 0)} шагов`,
+        formatValue: (value) => `${fmtNum(value, 0)} шагов`,
+        windowLabel: "смотрим 3 дня до / 2 дня после",
+      };
+    case "training":
+      return {
+        direction: "higher",
+        mode: "sum",
+        threshold: 1,
+        beforeCount: 7,
+        afterCount: 7,
+        minBefore: 3,
+        minAfter: 3,
+        waitDays: 7,
+        getValue: (day) => day.trainingCount,
+        formatChange: (rawDelta) => `${rawDelta >= 0 ? "+" : ""}${fmtNum(rawDelta, 0)} трен. сессии`,
+        formatValue: (value) => `${fmtNum(value, 0)} сессии`,
+        windowLabel: "смотрим неделю до / после",
+      };
+    case "weight":
+      return {
+        direction: "lower",
+        mode: "avg",
+        threshold: 0.3,
+        beforeCount: 7,
+        afterCount: 7,
+        minBefore: 3,
+        minAfter: 3,
+        waitDays: 7,
+        getValue: (day, weightGoal) =>
+          day.weightMorning != null && weightGoal != null
+            ? Math.abs(day.weightMorning - weightGoal)
+            : null,
+        formatChange: (rawDelta, outcome) => {
+          if (outcome === "improved") return `${fmtNum(Math.abs(rawDelta))} кг ближе к цели`;
+          if (outcome === "worse") return `${fmtNum(Math.abs(rawDelta))} кг дальше от цели`;
+          return `≈ ${fmtNum(Math.abs(rawDelta))} кг без сдвига`;
+        },
+        formatValue: (value) => `${fmtNum(value)} кг до цели`,
+        windowLabel: "смотрим неделю до / после",
+      };
+    case "mood":
+      return {
+        direction: "higher",
+        mode: "avg",
+        threshold: 0.4,
+        beforeCount: 3,
+        afterCount: 2,
+        minBefore: 1,
+        minAfter: 1,
+        waitDays: 2,
+        getValue: (day) => day.moodAvg ?? day.moodMorning,
+        formatChange: (rawDelta) => `${rawDelta >= 0 ? "+" : ""}${fmtNum(rawDelta)} к настроению`,
+        formatValue: (value) => `${fmtNum(value)}/10`,
+        windowLabel: "смотрим 3 дня до / 2 дня после",
+      };
+    case "wellbeing":
+      return {
+        direction: "higher",
+        mode: "avg",
+        threshold: 0.4,
+        beforeCount: 3,
+        afterCount: 2,
+        minBefore: 1,
+        minAfter: 1,
+        waitDays: 2,
+        getValue: (day) => day.wellbeingAvg ?? day.wellbeingMorning,
+        formatChange: (rawDelta) => `${rawDelta >= 0 ? "+" : ""}${fmtNum(rawDelta)} к самочувствию`,
+        formatValue: (value) => `${fmtNum(value)}/10`,
+        windowLabel: "смотрим 3 дня до / 2 дня после",
+      };
+    case "water":
+      return {
+        direction: "higher",
+        mode: "avg",
+        threshold: 250,
+        beforeCount: 3,
+        afterCount: 2,
+        minBefore: 1,
+        minAfter: 1,
+        waitDays: 2,
+        getValue: (day) => day.waterMl,
+        formatChange: (rawDelta) => `${rawDelta >= 0 ? "+" : ""}${fmtNum(rawDelta, 0)} мл`,
+        formatValue: (value) => `${fmtNum(value, 0)} мл`,
+        windowLabel: "смотрим 3 дня до / 2 дня после",
+      };
+    case "stress":
+      return {
+        direction: "lower",
+        mode: "avg",
+        threshold: 0.4,
+        beforeCount: 3,
+        afterCount: 2,
+        minBefore: 1,
+        minAfter: 1,
+        waitDays: 2,
+        getValue: (day) => day.stressAvg ?? day.stressMorning,
+        formatChange: (rawDelta, outcome) => {
+          if (outcome === "improved") return `${fmtNum(Math.abs(rawDelta))} меньше стресса`;
+          if (outcome === "worse") return `${fmtNum(Math.abs(rawDelta))} больше стресса`;
+          return `≈ ${fmtNum(Math.abs(rawDelta))} без сдвига`;
+        },
+        formatValue: (value) => `${fmtNum(value)}/10`,
+        windowLabel: "смотрим 3 дня до / 2 дня после",
+      };
+  }
+}
+
+function evaluateImpactFromAnchor(
+  metricKey: MetricKey,
+  anchorDate: string,
+  days: HeysDayRecord[],
+  weightGoal: number | null | undefined,
+): ImpactEvaluation {
+  const config = getImpactConfig(metricKey);
+  const latestDate = days[days.length - 1]?.date;
+
+  if (!latestDate) {
+    return {
+      kind: "no-data",
+      label: "нет данных",
+      detail: "HEYS ещё не вернул достаточно данных для проверки эффекта.",
+      tone: "neutral",
+    };
+  }
+
+  const beforeValues = days
+    .filter((day) => day.date < anchorDate)
+    .map((day) => config.getValue(day, weightGoal))
+    .filter((value): value is number => value != null && Number.isFinite(value))
+    .slice(-config.beforeCount);
+
+  const afterValues = days
+    .filter((day) => day.date > anchorDate)
+    .map((day) => config.getValue(day, weightGoal))
+    .filter((value): value is number => value != null && Number.isFinite(value))
+    .slice(0, config.afterCount);
+
+  if (afterValues.length < config.minAfter) {
+    if (dateDiffDays(latestDate, anchorDate) < config.waitDays) {
+      return {
+        kind: "pending",
+        label: config.waitDays >= 7 ? "ждём недельный сигнал" : "ждём 24–48ч",
+        detail: `После действия ещё слишком рано судить об эффекте — ${config.windowLabel}.`,
+        tone: "neutral",
+      };
+    }
+
+    return {
+      kind: "no-data",
+      label: "нет свежих check-in",
+      detail: `После действия не хватает точек по метрике «${getMetricLabel(metricKey)}».`,
+      tone: "neutral",
+    };
+  }
+
+  if (beforeValues.length < config.minBefore) {
+    return {
+      kind: "no-data",
+      label: "нет baseline",
+      detail: `До действия мало исторических точек, поэтому сравнение пока шумное.`,
+      tone: "neutral",
+    };
+  }
+
+  const beforeAggregate =
+    config.mode === "sum" ? sumNumbers(beforeValues) : averageNumbers(beforeValues);
+  const afterAggregate =
+    config.mode === "sum" ? sumNumbers(afterValues) : averageNumbers(afterValues);
+
+  if (beforeAggregate == null || afterAggregate == null) {
+    return {
+      kind: "no-data",
+      label: "нет сигнала",
+      detail: `Недостаточно данных, чтобы оценить сдвиг по «${getMetricLabel(metricKey)}».`,
+      tone: "neutral",
+    };
+  }
+
+  const rawDelta = afterAggregate - beforeAggregate;
+  const directionalDelta = config.direction === "higher" ? rawDelta : -rawDelta;
+
+  if (Math.abs(directionalDelta) < config.threshold) {
+    return {
+      kind: "flat",
+      label: "без заметного сдвига",
+      detail: `${config.windowLabel} · было ${config.formatValue(beforeAggregate)} → стало ${config.formatValue(afterAggregate)}.`,
+      tone: "neutral",
+    };
+  }
+
+  const outcome = directionalDelta > 0 ? "improved" : "worse";
+
+  return {
+    kind: outcome,
+    label: config.formatChange(rawDelta, outcome),
+    detail: `${config.windowLabel} · было ${config.formatValue(beforeAggregate)} → стало ${config.formatValue(afterAggregate)}.`,
+    tone: outcome === "improved" ? "good" : "bad",
+  };
+}
+
+function evaluateTraceImpactForTask(
+  task: Task,
+  metricKey: MetricKey | null,
+  days: HeysDayRecord[],
+  weightGoal: number | null | undefined,
+): ImpactEvaluation {
+  if (!metricKey) {
+    return {
+      kind: "no-data",
+      label: "метрика не определена",
+      detail: "Для этой задачи пока не удалось однозначно определить связанный сигнал HEYS.",
+      tone: "neutral",
+    };
+  }
+
+  if (task.status !== "done") {
+    const isOverdue = !!task.dueDate && task.dueDate < todayDateKey();
+    return {
+      kind: "needs-completion",
+      label: isOverdue ? "ждёт выполнения" : "ещё не выполнено",
+      detail: "Сначала нужно завершить задачу, и только потом HEYS сможет показать отклик по этой метрике.",
+      tone: isOverdue ? "warn" : "neutral",
+    };
+  }
+
+  const anchorDate = dateKeyFromTimestamp(
+    new Date(task.completedAt ?? task.createdAt).getTime(),
+  );
+
+  return evaluateImpactFromAnchor(metricKey, anchorDate, days, weightGoal);
+}
+
+function evaluateTraceImpactForEvent(
+  event: CustomEvent,
+  metricKey: MetricKey | null,
+  days: HeysDayRecord[],
+  weightGoal: number | null | undefined,
+): ImpactEvaluation {
+  if (!metricKey) {
+    return {
+      kind: "no-data",
+      label: "метрика не определена",
+      detail: "Для этого слота пока не удалось однозначно определить связанный сигнал HEYS.",
+      tone: "neutral",
+    };
+  }
+
+  const endTimestamp = new Date(`${event.date}T${event.end}:00`).getTime();
+
+  if (Date.now() < endTimestamp) {
+    return {
+      kind: "pending",
+      label: "слот впереди",
+      detail: "Слот ещё не прошёл, поэтому оценивать эффект рано.",
+      tone: "neutral",
+    };
+  }
+
+  return evaluateImpactFromAnchor(metricKey, event.date, days, weightGoal);
+}
+
 function buildCorrelationInsights(
   days: HeysDayRecord[],
   profileStepsGoal: number | null | undefined,
@@ -845,12 +1198,18 @@ function getTraceStatusForEvent(event: CustomEvent): {
   return { label: "окно прошло", tone: "neutral" };
 }
 
-function buildTraceItems(tasks: Task[], events: CustomEvent[]): TraceItem[] {
+function buildTraceItems(
+  tasks: Task[],
+  events: CustomEvent[],
+  days: HeysDayRecord[],
+  weightGoal: number | null | undefined,
+): TraceItem[] {
   const taskItems = tasks
     .filter((task) => task.origin?.source === "heys")
     .map((task) => {
       const metricKey = toMetricKey(task.origin?.metricKey);
       const status = getTraceStatusForTask(task);
+      const impact = evaluateTraceImpactForTask(task, metricKey, days, weightGoal);
 
       return {
         id: `task-${task.id}`,
@@ -859,6 +1218,7 @@ function buildTraceItems(tasks: Task[], events: CustomEvent[]): TraceItem[] {
         subtitle: `${getMetricEmoji(metricKey)} ${getMetricLabel(metricKey)} · ${getViaLabel(task.origin?.via)}${task.dueDate ? ` · ${formatDateLabel(task.dueDate)}` : ""}`,
         statusLabel: status.label,
         statusTone: status.tone,
+        impact,
         metricKey,
         createdAt: new Date(task.createdAt).getTime(),
       };
@@ -869,6 +1229,7 @@ function buildTraceItems(tasks: Task[], events: CustomEvent[]): TraceItem[] {
     .map((event) => {
       const metricKey = extractMetricKeyFromEvent(event);
       const status = getTraceStatusForEvent(event);
+      const impact = evaluateTraceImpactForEvent(event, metricKey, days, weightGoal);
 
       return {
         id: `slot-${event.id}`,
@@ -877,6 +1238,7 @@ function buildTraceItems(tasks: Task[], events: CustomEvent[]): TraceItem[] {
         subtitle: `${getMetricEmoji(metricKey)} ${getMetricLabel(metricKey)} · ${getViaLabel(event.origin?.via ?? "slot")} · ${formatDateLabel(event.date)} · ${event.start}`,
         statusLabel: status.label,
         statusTone: status.tone,
+        impact,
         metricKey,
         createdAt: parseEventCreatedAt(event),
       };
@@ -903,6 +1265,24 @@ function getWeekSlotLoadLabel(loadScore: number): {
   if (loadScore <= 4) return { label: "лёгкий день", tone: "good" };
   if (loadScore <= 8) return { label: "умеренно", tone: "warn" };
   return { label: "плотно", tone: "bad" };
+}
+
+function summarizeTraceImpact(items: TraceItem[]): {
+  improved: number;
+  worse: number;
+  pending: number;
+  flat: number;
+} {
+  return items.reduce(
+    (acc, item) => {
+      if (item.impact.kind === "improved") acc.improved += 1;
+      else if (item.impact.kind === "worse") acc.worse += 1;
+      else if (item.impact.kind === "flat") acc.flat += 1;
+      else acc.pending += 1;
+      return acc;
+    },
+    { improved: 0, worse: 0, pending: 0, flat: 0 },
+  );
 }
 
 function getDefaultMetricKey(h: HeysHealthSignals): MetricKey {
@@ -1694,7 +2074,13 @@ export function HeysHealthPanel() {
     snapshot.profile?.stepsGoal,
     snapshot.profile?.sleepHoursGoal,
   );
-  const traceItems = buildTraceItems(getTasks(), getCustomEvents());
+  const traceItems = buildTraceItems(
+    getTasks(),
+    getCustomEvents(),
+    days,
+    snapshot.profile?.weightGoal,
+  );
+  const traceSummary = summarizeTraceImpact(traceItems);
 
   function createTaskFromPlan(
     plan: MetricActionPlan,
@@ -2156,14 +2542,29 @@ export function HeysHealthPanel() {
       <div className="mt-3 rounded-2xl border border-zinc-800/60 bg-zinc-900/20 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">HEYS trace</p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">HEYS feedback loop</p>
             <p className="mt-1 text-sm text-zinc-300">
-              Что уже было превращено из сигнала в действие — чтобы видеть замкнулся ли контур, а не только график.
+              Что уже было превращено из сигнала в действие — и дал ли этот шаг заметный эффект после 24–48 часов или на недельном окне.
             </p>
           </div>
-          <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-            задачи + защищённые окна
-          </p>
+          <div className="flex flex-wrap gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass("good")}`}>
+              улучшение {traceSummary.improved}
+            </span>
+            <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass("neutral")}`}>
+              ждут сигнала {traceSummary.pending}
+            </span>
+            {traceSummary.flat > 0 && (
+              <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass("warn")}`}>
+                без сдвига {traceSummary.flat}
+              </span>
+            )}
+            {traceSummary.worse > 0 && (
+              <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass("bad")}`}>
+                ухудшение {traceSummary.worse}
+              </span>
+            )}
+          </div>
         </div>
 
         {traceItems.length > 0 ? (
@@ -2181,6 +2582,7 @@ export function HeysHealthPanel() {
                     <p className="truncate text-sm font-medium text-zinc-100">{item.title}</p>
                   </div>
                   <p className="mt-1 text-[12px] text-zinc-400">{item.subtitle}</p>
+                  <p className="mt-1 text-[11px] text-zinc-500">{item.impact.detail}</p>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -2189,6 +2591,9 @@ export function HeysHealthPanel() {
                   </span>
                   <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(item.statusTone)}`}>
                     {item.statusLabel}
+                  </span>
+                  <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(item.impact.tone)}`}>
+                    {item.impact.label}
                   </span>
                 </div>
               </button>
