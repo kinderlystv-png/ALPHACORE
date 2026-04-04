@@ -1,4 +1,6 @@
-import type { ScheduleSlot } from "@/lib/schedule";
+import { getSlotQuickRescheduleOptions } from "@/lib/calendar-slot-reschedule";
+import { shiftDateKey } from "@/lib/calendar-slot-attention";
+import { timeToMinutes, type ScheduleSlot } from "@/lib/schedule";
 
 export type SlotCarryoverDecision = {
   staleDays: number;
@@ -9,8 +11,33 @@ export type SlotCarryoverDecision = {
   allowUnscheduleTask: boolean;
 };
 
+export type SlotCarryoverAction =
+  | {
+      key: string;
+      type: "move-slot";
+      buttonLabel: string;
+      description: string;
+      priority: "primary" | "secondary";
+      dateKey: string;
+    }
+  | {
+      key: string;
+      type: "unschedule-task";
+      buttonLabel: string;
+      description: string;
+      priority: "primary" | "secondary";
+    }
+  | {
+      key: string;
+      type: "compress-slot";
+      buttonLabel: string;
+      description: string;
+      priority: "primary" | "secondary";
+      end: string;
+    };
+
 type SlotCarryoverDecisionInput = {
-  slot: Pick<ScheduleSlot, "date" | "taskId" | "tone">;
+  slot: Pick<ScheduleSlot, "date" | "start" | "end" | "taskId" | "tone">;
   todayKey: string;
   requiresApproval: boolean;
   isCompleted: boolean;
@@ -21,6 +48,31 @@ function diffDays(fromDateKey: string, toDateKey: string): number {
   const toDate = new Date(`${toDateKey}T00:00:00`);
 
   return Math.max(0, Math.round((fromDate.getTime() - toDate.getTime()) / 86_400_000));
+}
+
+function minutesToClock(minutes: number): string {
+  const safeMinutes = Math.max(0, minutes);
+  const hours = Math.floor(safeMinutes / 60);
+  const mins = safeMinutes % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+}
+
+function getCompressTargetMinutes(durationMin: number): number | null {
+  if (durationMin >= 120) return 60;
+  if (durationMin >= 90) return 45;
+  return null;
+}
+
+function getPreferredMoveTargets(slotDate: string, todayKey: string, staleDays: number): string[] {
+  const tomorrowKey = shiftDateKey(todayKey, 1);
+  const plusTwoKey = shiftDateKey(todayKey, 2);
+
+  if (staleDays >= 2) {
+    return [tomorrowKey, plusTwoKey, todayKey];
+  }
+
+  return [todayKey, tomorrowKey, plusTwoKey];
 }
 
 export function getSlotCarryoverDecision({
@@ -99,4 +151,90 @@ export function getSlotCarryoverDecision({
         tone,
         allowUnscheduleTask: false,
       };
+}
+
+export function getSlotCarryoverActions({
+  slot,
+  todayKey,
+  requiresApproval,
+  isCompleted,
+}: SlotCarryoverDecisionInput): SlotCarryoverAction[] {
+  const decision = getSlotCarryoverDecision({
+    slot,
+    todayKey,
+    requiresApproval,
+    isCompleted,
+  });
+
+  if (!decision) {
+    return [];
+  }
+
+  const staleDays = decision.staleDays;
+  const durationMin = timeToMinutes(slot.end) - timeToMinutes(slot.start);
+  const compressTargetMin = getCompressTargetMinutes(durationMin);
+  const moveOptionsByDate = new Map(
+    getSlotQuickRescheduleOptions(slot.date, todayKey).map((option) => [option.dateKey, option]),
+  );
+
+  const preferredMoveActions = getPreferredMoveTargets(slot.date, todayKey, staleDays)
+    .map((dateKey) => moveOptionsByDate.get(dateKey))
+    .filter((option): option is NonNullable<typeof option> => Boolean(option))
+    .slice(0, 2)
+    .map((option, index) => {
+      const priority: "primary" | "secondary" = index === 0 ? "primary" : "secondary";
+
+      return {
+        key: `carryover-move-${option.dateKey}`,
+        type: "move-slot" as const,
+        buttonLabel: option.buttonLabel,
+        description: option.description,
+        priority,
+        dateKey: option.dateKey,
+      } satisfies SlotCarryoverAction;
+    });
+
+  if (slot.taskId) {
+    return [
+      {
+        key: "carryover-unschedule-task",
+        type: "unschedule-task",
+        buttonLabel: "В список без слота",
+        description: "убрать слот и оставить задачу активной",
+        priority: "primary" as const,
+      },
+      ...preferredMoveActions.map((action, index) => {
+        const priority: "primary" | "secondary" = index === 0 ? "secondary" : action.priority;
+
+        return {
+          ...action,
+          priority,
+        } satisfies SlotCarryoverAction;
+      }),
+    ].slice(0, 3) as SlotCarryoverAction[];
+  }
+
+  if (slot.tone !== "cleanup" && compressTargetMin != null) {
+    const compressedEndMinutes = timeToMinutes(slot.start) + compressTargetMin;
+    return [
+      {
+        key: `carryover-compress-${compressTargetMin}`,
+        type: "compress-slot",
+        buttonLabel: `Сжать до ${compressTargetMin}м`,
+        description: `оставить короткую версию до ${minutesToClock(compressedEndMinutes)}`,
+        priority: "primary" as const,
+        end: minutesToClock(compressedEndMinutes),
+      },
+      ...preferredMoveActions.map((action, index) => {
+        const priority: "primary" | "secondary" = index === 0 ? "secondary" : action.priority;
+
+        return {
+          ...action,
+          priority,
+        } satisfies SlotCarryoverAction;
+      }),
+    ].slice(0, 3) as SlotCarryoverAction[];
+  }
+
+  return preferredMoveActions as SlotCarryoverAction[];
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { getSlotQuickRescheduleOptions } from "@/lib/calendar-slot-reschedule";
-import { getSlotCarryoverDecision } from "@/lib/calendar-slot-carryover";
 import {
-  isEditableScheduleSlot,
+  getSlotCarryoverActions,
+  getSlotCarryoverDecision,
+} from "@/lib/calendar-slot-carryover";
+import {
   type ScheduleSlot,
   unscheduleCustomTaskEvent,
   updateEditableScheduleSlot,
@@ -39,11 +40,14 @@ export function SlotCarryoverDecision({
     return null;
   }
 
-  const canMoveSlot = isEditableScheduleSlot(slot);
-  const options = canMoveSlot ? getSlotQuickRescheduleOptions(slot.date, todayKey).slice(0, 2) : [];
-  const canUnscheduleTask = decision.allowUnscheduleTask && slot.id.startsWith("custom-");
+  const actions = getSlotCarryoverActions({
+    slot,
+    todayKey,
+    requiresApproval,
+    isCompleted,
+  });
 
-  if (options.length === 0 && !canUnscheduleTask) {
+  if (actions.length === 0) {
     return null;
   }
 
@@ -91,8 +95,8 @@ export function SlotCarryoverDecision({
         <p className={`mt-1 ${summaryClassName}`}>{decision.summary}</p>
 
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {options.map((option, index) => {
-            const toneClassName = index === 0
+          {actions.map((action) => {
+            const toneClassName = action.priority === "primary"
               ? decision.tone === "rose"
                 ? "border-rose-300/35 bg-rose-500/12 text-rose-50 hover:border-rose-200/55 hover:bg-rose-500/18"
                 : "border-amber-300/35 bg-amber-500/12 text-amber-50 hover:border-amber-200/55 hover:bg-amber-500/18"
@@ -100,34 +104,34 @@ export function SlotCarryoverDecision({
 
             return (
               <button
-                key={option.key}
+                key={action.key}
                 type="button"
-                title={`Перенести ${option.description}`}
+                title={action.description}
                 className={`${baseButtonClassName} ${toneClassName}`}
                 onClick={() => {
-                  const updated = updateEditableScheduleSlot(slot, { date: option.dateKey });
-                  if (!updated) return;
+                  if (action.type === "move-slot") {
+                    const updated = updateEditableScheduleSlot(slot, { date: action.dateKey });
+                    if (!updated) return;
+                    onApplied?.();
+                    return;
+                  }
+
+                  if (action.type === "compress-slot") {
+                    const updated = updateEditableScheduleSlot(slot, { end: action.end });
+                    if (!updated) return;
+                    onApplied?.();
+                    return;
+                  }
+
+                  const removed = unscheduleCustomTaskEvent(slot.id);
+                  if (!removed) return;
                   onApplied?.();
                 }}
               >
-                {option.buttonLabel}
+                {action.buttonLabel}
               </button>
             );
           })}
-
-          {canUnscheduleTask && (
-            <button
-              type="button"
-              className={`${baseButtonClassName} border-zinc-700 bg-zinc-950/72 text-zinc-200 hover:border-zinc-500 hover:text-zinc-50`}
-              onClick={() => {
-                const removed = unscheduleCustomTaskEvent(slot.id);
-                if (!removed) return;
-                onApplied?.();
-              }}
-            >
-              Оставить задачей
-            </button>
-          )}
         </div>
       </div>
     </div>
