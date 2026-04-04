@@ -35,10 +35,10 @@ import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { getProjects, type Project } from "@/lib/projects";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
 import {
-  getTasks,
-  type Task,
   compareTasksByAttention,
   getActionableTasks,
+  getTasks,
+  type Task,
   updateTask,
 } from "@/lib/tasks";
 
@@ -562,6 +562,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const reboundTimerRef = useRef<number | null>(null);
   const reboundFrameRef = useRef<number | null>(null);
   const today = todayKey();
+  const yesterdayKey = shiftDateKey(today, -1);
 
   useEffect(() => {
     setAnchor(getTodayWindowAnchor());
@@ -1798,6 +1799,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
             {visibleColumns.map((col) => {
+              const isYesterdayColumn = col.key === yesterdayKey;
               const hasOverdueTaskSlot = col.slots.some((slot) => {
                 const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
                 if (!linkedTask || !isOverdueUndoneTask(linkedTask, today)) return false;
@@ -1809,9 +1811,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   key={`overlay-${col.key}`}
                   className={`relative ${
                     col.isPast
-                      ? hasOverdueTaskSlot
-                        ? "opacity-80"
-                        : "opacity-30 grayscale"
+                      ? isYesterdayColumn
+                        ? ""
+                        : hasOverdueTaskSlot
+                          ? "opacity-80"
+                          : "opacity-30 grayscale"
                       : ""
                   }`}
                 >
@@ -1863,11 +1867,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const approvalState = getScheduleSlotApprovalState(slot);
                   const requiresApproval = approvalState.requiresApproval;
                   const isCompletedSlot = approvalState.isCompleted;
+                  const isYesterdayPendingSlot = isYesterdayColumn && requiresApproval && !isCompletedSlot;
+                  const isYesterdayMutedSlot = isYesterdayColumn && !isYesterdayPendingSlot;
                   const isOverdueCarryoverTask = Boolean(
-                    linkedTask && isOverdueUndoneTask(linkedTask, today) && !isCompletedSlot,
+                    !isYesterdayMutedSlot && linkedTask && isOverdueUndoneTask(linkedTask, today) && !isCompletedSlot,
                   );
                   const isYesterdayCarryoverTask = Boolean(
-                    linkedTask && isYesterdayUndoneTask(linkedTask, today) && !isCompletedSlot,
+                    !isYesterdayMutedSlot && linkedTask && isYesterdayUndoneTask(linkedTask, today) && !isCompletedSlot,
                   );
                   const completionLabel = formatCompletionLabel(approvalState.completedAt);
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
@@ -1919,29 +1925,41 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         ? "opacity-70"
                         : "opacity-0";
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
-                  const primaryTextClass = isCompletedSlot
-                    ? "text-emerald-50"
-                    : isYesterdayCarryoverTask
-                      ? "text-rose-50"
-                      : isOverdueCarryoverTask
-                        ? "text-amber-50"
-                        : c.text;
-                  const secondaryTextClass = isCompletedSlot
-                    ? "text-emerald-100/80"
-                    : isYesterdayCarryoverTask
-                      ? "text-rose-100/80"
-                      : isOverdueCarryoverTask
-                        ? "text-amber-100/80"
-                        : "text-zinc-500";
-                  const shellTone = isChildcareBackground
-                    ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
-                    : isCompletedSlot
-                      ? "border-emerald-400/55 bg-linear-to-br from-emerald-400/32 via-emerald-500/22 to-emerald-950/42"
-                      : isYesterdayCarryoverTask
-                        ? "border-rose-500/50 bg-linear-to-br from-rose-500/22 via-red-500/16 to-rose-950/34"
-                        : isOverdueCarryoverTask
-                          ? "border-amber-500/50 bg-linear-to-br from-amber-500/20 via-orange-500/14 to-amber-950/32"
-                          : `${c.border} ${c.bg}`;
+                  const primaryTextClass = isYesterdayPendingSlot
+                    ? "text-rose-50"
+                    : isYesterdayMutedSlot
+                      ? "text-zinc-400"
+                      : isCompletedSlot
+                        ? "text-emerald-50"
+                        : isYesterdayCarryoverTask
+                          ? "text-rose-50"
+                          : isOverdueCarryoverTask
+                            ? "text-amber-50"
+                            : c.text;
+                  const secondaryTextClass = isYesterdayPendingSlot
+                    ? "text-rose-100/80"
+                    : isYesterdayMutedSlot
+                      ? "text-zinc-500"
+                      : isCompletedSlot
+                        ? "text-emerald-100/80"
+                        : isYesterdayCarryoverTask
+                          ? "text-rose-100/80"
+                          : isOverdueCarryoverTask
+                            ? "text-amber-100/80"
+                            : "text-zinc-500";
+                  const shellTone = isYesterdayPendingSlot
+                    ? "border-rose-500/55 bg-linear-to-br from-rose-500/24 via-red-500/18 to-rose-950/36"
+                    : isYesterdayMutedSlot
+                      ? "border-zinc-800/80 bg-zinc-900/72"
+                      : isChildcareBackground
+                        ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
+                        : isCompletedSlot
+                          ? "border-emerald-400/55 bg-linear-to-br from-emerald-400/32 via-emerald-500/22 to-emerald-950/42"
+                          : isYesterdayCarryoverTask
+                            ? "border-rose-500/50 bg-linear-to-br from-rose-500/22 via-red-500/16 to-rose-950/34"
+                            : isOverdueCarryoverTask
+                              ? "border-amber-500/50 bg-linear-to-br from-amber-500/20 via-orange-500/14 to-amber-950/32"
+                              : `${c.border} ${c.bg}`;
                   const shellDepth = isChildcareBackground
                     ? "shadow-none"
                     : isBlockingSlot
@@ -1988,13 +2006,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     >
                       {isChildcareBackground ? (
                         <>
-                          <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-amber-400/10 via-orange-400/6 to-transparent" />
-                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-amber-200/35 via-orange-300/18 to-transparent" />
+                          <div className={`pointer-events-none absolute inset-0 ${isYesterdayMutedSlot ? "bg-zinc-900/28" : "bg-linear-to-r from-amber-400/10 via-orange-400/6 to-transparent"}`} />
+                          <div className={`pointer-events-none absolute inset-x-0 top-0 h-px ${isYesterdayMutedSlot ? "bg-zinc-700/55" : "bg-linear-to-r from-amber-200/35 via-orange-300/18 to-transparent"}`} />
                         </>
                       ) : (
                         <>
                           {isHeysSynced && !isSupportSlot && heysBadgeLabel && (
-                            <span className="pointer-events-none absolute left-2 top-1.5 z-10 rounded-full border border-orange-400/30 bg-orange-500/12 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-orange-100">
+                            <span className={`pointer-events-none absolute left-2 top-1.5 z-10 rounded-full border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "border-zinc-700 bg-zinc-900/80 text-zinc-500" : "border-orange-400/30 bg-orange-500/12 text-orange-100"}`}>
                               {heysBadgeLabel}
                             </span>
                           )}
@@ -2025,9 +2043,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                                     aria-label={isCompletedSlot ? "Снять подтверждение слота" : "Подтвердить слот"}
                                     title={isCompletedSlot ? "Снять подтверждение" : "Подтвердить выполнение"}
                                     className={`relative z-10 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
-                                      isCompletedSlot
-                                        ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
-                                        : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                                      isYesterdayPendingSlot
+                                        ? "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
+                                        : isYesterdayMutedSlot
+                                          ? "border-zinc-600/80 bg-zinc-900/85 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                                          : isCompletedSlot
+                                            ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
+                                            : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                                     }`}
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -2041,18 +2063,18 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                                   </button>
                                 )}
                               </div>
-                              <p className={`mt-0.5 font-medium leading-snug ${primaryTextClass} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? "line-through decoration-emerald-100/45 opacity-90" : ""}`}>
+                              <p className={`mt-0.5 font-medium leading-snug ${primaryTextClass} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? isYesterdayMutedSlot ? "line-through decoration-zinc-500/40 opacity-85" : "line-through decoration-emerald-100/45 opacity-90" : ""}`}>
                                 {slot.title}
                               </p>
                             </div>
                           </div>
                           {projectLabel && !isSupportSlot && height > 46 && (
-                            <p className="mt-1 inline-flex max-w-full truncate rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-200">
+                            <p className={`mt-1 inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[9px] font-medium ${isYesterdayMutedSlot ? "border-zinc-700 bg-zinc-900/80 text-zinc-500" : "border-violet-500/20 bg-violet-500/10 text-violet-200"}`}>
                               {projectLabel}
                             </p>
                           )}
                           {completionLabel && !isSupportSlot && height > 44 && (
-                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isCompletedSlot ? "text-emerald-100/85" : secondaryTextClass}`}>
+                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "text-zinc-500" : isCompletedSlot ? "text-emerald-100/85" : secondaryTextClass}`}>
                               {completionLabel}
                             </p>
                           )}
