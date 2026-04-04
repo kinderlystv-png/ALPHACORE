@@ -1409,7 +1409,13 @@ export function updateCustomEvent(
 }
 
 export function isEditableScheduleSlot(slot: ScheduleSlot): boolean {
-  return slot.id.startsWith("custom-") || slot.source === "template" || slot.source === "studio";
+  if (slot.id.startsWith("custom-")) return true;
+  if (slot.source === "template" || slot.source === "studio") return true;
+
+  // Cleanup windows are planned automatically by schedule rules, but should still
+  // be movable/editable via overrides because in real life the cleanup often
+  // happens later than the default suggested window.
+  return slot.source === "derived" && slot.tone === "cleanup";
 }
 
 export function updateEditableScheduleSlot(
