@@ -8,6 +8,10 @@ export type AutomationOrigin = {
   source: "heys";
   metricKey?: string;
   via?: "task" | "slot" | "autopilot";
+  bundleId?: string;
+  bundleLabel?: string;
+  bundlePart?: string;
+  bundleRunId?: string;
 };
 
 export type Task = {

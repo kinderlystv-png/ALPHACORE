@@ -154,6 +154,39 @@ type LearnedActionStat = {
   confidence: "low" | "medium" | "high";
 };
 
+type CompoundActionItem = {
+  id: string;
+  metricKey: MetricKey;
+  kind: "task" | "slot";
+};
+
+type CompoundActionBundle = {
+  id: string;
+  label: string;
+  summary: string;
+  appliesTo: MetricKey[];
+  items: CompoundActionItem[];
+};
+
+type LearnedBundleStat = {
+  id: string;
+  label: string;
+  improved: number;
+  worse: number;
+  flat: number;
+  pending: number;
+  resolved: number;
+  score: number;
+  confidence: "low" | "medium" | "high";
+};
+
+type ActionCreateResult = {
+  kind: "task" | "slot";
+  status: "created" | "existing";
+  title: string;
+  dateLabel?: string;
+};
+
 function Sparkline({
   points,
   color = "sky",
@@ -586,11 +619,13 @@ function toneBadgeClass(tone: MetricStatus | "neutral" = "neutral"): string {
 function createHeysOrigin(
   metricKey: MetricKey,
   via: AutomationOrigin["via"],
+  extra?: Partial<AutomationOrigin>,
 ): AutomationOrigin {
   return {
     source: "heys",
     metricKey,
     via,
+    ...extra,
   };
 }
 
@@ -673,6 +708,185 @@ function getActionKindLabel(actionKind: "task" | "slot"): string {
 
 function getActionKindShortLabel(actionKind: "task" | "slot"): string {
   return actionKind === "slot" ? "слоты" : "задачи";
+}
+
+function getBundlePartLabel(item: CompoundActionItem): string {
+  return `${getMetricEmoji(item.metricKey)} ${getMetricLabel(item.metricKey)} · ${getActionKindShortLabel(item.kind)}`;
+}
+
+function getCompoundActionBundles(): CompoundActionBundle[] {
+  return [
+    {
+      id: "sleep-hydration-reset",
+      label: "Сон + вода",
+      summary: "Поздний ритм и recovery часто лучше выправлять не одной кнопкой, а связкой bedtime protection + hydration checkpoint.",
+      appliesTo: ["sleep", "bedtime", "water"],
+      items: [
+        { id: "bedtime-slot", metricKey: "bedtime", kind: "slot" },
+        { id: "water-slot", metricKey: "water", kind: "slot" },
+      ],
+    },
+    {
+      id: "movement-recovery-pair",
+      label: "Walking window + recovery",
+      summary: "Когда база просела, движение и recovery вместе обычно работают лучше, чем героическая попытка лечить всё одной привычкой.",
+      appliesTo: ["steps", "wellbeing", "stress", "training"],
+      items: [
+        { id: "steps-slot", metricKey: "steps", kind: "slot" },
+        { id: "recovery-slot", metricKey: "wellbeing", kind: "slot" },
+      ],
+    },
+    {
+      id: "review-shutdown-pair",
+      label: "Review + shutdown",
+      summary: "Для настроения и нервной системы часто важнее не ещё одна задача, а связка короткого review и защищённого раннего shutdown.",
+      appliesTo: ["mood"],
+      items: [
+        { id: "mood-task", metricKey: "mood", kind: "task" },
+        { id: "bedtime-slot", metricKey: "bedtime", kind: "slot" },
+      ],
+    },
+    {
+      id: "weight-rhythm-pair",
+      label: "Контур веса: шаги + контур",
+      summary: "Для веса чаще полезнее мягкая связка ритма, а не очередной жёсткий one-shot — движение плюс контур питания/сна.",
+      appliesTo: ["weight"],
+      items: [
+        { id: "weight-task", metricKey: "weight", kind: "task" },
+        { id: "steps-slot", metricKey: "steps", kind: "slot" },
+      ],
+    },
+  ];
+}
+
+function getRecommendedCompoundAction(metricKey: MetricKey): CompoundActionBundle | null {
+  return getCompoundActionBundles().find((bundle) => bundle.appliesTo.includes(metricKey)) ?? null;
+}
+
+function makeBundleRunId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `bundle-${crypto.randomUUID()}`;
+  }
+
+  return `bundle-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildBundleLearningStats(
+  tasks: Task[],
+  events: CustomEvent[],
+  days: HeysDayRecord[],
+  weightGoal: number | null | undefined,
+): LearnedBundleStat[] {
+  const bundleLabels = new Map(
+    getCompoundActionBundles().map((bundle) => [bundle.id, bundle.label]),
+  );
+  const runs = new Map<
+    string,
+    { bundleId: string; improved: number; worse: number; flat: number; pending: number }
+  >();
+
+  const pushRunImpact = (bundleId: string | undefined, bundleRunId: string | undefined, impact: ImpactEvaluation) => {
+    if (!bundleId || !bundleRunId) return;
+
+    const current = runs.get(bundleRunId) ?? {
+      bundleId,
+      improved: 0,
+      worse: 0,
+      flat: 0,
+      pending: 0,
+    };
+
+    if (impact.kind === "improved") current.improved += 1;
+    else if (impact.kind === "worse") current.worse += 1;
+    else if (impact.kind === "flat") current.flat += 1;
+    else current.pending += 1;
+
+    runs.set(bundleRunId, current);
+  };
+
+  tasks
+    .filter((task) => task.origin?.source === "heys" && task.origin?.bundleId)
+    .forEach((task) => {
+      const metricKey = toMetricKey(task.origin?.metricKey);
+      if (!metricKey) return;
+
+      pushRunImpact(
+        task.origin?.bundleId,
+        task.origin?.bundleRunId,
+        evaluateTraceImpactForTask(task, metricKey, days, weightGoal),
+      );
+    });
+
+  events
+    .filter((event) => event.origin?.source === "heys" && event.origin?.bundleId)
+    .forEach((event) => {
+      const metricKey = extractMetricKeyFromEvent(event);
+      if (!metricKey) return;
+
+      pushRunImpact(
+        event.origin?.bundleId,
+        event.origin?.bundleRunId,
+        evaluateTraceImpactForEvent(event, metricKey, days, weightGoal),
+      );
+    });
+
+  const aggregate = new Map<string, LearnedBundleStat>();
+
+  for (const run of runs.values()) {
+    const current = aggregate.get(run.bundleId) ?? {
+      id: run.bundleId,
+      label: bundleLabels.get(run.bundleId) ?? run.bundleId,
+      improved: 0,
+      worse: 0,
+      flat: 0,
+      pending: 0,
+      resolved: 0,
+      score: 0,
+      confidence: "low",
+    };
+
+    if (run.improved > run.worse && run.improved > 0) {
+      current.improved += 1;
+      current.resolved += 1;
+    } else if (run.worse > run.improved && run.worse > 0) {
+      current.worse += 1;
+      current.resolved += 1;
+    } else if (run.improved === 0 && run.worse === 0 && run.flat === 0) {
+      current.pending += 1;
+    } else {
+      current.flat += 1;
+      current.resolved += 1;
+    }
+
+    aggregate.set(run.bundleId, current);
+  }
+
+  return [...aggregate.values()]
+    .map((bucket) => {
+      const score = bucket.improved * 3 - bucket.worse * 2 - bucket.flat;
+      const confidence: LearnedBundleStat["confidence"] =
+        bucket.resolved >= 3 ? "high" : bucket.resolved >= 2 ? "medium" : "low";
+
+      return {
+        ...bucket,
+        score,
+        confidence,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.improved - left.improved ||
+        right.resolved - left.resolved,
+    );
+}
+
+function getPreferredBundleStat(
+  bundleId: string | undefined,
+  stats: LearnedBundleStat[],
+): LearnedBundleStat | null {
+  if (!bundleId) return null;
+  return stats.find((stat) => stat.id === bundleId) ?? null;
 }
 
 function isLateSleepStart(value: string | null): boolean {
@@ -2195,7 +2409,15 @@ export function HeysHealthPanel() {
   const topMetric = metrics.find((metric) => metric.key === defaultMetricKey) ?? metrics[0]!;
   const topActionPlan = getMetricActionPlan(topMetric.key);
   const selectedActionPlan = getMetricActionPlan(selectedMetric.key);
+  const recommendedBundle = getRecommendedCompoundAction(topMetric.key);
+  const selectedBundle = getRecommendedCompoundAction(selectedMetric.key);
   const learningStats = buildLearningStats(
+    tasks,
+    customEvents,
+    days,
+    snapshot.profile?.weightGoal,
+  );
+  const bundleLearningStats = buildBundleLearningStats(
     tasks,
     customEvents,
     days,
@@ -2203,12 +2425,28 @@ export function HeysHealthPanel() {
   );
   const topMetricLearning = getPreferredLearningForMetric(topMetric.key, learningStats);
   const selectedMetricLearning = getPreferredLearningForMetric(selectedMetric.key, learningStats);
+  const recommendedBundleLearning = getPreferredBundleStat(
+    recommendedBundle?.id,
+    bundleLearningStats,
+  );
+  const selectedBundleLearning = getPreferredBundleStat(
+    selectedBundle?.id,
+    bundleLearningStats,
+  );
+  const learnedBundleHighlights = bundleLearningStats
+    .filter((stat) => stat.improved > 0 && stat.resolved > 0)
+    .slice(0, 3);
   const learnedHighlights = learningStats
     .filter((stat) => stat.improved > 0 && stat.resolved > 0)
     .slice(0, 3);
   const effectiveTopRecommendation = topMetricLearning?.actionKind ?? topActionPlan.recommended;
   const isLearnedOverride =
     topMetricLearning != null && topMetricLearning.actionKind !== topActionPlan.recommended;
+  const shouldBiasToBundle =
+    recommendedBundle != null &&
+    recommendedBundleLearning != null &&
+    recommendedBundleLearning.score > 1 &&
+    recommendedBundleLearning.resolved >= 2;
   const weeklySlotOptions =
     effectiveTopRecommendation === "slot"
       ? getAutopilotSlotOptions(topMetric.key, topActionPlan).slice(0, 3)
@@ -2226,11 +2464,12 @@ export function HeysHealthPanel() {
   );
   const traceSummary = summarizeTraceImpact(traceItems);
 
-  function createTaskFromPlan(
+  function ensureTaskFromPlan(
     plan: MetricActionPlan,
     metricKey: MetricKey,
     via: AutomationOrigin["via"] = "task",
-  ): void {
+    originExtra?: Partial<AutomationOrigin>,
+  ): ActionCreateResult {
     const dueDate = todayDateKey(plan.task.dueOffset ?? 0);
     const existing = getTasks().find(
       (task) =>
@@ -2240,40 +2479,47 @@ export function HeysHealthPanel() {
     );
 
     if (existing) {
-      setActionFeedback({
-        tone: "info",
-        text: `Такая задача уже есть: ${plan.task.title}`,
-      });
-      return;
+      return {
+        kind: "task",
+        status: "existing",
+        title: plan.task.title,
+        dateLabel: formatDateLabel(dueDate),
+      };
     }
 
     addTask(plan.task.title, {
       priority: plan.task.priority,
       dueDate,
       status: plan.task.priority === "p1" ? "active" : "inbox",
-      origin: createHeysOrigin(metricKey, via),
+      origin: createHeysOrigin(metricKey, via, originExtra),
     });
 
-    setActionFeedback({ tone: "success", text: plan.task.success });
+    return {
+      kind: "task",
+      status: "created",
+      title: plan.task.title,
+      dateLabel: formatDateLabel(dueDate),
+    };
   }
 
-  function createSlotFromResolvedPlan(
+  function ensureSlotFromResolvedPlan(
     plan: ResolvedSlotPlan,
     metricKey: MetricKey,
     via: AutomationOrigin["via"] = "slot",
-    successText: string = plan.success,
-  ): void {
+    originExtra?: Partial<AutomationOrigin>,
+  ): ActionCreateResult {
     const existing = getCustomEvents(plan.date).find(
       (event) =>
         event.title === plan.title && event.start === plan.start && event.end === plan.end,
     );
 
     if (existing) {
-      setActionFeedback({
-        tone: "info",
-        text: `Такой слот уже есть: ${plan.title}`,
-      });
-      return;
+      return {
+        kind: "slot",
+        status: "existing",
+        title: plan.title,
+        dateLabel: `${formatDateLabel(plan.date)} · ${plan.start}`,
+      };
     }
 
     addCustomEvent({
@@ -2283,27 +2529,77 @@ export function HeysHealthPanel() {
       title: plan.title,
       tone: plan.tone,
       tags: plan.tags,
-      origin: createHeysOrigin(metricKey, via),
+      origin: createHeysOrigin(metricKey, via, originExtra),
       kind: "event",
     });
 
-    setActionFeedback({ tone: "success", text: successText });
+    return {
+      kind: "slot",
+      status: "created",
+      title: plan.title,
+      dateLabel: `${formatDateLabel(plan.date)} · ${plan.start}`,
+    };
   }
 
-  function createSlotFromPlan(
+  function ensureSlotFromPlan(
     plan: MetricActionPlan,
     metricKey: MetricKey,
     via: AutomationOrigin["via"] = "slot",
-  ): void {
+    originExtra?: Partial<AutomationOrigin>,
+  ): ActionCreateResult {
     const date = resolveSlotDate(plan.slot.start, plan.slot.dateOffset ?? 0);
 
-    createSlotFromResolvedPlan(
+    return ensureSlotFromResolvedPlan(
       {
         ...plan.slot,
         date,
       },
       metricKey,
       via,
+      originExtra,
+    );
+  }
+
+  function createTaskFromPlan(
+    plan: MetricActionPlan,
+    metricKey: MetricKey,
+    via: AutomationOrigin["via"] = "task",
+    originExtra?: Partial<AutomationOrigin>,
+  ): void {
+    const result = ensureTaskFromPlan(plan, metricKey, via, originExtra);
+    setActionFeedback(
+      result.status === "created"
+        ? { tone: "success", text: plan.task.success }
+        : { tone: "info", text: `Такая задача уже есть: ${plan.task.title}` },
+    );
+  }
+
+  function createSlotFromResolvedPlan(
+    plan: ResolvedSlotPlan,
+    metricKey: MetricKey,
+    via: AutomationOrigin["via"] = "slot",
+    successText: string = plan.success,
+    originExtra?: Partial<AutomationOrigin>,
+  ): void {
+    const result = ensureSlotFromResolvedPlan(plan, metricKey, via, originExtra);
+    setActionFeedback(
+      result.status === "created"
+        ? { tone: "success", text: successText }
+        : { tone: "info", text: `Такой слот уже есть: ${plan.title}` },
+    );
+  }
+
+  function createSlotFromPlan(
+    plan: MetricActionPlan,
+    metricKey: MetricKey,
+    via: AutomationOrigin["via"] = "slot",
+    originExtra?: Partial<AutomationOrigin>,
+  ): void {
+    const result = ensureSlotFromPlan(plan, metricKey, via, originExtra);
+    setActionFeedback(
+      result.status === "created"
+        ? { tone: "success", text: plan.slot.success }
+        : { tone: "info", text: `Такой слот уже есть: ${plan.slot.title}` },
     );
   }
 
@@ -2329,7 +2625,51 @@ export function HeysHealthPanel() {
     setSelectedMetricKey(metricKey);
   }
 
+  function handleApplyCompoundBundle(bundle: CompoundActionBundle): void {
+    const bundleRunId = makeBundleRunId();
+    let created = 0;
+    let existing = 0;
+
+    for (const item of bundle.items) {
+      const originExtra: Partial<AutomationOrigin> = {
+        bundleId: bundle.id,
+        bundleLabel: bundle.label,
+        bundlePart: item.id,
+        bundleRunId,
+      };
+      const plan = getMetricActionPlan(item.metricKey);
+      const result =
+        item.kind === "task"
+          ? ensureTaskFromPlan(plan, item.metricKey, "task", originExtra)
+          : ensureSlotFromPlan(plan, item.metricKey, "slot", originExtra);
+
+      if (result.status === "created") created += 1;
+      else existing += 1;
+    }
+
+    if (created === 0) {
+      setActionFeedback({
+        tone: "info",
+        text: `Связка уже стоит: ${bundle.label}`,
+      });
+      return;
+    }
+
+    setActionFeedback({
+      tone: "success",
+      text:
+        existing > 0
+          ? `Связка «${bundle.label}»: добавил ${created}, уже стояло ${existing}`
+          : `Связка «${bundle.label}» применена`,
+    });
+  }
+
   function handleApplyRecommendation(): void {
+    if (shouldBiasToBundle && recommendedBundle) {
+      handleApplyCompoundBundle(recommendedBundle);
+      return;
+    }
+
     if (effectiveTopRecommendation === "slot") {
       const resolvedSlot = resolveAutopilotSlot(topMetric.key, topActionPlan);
 
@@ -2462,14 +2802,30 @@ export function HeysHealthPanel() {
               >
                 ✨ Применить рекомендацию
               </button>
+              {recommendedBundle && (
+                <button
+                  type="button"
+                  onClick={() => handleApplyCompoundBundle(recommendedBundle)}
+                  className="rounded-lg border border-sky-400/25 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:border-sky-300/50"
+                >
+                  🧩 Применить связку
+                </button>
+              )}
               <span className="text-[11px] text-zinc-400">
-                {effectiveTopRecommendation === "slot"
+                {shouldBiasToBundle && recommendedBundle
+                  ? `автопилот уже видит силу связки «${recommendedBundle.label}»`
+                  : effectiveTopRecommendation === "slot"
                   ? `автопилот подберёт окно для «${topActionPlan.slot.title}»`
                   : `автопилот поставит задачу «${topActionPlan.task.title}»`}
               </span>
               {topMetricLearning && (
                 <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(topMetricLearning.score > 0 ? "good" : "warn")}`}>
                   работает лучше: {getActionKindShortLabel(topMetricLearning.actionKind)}
+                </span>
+              )}
+              {recommendedBundleLearning && (
+                <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(recommendedBundleLearning.score > 0 ? "good" : "warn")}`}>
+                  связка: {recommendedBundleLearning.improved}/{recommendedBundleLearning.resolved}
                 </span>
               )}
             </div>
@@ -2489,6 +2845,13 @@ export function HeysHealthPanel() {
                 Learning layer ещё собирает resolved cycles — пока автопилот опирается в основном на текущий сигнал, а не на личную статистику эффекта.
               </p>
             )}
+            {recommendedBundle && (
+              <p className="text-[11px] leading-5 text-zinc-400">
+                Compound layer: рядом доступна связка «{recommendedBundle.label}». {recommendedBundleLearning
+                  ? `По ней уже есть ${recommendedBundleLearning.improved}/${recommendedBundleLearning.resolved} улучшений — ${getConfidenceLabel(recommendedBundleLearning.confidence)}.`
+                  : "Это новый уровень рычага: статистика по связке начнёт копиться после первых применений."}
+              </p>
+            )}
             {actionFeedback && (
               <span
                 className={`inline-flex rounded-full border px-2 py-1 text-[10px] ${
@@ -2503,6 +2866,43 @@ export function HeysHealthPanel() {
           </div>
         </div>
       </div>
+
+      {recommendedBundle && (
+        <div className="mb-3 rounded-xl border border-sky-500/15 bg-zinc-950/30 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Compound action</p>
+              <h4 className="mt-1 text-sm font-semibold text-zinc-100">🧩 {recommendedBundle.label}</h4>
+              <p className="mt-1 max-w-2xl text-sm text-zinc-300">{recommendedBundle.summary}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {recommendedBundle.items.map((item) => (
+                  <span
+                    key={item.id}
+                    className="rounded-full border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-300"
+                  >
+                    {getBundlePartLabel(item)}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="max-w-sm space-y-2">
+              <button
+                type="button"
+                onClick={() => handleApplyCompoundBundle(recommendedBundle)}
+                className="rounded-lg border border-sky-400/25 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:border-sky-300/50"
+              >
+                Применить связку целиком
+              </button>
+              <p className="text-[11px] leading-5 text-zinc-400">
+                {recommendedBundleLearning
+                  ? `Связка уже дала ${recommendedBundleLearning.improved} улучшений из ${recommendedBundleLearning.resolved} закрытых циклов — ${getConfidenceLabel(recommendedBundleLearning.confidence)}.`
+                  : "Пока это новый compound move: после первых прогонов панель начнёт оценивать его как отдельный рычаг."}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {weeklySlotOptions.length > 0 && (
         <div className="mb-3 rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3">
@@ -2667,6 +3067,44 @@ export function HeysHealthPanel() {
         </div>
       )}
 
+      {learnedBundleHighlights.length > 0 && (
+        <div className="mt-3 rounded-2xl border border-zinc-800/60 bg-zinc-900/20 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Рабочие связки</p>
+              <p className="mt-1 text-sm text-zinc-300">
+                Здесь уже видны не отдельные рычаги, а короткие комбинации действий, которые у тебя давали лучший отклик.
+              </p>
+            </div>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+              compound patterns
+            </p>
+          </div>
+
+          <div className="mt-3 grid gap-2 lg:grid-cols-3">
+            {learnedBundleHighlights.map((stat) => (
+              <div
+                key={stat.id}
+                className="rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">🧩 {stat.label}</p>
+                  <span className={`rounded-full border px-1.5 py-0.5 text-[9px] ${toneBadgeClass("good")}`}>
+                    {getConfidenceLabel(stat.confidence)}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm font-medium text-zinc-100">
+                  {stat.improved} из {stat.resolved} прогонов дали улучшение
+                </p>
+                <p className="mt-1 text-[12px] leading-5 text-zinc-400">
+                  flat {stat.flat}{stat.worse > 0 ? ` · хуже ${stat.worse}` : ""} · ждут сигнала {stat.pending}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {selectedMetric && (
         <div className={`mt-3 rounded-2xl border p-4 ${toneCardClass(selectedMetric.status ?? "neutral")}`}>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -2723,6 +3161,13 @@ export function HeysHealthPanel() {
                   По этой метрике у тебя лучше всего срабатывают {getActionKindLabel(selectedMetricLearning.actionKind)} — {selectedMetricLearning.improved}/{selectedMetricLearning.resolved} улучшений.
                 </p>
               )}
+              {selectedBundle && (
+                <p className="mt-2 text-[11px] leading-5 text-zinc-400">
+                  Связка для этой метрики: «{selectedBundle.label}». {selectedBundleLearning
+                    ? `${selectedBundleLearning.improved}/${selectedBundleLearning.resolved} прогонов уже дали улучшение.`
+                    : "Пока без истории, но можно начать копить сигнал уже сейчас."}
+                </p>
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
@@ -2739,6 +3184,15 @@ export function HeysHealthPanel() {
                 >
                   🗓 Защитить слот
                 </button>
+                {selectedBundle && (
+                  <button
+                    type="button"
+                    onClick={() => handleApplyCompoundBundle(selectedBundle)}
+                    className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1.5 text-[11px] text-sky-200 transition hover:border-sky-400/40"
+                  >
+                    🧩 Применить связку
+                  </button>
+                )}
               </div>
             </div>
           </div>
