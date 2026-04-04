@@ -43,8 +43,8 @@ import {
 /* ── Constants ── */
 
 const HOUR_START = 5; // 05:00
-const HOUR_END = 24; // 00:00 next day
-const TOTAL_HOURS = HOUR_END - HOUR_START; // 19
+const HOUR_END = 26; // 02:00 next day
+const TOTAL_HOURS = HOUR_END - HOUR_START; // 21
 const ROW_H = 56; // px per hour row
 const HEADER_BASE_H = 66; // day/date header height without day tasks
 const HEADER_TASK_ROW_H = 24;
@@ -129,7 +129,8 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
 }
 
 function formatHour(hour: number): string {
-  return `${String(hour).padStart(2, "0")}:00`;
+  const displayHour = hour % 24;
+  return `${String(displayHour).padStart(2, "0")}:00`;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -141,8 +142,7 @@ function snapMinutes(minutes: number): number {
 }
 
 function minutesToCalendarTime(minutes: number): string {
-  if (minutes >= HOUR_END * 60) return "24:00";
-  const safe = Math.max(0, minutes);
+  const safe = Math.min(Math.max(0, minutes), HOUR_END * 60);
   const h = Math.floor(safe / 60);
   const m = safe % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
