@@ -439,7 +439,7 @@ export function AlphacoreDashboard() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeCommandPalette, commandOpen, focusQuickInput, openCommandPalette, quickInput]);
 
-  const handleQuickAdd = useCallback((status: "inbox" | "active" = "inbox") => {
+  const handleQuickAdd = useCallback((status: "inbox" | "active" | "done" = "inbox") => {
     const value = quickInput.trim();
     if (!value) return;
 
@@ -447,19 +447,28 @@ export function AlphacoreDashboard() {
       const draft = parseQuickTaskDraft(value);
       if (!draft.title) return;
 
+      const isQuickDone = status === "done";
       const task = addTask(draft.title, {
-        priority: draft.priority,
-        dueDate: draft.dueDate,
+        priority: isQuickDone ? "p2" : draft.priority,
+        dueDate: isQuickDone ? undefined : draft.dueDate,
+        status: isQuickDone ? "done" : undefined,
       });
 
       if (status === "active") {
         updateTask(task.id, { status: "active" });
       }
 
-      setFlash({
-        tone: "success",
-        text: `Задача добавлена: ${draft.priority.toUpperCase()} · ${dueLabel(draft.dueDate)} · ${status}`,
-      });
+      if (isQuickDone) {
+        setFlash({
+          tone: "success",
+          text: `Сделанное зафиксировано: ${draft.title}`,
+        });
+      } else {
+        setFlash({
+          tone: "success",
+          text: `Задача добавлена: ${draft.priority.toUpperCase()} · ${dueLabel(draft.dueDate)} · ${status}`,
+        });
+      }
     } else {
       addNote(value, "");
       setFlash({ tone: "success", text: "Заметка добавлена в inbox памяти" });
@@ -845,22 +854,35 @@ export function AlphacoreDashboard() {
                 ⌘⇧P palette
               </button>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <input
                 ref={inputRef}
                 value={quickInput}
                 onChange={(event) => setQuickInput(event.target.value)}
                 onKeyDown={handleQuickInputKeyDown}
                 placeholder={quickMode === "task" ? "Быстрая задача…" : "Быстрая заметка…"}
-                className="flex-1 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
+                className="min-w-0 flex-1 basis-55 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
               />
               <button
                 type="button"
                 onClick={() => handleQuickAdd()}
                 className="rounded-lg bg-zinc-50 px-3 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-zinc-200"
+                title={quickMode === "task" ? "Добавить задачу в inbox" : "Добавить заметку"}
+                aria-label={quickMode === "task" ? "Добавить задачу в inbox" : "Добавить заметку"}
               >
                 {quickMode === "task" ? "+ task" : "+ note"}
               </button>
+              {quickMode === "task" && (
+                <button
+                  type="button"
+                  onClick={() => handleQuickAdd("done")}
+                  className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/40 hover:bg-amber-500/15"
+                  title="Зафиксировать уже сделанную задачу сразу в completed"
+                  aria-label="Зафиксировать уже сделанную задачу"
+                >
+                  +⚡
+                </button>
+              )}
             </div>
 
             {quickMode === "task" && quickTaskDraft?.title && (
@@ -868,6 +890,7 @@ export function AlphacoreDashboard() {
                 Будет создано: <span className="text-zinc-200">{quickTaskDraft.title}</span> ·{" "}
                 <span className="text-zinc-300">{quickTaskDraft.priority.toUpperCase()}</span> ·{" "}
                 <span className="text-zinc-300">{dueLabel(quickTaskDraft.dueDate)}</span>
+                <span className="text-amber-300"> · +⚡ сразу пишет в done</span>
               </p>
             )}
 
@@ -893,7 +916,7 @@ export function AlphacoreDashboard() {
               )}
 
               <span className="ml-auto text-[10px] text-zinc-600">
-                ⌘K или / · Enter → inbox · ⇧Enter → active
+                ⌘K или / · Enter → inbox · ⇧Enter → active · +⚡ → done
               </span>
             </div>
           </div>
