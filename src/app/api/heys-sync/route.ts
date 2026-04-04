@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 let cachedSnapshot: HeysSyncSnapshot | null = null;
 let cachedAt = 0;
-const CACHE_TTL_MS = 60_000; // 1 minute cache to avoid hammering HEYS API
+const CACHE_TTL_MS = 30_000; // 30s cache so intraday shifts reach ALPHACORE faster
 
 export async function GET() {
   try {

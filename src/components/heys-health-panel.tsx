@@ -18,7 +18,12 @@ import {
   type TaskPriority,
 } from "@/lib/tasks";
 import { useHeysSync } from "@/lib/use-heys-sync";
-import type { HeysDayRecord, HeysHealthSignals } from "@/lib/heys-bridge";
+import type {
+  HeysDayRecord,
+  HeysHealthSignals,
+  HeysIntradayMetricShift,
+  HeysIntradaySignal,
+} from "@/lib/heys-bridge";
 import {
   buildBundleContextProfile,
   getDefaultMetricKey,
@@ -619,6 +624,53 @@ function toneBadgeClass(tone: MetricStatus | "neutral" = "neutral"): string {
   if (tone === "warn") return "border-amber-500/20 bg-amber-500/10 text-amber-200";
   if (tone === "good") return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
   return "border-zinc-800 bg-zinc-900/60 text-zinc-300";
+}
+
+function intradayStatusToTone(status: HeysIntradaySignal["status"]): MetricStatus | "neutral" {
+  if (status === "critical") return "bad";
+  if (status === "watch") return "warn";
+  if (status === "good") return "good";
+  return "neutral";
+}
+
+function getIntradayMomentumLabel(momentum: HeysIntradaySignal["momentum"]): string {
+  switch (momentum) {
+    case "worsening":
+      return "Live drift вниз";
+    case "improving":
+      return "Фон выравнивается";
+    case "mixed":
+      return "Mixed signal";
+    case "flat":
+      return "Фон стабилен";
+    default:
+      return "Мало intraday-точек";
+  }
+}
+
+function getIntradayStatusLabel(status: HeysIntradaySignal["status"]): string {
+  switch (status) {
+    case "critical":
+      return "реагировать сейчас";
+    case "watch":
+      return "лучше подстроить день";
+    case "good":
+      return "можно опираться";
+    default:
+      return "ждём больше сигнала";
+  }
+}
+
+function formatIntradayShiftDelta(shift: HeysIntradayMetricShift | null | undefined): string {
+  return shift?.delta != null ? fmtSigned(shift.delta, 1) : "—";
+}
+
+function buildIntradaySub(
+  shift: HeysIntradayMetricShift | null | undefined,
+  signal: HeysIntradaySignal | null | undefined,
+): string | undefined {
+  if (shift?.delta == null) return undefined;
+  return `с утра ${fmtSigned(shift.delta, 1)}${signal?.lastCheckInAt ? ` · ${signal.lastCheckInAt}` : ""}`;
 }
 
 function createHeysOrigin(
@@ -1954,12 +2006,42 @@ function getPrimaryActionState(h: HeysHealthSignals): {
   detail: string;
   hint: string;
 } {
+  const intraday = h.intraday;
+
   if (!h.hasRecentData) {
     return {
       tone: "watch",
       title: "Контур пока собирается",
       detail: "HEYS ещё не набрал достаточно свежих точек, чтобы уверенно ловить ритм.",
       hint: "Нужно хотя бы 3–4 дня свежих check-in, чтобы панель стала точнее.",
+    };
+  }
+
+  if (
+    intraday != null &&
+    (intraday.momentum === "worsening" || intraday.momentum === "mixed") &&
+    (intraday.status === "watch" || intraday.status === "critical")
+  ) {
+    return {
+      tone: intraday.status === "critical" ? "critical" : "watch",
+      title:
+        intraday.status === "critical"
+          ? "День уже уехал внутри дня"
+          : "Нужно поймать live-сдвиг до вечера",
+      detail: intraday.summary,
+      hint:
+        intraday.status === "critical"
+          ? "Сразу режь остаток дня до одного мягкого узла, защити recovery-окно и не добавляй новый execution поверх drift’а."
+          : "Подстрой ближайшие окна и убери лишнее до того, как фон окончательно испортит вечер и сон.",
+    };
+  }
+
+  if (intraday?.momentum === "improving" && intraday.status === "good") {
+    return {
+      tone: "good",
+      title: "Внутри дня фон уже выровнялся",
+      detail: intraday.summary,
+      hint: "Можно брать execution мягко и осознанно, но не тратить выровнявшийся фон на хаотичный дожим дня.",
     };
   }
 
@@ -2120,6 +2202,13 @@ export function HeysHealthPanel() {
         : "good";
   const stressStatus: MetricStatus =
     (h.stressAvg ?? 0) > 5 ? "bad" : (h.stressAvg ?? 0) > 3 ? "warn" : "good";
+  const intradaySignal = h.intraday;
+  const intradayTone = intradaySignal ? intradayStatusToTone(intradaySignal.status) : "neutral";
+  const intradayShifts = intradaySignal
+    ? [intradaySignal.shifts.mood, intradaySignal.shifts.wellbeing, intradaySignal.shifts.stress].filter(
+        (shift) => shift.delta != null,
+      )
+    : [];
   const actionState = getPrimaryActionState(h);
   const actionToneClass =
     actionState.tone === "critical"
@@ -2378,6 +2467,7 @@ export function HeysHealthPanel() {
       label: "Настроение",
       value: fmtNum(h.moodAvg),
       unit: "/ 10",
+      sub: buildIntradaySub(intradaySignal?.shifts.mood, intradaySignal),
       sparkPoints: moodSpark,
       color: "fuchsia",
       status: moodStatus,
@@ -2420,6 +2510,7 @@ export function HeysHealthPanel() {
       label: "Самочувствие",
       value: fmtNum(h.wellbeingAvg),
       unit: "/ 10",
+      sub: buildIntradaySub(intradaySignal?.shifts.wellbeing, intradaySignal),
       sparkPoints: wellbeingSpark,
       color: "teal",
       status: wellbeingStatus,
@@ -2508,6 +2599,7 @@ export function HeysHealthPanel() {
       label: "Стресс",
       value: fmtNum(h.stressAvg),
       unit: "/ 10",
+      sub: buildIntradaySub(intradaySignal?.shifts.stress, intradaySignal),
       sparkPoints: stressSpark,
       color: h.stressAvg != null && h.stressAvg > 5 ? "rose" : "emerald",
       status: stressStatus,
@@ -3031,6 +3123,55 @@ export function HeysHealthPanel() {
           </div>
         </div>
       </div>
+
+      {intradaySignal && (
+        <div className={`mb-3 rounded-xl border p-3 ${toneCardClass(intradayTone)}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Внутри дня</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <h4 className="text-sm font-semibold text-zinc-100">{getIntradayMomentumLabel(intradaySignal.momentum)}</h4>
+                <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(intradayTone)}`}>
+                  {getIntradayStatusLabel(intradaySignal.status)}
+                </span>
+                {intradaySignal.lastCheckInAt && (
+                  <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-400">
+                    check-in {intradaySignal.lastCheckInAt}
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-sm text-zinc-300">{intradaySignal.summary}</p>
+              <p className="mt-2 text-[12px] leading-5 text-zinc-400">{intradaySignal.detail}</p>
+            </div>
+
+            <div className="max-w-md space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {intradayShifts.map((shift) => (
+                  <span
+                    key={shift.metricKey}
+                    className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(shift.tone)}`}
+                  >
+                    {getMetricEmoji(shift.metricKey)} {shift.label.toLowerCase()}: {formatIntradayShiftDelta(shift)}
+                  </span>
+                ))}
+                {intradaySignal.mealCountToday > 0 && (
+                  <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-400">
+                    приёмы: {intradaySignal.mealCountToday}
+                  </span>
+                )}
+                {intradaySignal.trainingCountToday > 0 && (
+                  <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-400">
+                    тренировки: {intradaySignal.trainingCountToday}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] leading-5 text-zinc-500">
+                Этот live-сигнал уже влияет на day mode, автопилот и выбор между слотами, recovery и задачами.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className={`mb-3 rounded-xl border p-3 ${toneCardClass(dayMode.tone)}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">

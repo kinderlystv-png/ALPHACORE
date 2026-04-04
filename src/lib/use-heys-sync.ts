@@ -14,7 +14,8 @@ type HeysSyncState = {
   refresh: () => void;
 };
 
-const POLL_INTERVAL_MS = 5 * 60_000; // 5 minutes
+const POLL_INTERVAL_MS = 60_000; // 1 minute while the dashboard is open
+const VISIBILITY_REFRESH_STALE_MS = 20_000;
 
 let sharedSignals: HeysHealthSignals | null = null;
 let sharedSnapshot: HeysSyncSnapshot | null = null;
@@ -80,19 +81,40 @@ export function useHeysSync(): HeysSyncState {
   }, [syncFromShared]);
 
   useEffect(() => {
+    const shouldRefresh = (staleMs = POLL_INTERVAL_MS) => Date.now() - lastFetched > staleMs;
+
     // Initial fetch if stale or never fetched
-    if (Date.now() - lastFetched > POLL_INTERVAL_MS) {
+    if (shouldRefresh()) {
       refresh();
     }
 
-    // Poll every 5 minutes
+    // Poll every minute while the page is open
     const timer = setInterval(() => {
-      if (Date.now() - lastFetched > POLL_INTERVAL_MS) {
+      if (shouldRefresh()) {
         refresh();
       }
     }, 60_000);
 
-    return () => clearInterval(timer);
+    const handleFocus = () => {
+      if (shouldRefresh(VISIBILITY_REFRESH_STALE_MS)) {
+        refresh();
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && shouldRefresh(VISIBILITY_REFRESH_STALE_MS)) {
+        refresh();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [refresh]);
 
   return { signals, snapshot, loading, error, lastSynced, refresh };

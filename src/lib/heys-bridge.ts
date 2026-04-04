@@ -26,7 +26,51 @@ export type HeysDayRecord = {
   deficitPct: number | null;
   trainingCount: number;
   trainingTypes: string[];
+  trainingTimes: string[];
   mealCount: number;
+  mealTimes: string[];
+  mealCheckins: HeysMealCheckin[];
+};
+
+export type HeysIntradayMetricKey = "mood" | "stress" | "wellbeing";
+
+export type HeysMealCheckin = {
+  id: string;
+  name: string;
+  time: string | null;
+  mood: number | null;
+  stress: number | null;
+  wellbeing: number | null;
+};
+
+export type HeysIntradayMetricShift = {
+  metricKey: HeysIntradayMetricKey;
+  label: string;
+  baseline: number | null;
+  latest: number | null;
+  delta: number | null;
+  tone: "good" | "warn" | "bad" | "neutral";
+};
+
+export type HeysIntradaySignal = {
+  status: "good" | "watch" | "critical" | "neutral";
+  momentum: "improving" | "worsening" | "mixed" | "flat" | "unknown";
+  focusMetricKey: HeysIntradayMetricKey | null;
+  summary: string;
+  detail: string;
+  reasons: string[];
+  lastCheckInAt: string | null;
+  lastEventLabel: string | null;
+  mealCountToday: number;
+  mealCheckInCountToday: number;
+  trainingCountToday: number;
+  mealTimesToday: string[];
+  trainingTimesToday: string[];
+  shifts: {
+    mood: HeysIntradayMetricShift;
+    stress: HeysIntradayMetricShift;
+    wellbeing: HeysIntradayMetricShift;
+  };
 };
 
 export type HeysProfile = {
@@ -81,6 +125,312 @@ function avg(nums: number[]): number | null {
   return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
 }
 
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function normalizeTime(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2] ?? 0);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function compareTimes(left: string | null, right: string | null): number {
+  if (left == null && right == null) return 0;
+  if (left == null) return 1;
+  if (right == null) return -1;
+  return left.localeCompare(right);
+}
+
+function russianPlural(count: number, forms: [string, string, string]): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+
+  if (mod10 === 1 && mod100 !== 11) return forms[0];
+  if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return forms[1];
+  return forms[2];
+}
+
+function getIntradayMetricLabel(metricKey: HeysIntradayMetricKey): string {
+  switch (metricKey) {
+    case "mood":
+      return "Настроение";
+    case "stress":
+      return "Стресс";
+    case "wellbeing":
+      return "Самочувствие";
+  }
+}
+
+function formatSigned(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return `${value > 0 ? "+" : ""}${round1(value).toFixed(1)}`;
+}
+
+function formatMetricValue(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return round1(value).toFixed(1);
+}
+
+function formatEventContext(mealCount: number, trainingCount: number): string | null {
+  const parts: string[] = [];
+
+  if (mealCount > 0) {
+    parts.push(`${mealCount} ${russianPlural(mealCount, ["приём пищи", "приёма пищи", "приёмов пищи"])}`);
+  }
+
+  if (trainingCount > 0) {
+    parts.push(`${trainingCount} ${russianPlural(trainingCount, ["тренировка", "тренировки", "тренировок"])}`);
+  }
+
+  if (parts.length === 0) return null;
+  return `после ${parts.join(" и ")} сегодня`;
+}
+
+function buildIntradayMetricShift(
+  metricKey: HeysIntradayMetricKey,
+  baseline: number | null,
+  latest: number | null,
+): HeysIntradayMetricShift {
+  const delta = baseline != null && latest != null ? round1(latest - baseline) : null;
+  const adverseDelta =
+    delta == null
+      ? null
+      : metricKey === "stress"
+        ? delta
+        : -delta;
+  const beneficialDelta = adverseDelta == null ? null : -adverseDelta;
+
+  let tone: HeysIntradayMetricShift["tone"] = "neutral";
+  if (adverseDelta != null && adverseDelta >= 1.2) tone = "bad";
+  else if (adverseDelta != null && adverseDelta >= 0.6) tone = "warn";
+  else if (beneficialDelta != null && beneficialDelta >= 0.6) tone = "good";
+
+  return {
+    metricKey,
+    label: getIntradayMetricLabel(metricKey),
+    baseline,
+    latest,
+    delta,
+    tone,
+  };
+}
+
+function getLatestCheckinMetric(
+  checkins: HeysMealCheckin[],
+  metricKey: HeysIntradayMetricKey,
+): { value: number; time: string | null } | null {
+  const sorted = [...checkins].sort((a, b) => compareTimes(a.time, b.time));
+
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    const current = sorted[index]!;
+    const value = current[metricKey];
+    if (value != null) {
+      return { value, time: current.time };
+    }
+  }
+
+  return null;
+}
+
+function getAdverseDelta(shift: HeysIntradayMetricShift): number | null {
+  if (shift.delta == null) return null;
+  return shift.metricKey === "stress" ? shift.delta : -shift.delta;
+}
+
+function getBeneficialDelta(shift: HeysIntradayMetricShift): number | null {
+  const adverse = getAdverseDelta(shift);
+  return adverse == null ? null : -adverse;
+}
+
+function formatShiftReason(shift: HeysIntradayMetricShift): string | null {
+  if (shift.delta == null || Math.abs(shift.delta) < 0.4) return null;
+  return `${shift.label.toLowerCase()} ${formatSigned(shift.delta)}`;
+}
+
+function formatIntradayState(
+  label: string,
+  baseline: number | null,
+  latest: number | null,
+): string {
+  return `${label} ${formatMetricValue(baseline)} → ${formatMetricValue(latest)}`;
+}
+
+function buildIntradaySignal(days: HeysDayRecord[]): HeysIntradaySignal | null {
+  const today = days.find((day) => day.date === dateStr(0)) ?? days[days.length - 1] ?? null;
+  if (!today) return null;
+
+  const latestMood = getLatestCheckinMetric(today.mealCheckins, "mood")?.value ?? today.moodAvg ?? today.moodMorning;
+  const latestStress = getLatestCheckinMetric(today.mealCheckins, "stress")?.value ?? today.stressAvg ?? today.stressMorning;
+  const latestWellbeing = getLatestCheckinMetric(today.mealCheckins, "wellbeing")?.value ?? today.wellbeingAvg ?? today.wellbeingMorning;
+
+  const shifts = {
+    mood: buildIntradayMetricShift("mood", today.moodMorning, latestMood),
+    stress: buildIntradayMetricShift("stress", today.stressMorning, latestStress),
+    wellbeing: buildIntradayMetricShift("wellbeing", today.wellbeingMorning, latestWellbeing),
+  } satisfies HeysIntradaySignal["shifts"];
+
+  const shiftList = Object.values(shifts);
+  const adverse = shiftList
+    .map((shift) => ({ shift, score: getAdverseDelta(shift) ?? Number.NEGATIVE_INFINITY }))
+    .filter((entry) => entry.score >= 0.6)
+    .sort((left, right) => right.score - left.score);
+  const positive = shiftList
+    .map((shift) => ({ shift, score: getBeneficialDelta(shift) ?? Number.NEGATIVE_INFINITY }))
+    .filter((entry) => entry.score >= 0.6)
+    .sort((left, right) => right.score - left.score);
+
+  const latestCheckinAt = [
+    getLatestCheckinMetric(today.mealCheckins, "mood")?.time ?? null,
+    getLatestCheckinMetric(today.mealCheckins, "stress")?.time ?? null,
+    getLatestCheckinMetric(today.mealCheckins, "wellbeing")?.time ?? null,
+  ]
+    .filter((value): value is string => value != null)
+    .sort(compareTimes)
+    .at(-1) ?? null;
+  const lastTrainingAt = [...today.trainingTimes].sort(compareTimes).at(-1) ?? null;
+  const lastEventLabel =
+    compareTimes(lastTrainingAt, latestCheckinAt) < 0
+      ? latestCheckinAt
+        ? `последний meal-check-in ${latestCheckinAt}`
+        : null
+      : lastTrainingAt
+        ? `последняя тренировка ${lastTrainingAt}`
+        : latestCheckinAt
+          ? `последний meal-check-in ${latestCheckinAt}`
+          : null;
+  const eventContext = formatEventContext(today.mealCount, today.trainingCount);
+  const baseReasons = uniqueReasons(
+    [
+      ...adverse.slice(0, 2).map((entry) => formatShiftReason(entry.shift)),
+      ...positive.slice(0, 2).map((entry) => formatShiftReason(entry.shift)),
+      eventContext ? eventContext.replace(/^после\s+/, "") : null,
+    ].filter((value): value is string => Boolean(value)),
+  );
+
+  const hasAnyBaselineOrLatest = shiftList.some(
+    (shift) => shift.baseline != null || shift.latest != null,
+  );
+
+  if (!hasAnyBaselineOrLatest) {
+    return {
+      status: "neutral",
+      momentum: "unknown",
+      focusMetricKey: null,
+      summary: eventContext
+        ? `Внутри дня уже есть ${eventContext.replace(/^после\s+/, "")}, но свежего сигнала по состоянию пока мало.`
+        : "Внутри дня пока мало свежих check-in по состоянию.",
+      detail: lastEventLabel
+        ? `${lastEventLabel}; как только в HEYS появится новый сигнал по настроению / стрессу / самочувствию, ALPHACORE начнёт перестраивать день быстрее.`
+        : "Как только в HEYS появится новый сигнал по настроению / стрессу / самочувствию, ALPHACORE начнёт перестраивать день быстрее.",
+      reasons: uniqueReasons([eventContext, lastEventLabel]),
+      lastCheckInAt: latestCheckinAt,
+      lastEventLabel,
+      mealCountToday: today.mealCount,
+      mealCheckInCountToday: today.mealCheckins.filter(
+        (meal) => meal.mood != null || meal.stress != null || meal.wellbeing != null,
+      ).length,
+      trainingCountToday: today.trainingCount,
+      mealTimesToday: today.mealTimes,
+      trainingTimesToday: today.trainingTimes,
+      shifts,
+    };
+  }
+
+  const hasAdverse = adverse.length > 0;
+  const hasPositive = positive.length > 0;
+  const strongestAdverse = adverse[0] ?? null;
+  const strongestPositive = positive[0] ?? null;
+
+  let status: HeysIntradaySignal["status"] = "neutral";
+  let momentum: HeysIntradaySignal["momentum"] = "flat";
+  let summary = "Внутри дня резкого drift нет: фон близок к утренней базе.";
+
+  if (hasAdverse && hasPositive) {
+    momentum = "mixed";
+    status = strongestAdverse != null && strongestAdverse.score >= 1.2 ? "critical" : "watch";
+    summary = `Внутри дня сигнал mixed: ${positive
+      .slice(0, 1)
+      .map((entry) => formatShiftReason(entry.shift))
+      .join(", ")}, но ${adverse
+      .slice(0, 2)
+      .map((entry) => formatShiftReason(entry.shift))
+      .join(", ")}${eventContext ? ` ${eventContext}` : ""}.`;
+  } else if (hasAdverse) {
+    momentum = "worsening";
+    const totalAdverse = adverse.reduce((sum, entry) => sum + entry.score, 0);
+    status = strongestAdverse != null && (strongestAdverse.score >= 1.2 || totalAdverse >= 1.8)
+      ? "critical"
+      : "watch";
+    summary = `Внутри дня фон поехал: ${adverse
+      .slice(0, 2)
+      .map((entry) => formatShiftReason(entry.shift))
+      .join(", ")}${eventContext ? ` ${eventContext}` : ""}.`;
+  } else if (hasPositive) {
+    momentum = "improving";
+    status = "good";
+    summary = `Внутри дня фон выровнялся: ${positive
+      .slice(0, 2)
+      .map((entry) => formatShiftReason(entry.shift))
+      .join(", ")}${eventContext ? ` ${eventContext}` : ""}.`;
+  }
+
+  const focusMetricKey = hasAdverse
+    ? strongestAdverse?.shift.metricKey ?? null
+    : strongestPositive?.shift.metricKey ?? null;
+  const detail = [
+    lastEventLabel,
+    [
+      formatIntradayState("настроение", today.moodMorning, latestMood),
+      formatIntradayState("стресс", today.stressMorning, latestStress),
+      formatIntradayState("самочувствие", today.wellbeingMorning, latestWellbeing),
+    ].join(" · "),
+  ]
+    .filter(Boolean)
+    .join(". ");
+
+  return {
+    status,
+    momentum,
+    focusMetricKey,
+    summary,
+    detail,
+    reasons: baseReasons.slice(0, 3),
+    lastCheckInAt: latestCheckinAt,
+    lastEventLabel,
+    mealCountToday: today.mealCount,
+    mealCheckInCountToday: today.mealCheckins.filter(
+      (meal) => meal.mood != null || meal.stress != null || meal.wellbeing != null,
+    ).length,
+    trainingCountToday: today.trainingCount,
+    mealTimesToday: today.mealTimes,
+    trainingTimesToday: today.trainingTimes,
+    shifts,
+  };
+}
+
+function uniqueReasons(reasons: Array<string | null | undefined>): string[] {
+  return [...new Set(reasons.map((reason) => reason?.trim()).filter(Boolean) as string[])];
+}
+
 function isLateBedtime(sleepStart: string | null): boolean {
   if (!sleepStart) return false;
   const hour = parseInt(sleepStart.split(":")[0] ?? "0", 10);
@@ -110,34 +460,71 @@ async function fetchDayRecord(date: string): Promise<HeysDayRecord | null> {
   if (!raw) return null;
 
   const trainings = Array.isArray(raw.trainings) ? raw.trainings : [];
+  const meals = Array.isArray(raw.meals) ? raw.meals : [];
   const realTrainings = trainings.filter(
     (t: Record<string, unknown>) =>
       t.time && Array.isArray(t.z) && (t.z as number[]).some((z: number) => z > 0),
   );
+  const trainingTimes = realTrainings
+    .map((t: Record<string, unknown>) => normalizeTime(t.time))
+    .filter((value): value is string => value != null)
+    .sort(compareTimes);
+  const mealTimes = meals
+    .map((meal) => normalizeTime((meal as Record<string, unknown>).time))
+    .filter((value): value is string => value != null)
+    .sort(compareTimes);
+  const mealCheckins = meals
+    .map((meal, index) => {
+      const mealRecord = meal as Record<string, unknown>;
+      const time = normalizeTime(mealRecord.time);
+      const mood = toNumber(mealRecord.mood);
+      const stress = toNumber(mealRecord.stress);
+      const wellbeing = toNumber(mealRecord.wellbeing);
+
+      if (time == null && mood == null && stress == null && wellbeing == null) {
+        return null;
+      }
+
+      return {
+        id: String(mealRecord.id ?? `meal-${date}-${index}`),
+        name: typeof mealRecord.name === "string" && mealRecord.name.trim() !== ""
+          ? mealRecord.name
+          : `meal-${index + 1}`,
+        time,
+        mood,
+        stress,
+        wellbeing,
+      } satisfies HeysMealCheckin;
+    })
+    .filter((value): value is HeysMealCheckin => value != null)
+    .sort((left, right) => compareTimes(left.time, right.time));
 
   return {
     date,
     sleepStart: (raw.sleepStart as string) ?? null,
     sleepEnd: (raw.sleepEnd as string) ?? null,
-    sleepHours: (raw.sleepHours as number) ?? null,
-    sleepQuality: (raw.sleepQuality as number) ?? null,
-    moodAvg: (raw.moodAvg as number) ?? null,
-    moodMorning: (raw.moodMorning as number) ?? null,
-    stressAvg: (raw.stressAvg as number) ?? null,
-    stressMorning: (raw.stressMorning as number) ?? null,
-    wellbeingAvg: (raw.wellbeingAvg as number) ?? null,
-    wellbeingMorning: (raw.wellbeingMorning as number) ?? null,
-    weightMorning: (raw.weightMorning as number) ?? null,
-    steps: (raw.steps as number) ?? null,
-    dayScore: (raw.dayScore as number) ?? null,
+    sleepHours: toNumber(raw.sleepHours),
+    sleepQuality: toNumber(raw.sleepQuality),
+    moodAvg: toNumber(raw.moodAvg),
+    moodMorning: toNumber(raw.moodMorning),
+    stressAvg: toNumber(raw.stressAvg),
+    stressMorning: toNumber(raw.stressMorning),
+    wellbeingAvg: toNumber(raw.wellbeingAvg),
+    wellbeingMorning: toNumber(raw.wellbeingMorning),
+    weightMorning: toNumber(raw.weightMorning),
+    steps: toNumber(raw.steps),
+    dayScore: toNumber(raw.dayScore),
     dayComment: (raw.dayComment as string) ?? null,
-    waterMl: (raw.waterMl as number) ?? null,
-    deficitPct: (raw.deficitPct as number) ?? null,
+    waterMl: toNumber(raw.waterMl),
+    deficitPct: toNumber(raw.deficitPct),
     trainingCount: realTrainings.length,
     trainingTypes: realTrainings.map(
       (t: Record<string, unknown>) => (t.type as string) ?? "unknown",
     ),
-    mealCount: Array.isArray(raw.meals) ? raw.meals.length : 0,
+    trainingTimes,
+    mealCount: meals.length,
+    mealTimes,
+    mealCheckins,
   };
 }
 
@@ -269,6 +656,7 @@ export type HeysHealthSignals = {
   weightDelta30d: number | null;
   trainingDaysWeek: number;
   waterAvg: number | null;
+  intraday: HeysIntradaySignal | null;
   hasRecentData: boolean;
 };
 
@@ -295,6 +683,7 @@ export function extractHealthSignals(snapshot: HeysSyncSnapshot): HeysHealthSign
     weightDelta30d: month.weightChange,
     trainingDaysWeek: week.trainingDays,
     waterAvg: week.avgWater,
+    intraday: buildIntradaySignal(snapshot.days),
     hasRecentData: week.daysWithData >= 3,
   };
 }

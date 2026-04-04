@@ -295,6 +295,27 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
   const heysDayMode = h
     ? getHeysDayMode(h, buildBundleContextProfile(), getDefaultMetricKey(h), 8)
     : null;
+  const intraday = h?.intraday ?? null;
+  const intradayWorsening =
+    intraday != null &&
+    (intraday.momentum === "worsening" || intraday.momentum === "mixed") &&
+    (intraday.status === "watch" || intraday.status === "critical");
+  const intradayImproving =
+    intraday?.momentum === "improving" && intraday.status === "good";
+  const intradayHealthAdjustment = intradayWorsening
+    ? intraday.status === "critical"
+      ? -12
+      : -6
+    : intradayImproving
+      ? 4
+      : 0;
+  const intradayRecoveryAdjustment = intradayWorsening
+    ? intraday.status === "critical"
+      ? -14
+      : -7
+    : intradayImproving
+      ? 5
+      : 0;
 
   const todayChecks: Record<string, boolean> = {};
   for (const h of DEFAULT_HABITS) {
@@ -368,6 +389,7 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
     (h ? 30 : 44) + // lower base when HEYS provides real data
       habitRatio * (h ? 20 : 32) + // reduce habit weight when real data available
       heysHealthBonus +
+      intradayHealthAdjustment +
       Math.min(upcoming.health, 3) * 8 +
       (latestMedicalDate && daysSince(latestMedicalDate) <= 60 ? 8 : 0) -
       flaggedMedicalParams * 10,
@@ -411,6 +433,7 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
   const recoveryScore = clamp(
     (h ? 28 : 40) + // lower base when HEYS provides real data
       heysRecoveryBonus +
+      intradayRecoveryAdjustment +
       Math.min(upcoming.personal, 3) * (h ? 8 : 12) +
       (sleepChecked ? (h ? 10 : 22) : 0) +
       Math.min(upcoming.health, 2) * 5 -
@@ -427,9 +450,10 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
         : levelFromScore(workScore);
 
   const healthLevel: AttentionLevel =
+    intraday?.status === "critical" ||
     habitRatio < 0.34 || flaggedMedicalParams >= 2 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.5 && h.trainingDaysWeek <= 1)
       ? "critical"
-      : habitRatio < 0.67 || flaggedMedicalParams > 0 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7)
+      : intradayWorsening || habitRatio < 0.67 || flaggedMedicalParams > 0 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7)
         ? "watch"
         : levelFromScore(healthScore);
 
@@ -457,9 +481,10 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
         : levelFromScore(reflectionScore);
 
   const recoveryLevel: AttentionLevel =
+    intraday?.status === "critical" ||
     (!sleepChecked && upcoming.personal === 0) || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8 && (h.sleepQualityAvg ?? 10) < 5)
       ? "critical"
-      : upcoming.personal < 2 || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.5)
+      : intradayWorsening || upcoming.personal < 2 || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.5)
         ? "watch"
         : levelFromScore(recoveryScore);
 
@@ -493,7 +518,11 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
         ? `Сон ${h.sleepHoursAvg ?? "?"}ч (${h.sleepQualityAvg ?? "?"}/10) · шаги ${h.stepsAvg ?? "?"} · ${h.trainingDaysWeek} тренировок · ${stats.habitsToday.done}/${stats.habitsToday.total} привычек`
         : `${stats.habitsToday.done}/${stats.habitsToday.total} привычек · ${flaggedMedicalParams} флагов`,
       insight: h
-        ? h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7
+        ? intradayWorsening
+          ? intraday.summary
+          : intradayImproving
+            ? `${intraday.summary} Значит, остаток дня можно перестраивать без panic mode, но не ломая recovery.`
+            : h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7
           ? `Ложишься после часа ночи ${Math.round(h.lateBedtimeRatio * 100)}% дней — это #1 рычаг для здоровья и самочувствия.`
           : h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7
             ? `Шаги ${h.stepsAvg ?? "?"} при цели ${h.stepsGoalRatio != null ? Math.round((h.stepsAvg ?? 0) / (h.stepsGoalRatio || 1)) : "?"} — NEAT-активность проседает.`
@@ -511,6 +540,7 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
                     `HEYS: режим дня ${heysDayMode.label} → фокус ${getMetricLabel(heysDayMode.focusMetricKey).toLowerCase()}`,
                   ]
                 : []),
+              ...(intraday ? [`HEYS: ${intraday.summary}`] : []),
               `HEYS: вес ${h.weightCurrent ?? "?"}кг (цель ${h.weightGoal ?? "?"}кг, Δ30д: ${h.weightDelta30d != null ? `${h.weightDelta30d > 0 ? "+" : ""}${h.weightDelta30d}кг` : "?"})`,
               `HEYS: настроение ${h.moodAvg ?? "?"}/10, самочувствие ${h.wellbeingAvg ?? "?"}/10, стресс ${h.stressAvg ?? "?"}/10`,
             ]
@@ -583,7 +613,11 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
         ? `Сон ${h.sleepHoursAvg ?? "?"}ч · качество ${h.sleepQualityAvg ?? "?"}/10 · поздний отход ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% · ${upcoming.personal} личных окон`
         : `${upcoming.personal} личных окон · сон ${sleepChecked ? "✓" : "✗"}`,
       insight: h
-        ? h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8
+        ? intradayWorsening
+          ? `${intraday.summary} ${intraday.detail}`
+          : intradayImproving
+            ? `${intraday.summary} Это хороший момент защитить recovery-окно и не разменять выровнявшийся фон.`
+            : h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8
           ? `100% дней ложишься после 01:00 — это главная слепая зона recovery. Без сдвига засыпания всё остальное работает на половину.`
           : (h.sleepQualityAvg ?? 10) < 5
             ? `Качество сна ${h.sleepQualityAvg}/10 — recovery под давлением даже при достаточной длительности.`
@@ -603,6 +637,7 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
                     `HEYS: стратегия дня — ${heysDayMode.calendarStrategy}`,
                   ]
                 : []),
+              ...(intradayWorsening && intraday?.detail ? [`HEYS: ${intraday.detail}`] : []),
               `HEYS: сон ${h.sleepHoursAvg ?? "?"}ч, качество ${h.sleepQualityAvg ?? "?"}/10`,
               `HEYS: поздний отход ко сну ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% дней`,
               `HEYS: вода ${h.waterAvg ?? "?"}мл/день`,
@@ -645,6 +680,27 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
           href: `/projects?open=${attentionProject.id}`,
           level: attentionProject.status === "red" ? "critical" : "watch",
           weight: attentionProject.status === "red" ? 96 : 86,
+        }
+      : null,
+  );
+
+  pushPriority(
+    candidates,
+    intradayWorsening
+      ? {
+          id: "heys-intraday-drift",
+          title:
+            intraday?.status === "critical"
+              ? "Быстро перестроить день по live-сигналу HEYS"
+              : "Подстроить день под live-сдвиг HEYS",
+          reason: intraday?.summary ?? "HEYS внутри дня уже показывает сдвиг состояния.",
+          action:
+            intraday?.status === "critical"
+              ? "Срезать остаток дня до одного мягкого узла, защитить ближайшее recovery-окно и не добавлять новый execution."
+              : "Проверить ближайшие окна, убрать лишнее и подстроить остаток дня под самочувствие / стресс, пока сигнал ещё живой.",
+          href: "/calendar",
+          level: intraday?.status === "critical" ? "critical" : "watch",
+          weight: intraday?.status === "critical" ? 95 : 82,
         }
       : null,
   );

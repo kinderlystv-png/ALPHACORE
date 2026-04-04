@@ -97,6 +97,7 @@ function getDayModeFocusMetricKey(
   fallbackMetricKey: HeysMetricKey,
   sleepGoal: number | null | undefined,
 ): HeysMetricKey {
+  const intraday = h.intraday;
   const weightGap =
     h.weightCurrent != null && h.weightGoal != null
       ? h.weightCurrent - h.weightGoal
@@ -105,6 +106,14 @@ function getDayModeFocusMetricKey(
     h.sleepHoursAvg != null
       ? Math.max(0, (sleepGoal ?? 8) - h.sleepHoursAvg)
       : 0;
+
+  if (
+    intraday?.focusMetricKey &&
+    (intraday.momentum === "worsening" || intraday.momentum === "mixed") &&
+    (modeId === "damage-control" || modeId === "recovery" || intraday.status === "critical")
+  ) {
+    return intraday.focusMetricKey;
+  }
 
   switch (modeId) {
     case "damage-control":
@@ -161,6 +170,14 @@ export function getMetricLabel(metricKey: HeysMetricKey): string {
 }
 
 export function getDefaultMetricKey(h: HeysHealthSignals): HeysMetricKey {
+  if (
+    h.intraday?.focusMetricKey &&
+    (h.intraday.momentum === "worsening" || h.intraday.momentum === "mixed") &&
+    (h.intraday.status === "watch" || h.intraday.status === "critical")
+  ) {
+    return h.intraday.focusMetricKey;
+  }
+
   if (h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7) return "bedtime";
   if (h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7) return "steps";
   if ((h.wellbeingAvg ?? 10) < 6.5) return "wellbeing";
@@ -196,6 +213,7 @@ export function getHeysDayMode(
   fallbackMetricKey: HeysMetricKey,
   sleepGoal: number | null | undefined,
 ): DayMode {
+  const intraday = h.intraday;
   const lateRatio = h.lateBedtimeRatio ?? 0;
   const sleepHours = h.sleepHoursAvg ?? sleepGoal ?? 7.5;
   const sleepGap = Math.max(0, (sleepGoal ?? 8) - sleepHours);
@@ -205,7 +223,19 @@ export function getHeysDayMode(
   const water = h.waterAvg ?? 1800;
   const stepsRatio = h.stepsGoalRatio ?? 1;
   const overloadedDay = context.dayLoad >= 10 || context.parties > 0 || context.cleanup > 0;
+  const intradayWorsening =
+    intraday != null &&
+    (intraday.momentum === "worsening" || intraday.momentum === "mixed") &&
+    (intraday.status === "watch" || intraday.status === "critical");
+  const intradayImproving =
+    intraday?.momentum === "improving" && intraday.status === "good";
   const reasons: string[] = [];
+
+  if (intradayWorsening || intradayImproving) {
+    for (const reason of intraday?.reasons.slice(0, 2) ?? []) {
+      pushUniqueReason(reasons, reason);
+    }
+  }
 
   pushUniqueReason(reasons, lateRatio > 0.7 ? `${Math.round(lateRatio * 100)}% поздних отходов` : null);
   pushUniqueReason(reasons, sleepGap > 0.6 ? `сон ниже цели на ${fmtNum(sleepGap)}ч` : null);
@@ -229,6 +259,38 @@ export function getHeysDayMode(
       forceActionKind: "slot",
       preferBundle: false,
       bundleBiasIds: ["movement-recovery-pair"],
+    };
+  }
+
+  if (intraday != null && intraday.status === "critical" && intradayWorsening) {
+    return {
+      id: "damage-control",
+      label: "Damage control",
+      tone: "bad",
+      summary: intraday.summary,
+      detail: `${intraday.detail} Автопилот будет сразу облегчать остаток дня, а не ждать, пока недельное среднее окончательно испортится.`,
+      focusMetricKey: getDayModeFocusMetricKey("damage-control", h, fallbackMetricKey, sleepGoal),
+      reasons: reasons.slice(0, 3),
+      calendarStrategy: "Сразу облегчить остаток дня, защитить ближайшее recovery-окно и не добавлять новый execution поверх live-drift.",
+      forceActionKind: "slot",
+      preferBundle: true,
+      bundleBiasIds: ["sleep-hydration-reset", "movement-recovery-pair", "review-shutdown-pair"],
+    };
+  }
+
+  if (intradayWorsening) {
+    return {
+      id: "recovery",
+      label: "Recovery mode",
+      tone: "warn",
+      summary: intraday.summary,
+      detail: `${intraday.detail} Автопилот лучше подстроит остаток дня через мягкие окна, чем через ещё одну тяжёлую задачу.`,
+      focusMetricKey: getDayModeFocusMetricKey("recovery", h, fallbackMetricKey, sleepGoal),
+      reasons: reasons.slice(0, 3),
+      calendarStrategy: "Подстроить остаток дня под live-shift: меньше шума, максимум один мягкий sprint и recovery раньше, чем новые обещания.",
+      forceActionKind: "slot",
+      preferBundle: true,
+      bundleBiasIds: ["sleep-hydration-reset", "movement-recovery-pair", "review-shutdown-pair"],
     };
   }
 
@@ -285,6 +347,9 @@ export function getHeysDayMode(
     pushUniqueReason(executionReasons, `самочувствие ${fmtNum(wellbeing)}/10`);
     pushUniqueReason(executionReasons, `стресс ${fmtNum(stress)}/10`);
     pushUniqueReason(executionReasons, `${Math.round(stepsRatio * 100)}% шаговой базы`);
+    if (intradayImproving && intraday.reasons.length > 0) {
+      pushUniqueReason(executionReasons, intraday.reasons[0]);
+    }
 
     return {
       id: "execution",
