@@ -565,7 +565,7 @@ function formatCompletionLabel(completedAt?: string | null): string | null {
 
   const completion = getTaskCompletionDetails({ completedAt });
   if (!completion) return null;
-  return `done · ${completion.timeLabel}`;
+  return `подтверждено ${completion.timeLabel}`;
 }
 
 /* ── Component ── */
@@ -1878,8 +1878,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
-                  const isCustomSlot = slot.id.startsWith("custom-");
-                  const slotStateLabel = requiresApproval ? (isCompletedSlot ? "done" : "plan") : null;
                   const isBlockingSlot =
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
@@ -1924,10 +1922,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         ? "opacity-70"
                         : "opacity-0";
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
+                  const primaryTextClass = isCompletedSlot ? "text-emerald-50" : c.text;
+                  const secondaryTextClass = isCompletedSlot ? "text-emerald-100/80" : "text-zinc-500";
                   const shellTone = isChildcareBackground
                     ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
                     : isCompletedSlot
-                      ? `${c.border} ${c.bg} saturate-[0.78]`
+                      ? "border-emerald-400/55 bg-linear-to-br from-emerald-400/32 via-emerald-500/22 to-emerald-950/42"
                       : `${c.border} ${c.bg}`;
                   const shellDepth = isChildcareBackground
                     ? "shadow-none"
@@ -2002,34 +2002,18 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           )}
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <p className={`text-[10px] font-medium leading-tight ${c.text} ${isCompletedSlot ? "opacity-80" : ""}`}>
-                                {slot.start}–{slot.end}
-                              </p>
-                              <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? "line-through decoration-white/30 opacity-70" : ""}`}>
-                                {slot.title}
-                              </p>
-                            </div>
-
-                            {(slotStateLabel || requiresApproval) && (
-                              <div className="mt-0.5 flex shrink-0 items-center gap-1 self-start">
-                                {slotStateLabel && (
-                                  <span className={`pointer-events-none rounded-full border px-1 py-0.5 text-[8px] font-medium uppercase leading-none tracking-widest ${
-                                    isCompletedSlot
-                                      ? "border-emerald-400/25 bg-emerald-500/14 text-emerald-100"
-                                      : "border-white/12 bg-zinc-950/70 text-zinc-200"
-                                  }`}>
-                                    {slotStateLabel}
-                                  </span>
-                                )}
-
+                              <div className="flex items-center justify-between gap-2">
+                                <p className={`text-[10px] font-medium leading-tight ${primaryTextClass}`}>
+                                  {slot.start}–{slot.end}
+                                </p>
                                 {requiresApproval && (
                                   <button
                                     type="button"
                                     aria-label={isCompletedSlot ? "Снять подтверждение слота" : "Подтвердить слот"}
-                                    title={isCompletedSlot ? "Вернуть в plan" : "Подтвердить как done"}
+                                    title={isCompletedSlot ? "Снять подтверждение" : "Подтвердить выполнение"}
                                     className={`relative z-10 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
                                       isCompletedSlot
-                                        ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
+                                        ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
                                         : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                                     }`}
                                     onClick={(e) => {
@@ -2044,7 +2028,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                                   </button>
                                 )}
                               </div>
-                            )}
+                              <p className={`mt-0.5 font-medium leading-snug ${primaryTextClass} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? "line-through decoration-emerald-100/45 opacity-90" : ""}`}>
+                                {slot.title}
+                              </p>
+                            </div>
                           </div>
                           {projectLabel && !isSupportSlot && height > 46 && (
                             <p className="mt-1 inline-flex max-w-full truncate rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-200">
@@ -2052,12 +2039,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                             </p>
                           )}
                           {completionLabel && !isSupportSlot && height > 44 && (
-                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isCompletedSlot ? "text-emerald-200/85" : "text-zinc-500"}`}>
+                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isCompletedSlot ? "text-emerald-100/85" : secondaryTextClass}`}>
                               {completionLabel}
                             </p>
                           )}
                           {!isSupportSlot && height > 40 && slot.subtitle && (
-                            <p className="mt-0.5 line-clamp-2 text-[9px] leading-tight text-zinc-500">
+                            <p className={`mt-0.5 line-clamp-2 text-[9px] leading-tight ${secondaryTextClass}`}>
                               {slot.subtitle}
                             </p>
                           )}
@@ -2367,7 +2354,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     <div className="min-w-0">
                       <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Подтверждение</p>
                       <p className={`mt-1 text-sm font-semibold ${isCompletedSlot ? "text-emerald-100" : "text-zinc-100"}`}>
-                        {isCompletedSlot ? (completionLabel ?? "done") : "ожидает подтверждения"}
+                        {isCompletedSlot ? (completionLabel ?? "подтверждено") : "ожидает подтверждения"}
                       </p>
                     </div>
                     <button
@@ -2379,7 +2366,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           : "border-sky-500/30 bg-sky-950/30 text-sky-100 hover:border-sky-400/50 hover:bg-sky-950/45"
                       }`}
                     >
-                      {isCompletedSlot ? "Вернуть в plan" : "Подтвердить"}
+                      {isCompletedSlot ? "Снять отметку" : "Подтвердить"}
                     </button>
                   </div>
                   <p className="mt-2 text-[11px] text-zinc-500">

@@ -24,7 +24,7 @@ function formatCompletionLabel(completedAt?: string | null): string | null {
   const value = new Date(completedAt);
   if (Number.isNaN(value.getTime())) return null;
 
-  return `done · ${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+  return `подтверждено ${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
 }
 
 export default function CalendarPage() {
@@ -121,7 +121,6 @@ export default function CalendarPage() {
               const requiresApproval = approvalState.requiresApproval;
               const isCompleted = approvalState.isCompleted;
               const completionLabel = formatCompletionLabel(approvalState.completedAt);
-              const statusLabel = requiresApproval ? (isCompleted ? "done" : "plan") : null;
               const sourceLabel =
                 slot.source === "studio"
                   ? "schedule.xlsx"
@@ -132,16 +131,13 @@ export default function CalendarPage() {
               return (
                 <div
                   key={slot.id}
-                  className={`rounded-xl border px-4 py-3 ${SCHEDULE_TONE_CLS[slot.tone]} ${isCompleted ? "saturate-[0.82]" : ""}`}
+                  className={`rounded-xl border px-4 py-3 ${isCompleted ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50" : SCHEDULE_TONE_CLS[slot.tone]}`}
                 >
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
-                      <p className="font-mono text-xs opacity-70">
-                        {slot.start}–{slot.end}
-                      </p>
-                      <div className="mt-1 flex items-start justify-between gap-2">
-                        <p className={`min-w-0 text-sm font-medium ${isCompleted ? "line-through opacity-70" : ""}`}>
-                          {slot.title}
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={`font-mono text-xs ${isCompleted ? "text-emerald-100/85" : "opacity-70"}`}>
+                          {slot.start}–{slot.end}
                         </p>
                         {requiresApproval && (
                           <button
@@ -152,18 +148,21 @@ export default function CalendarPage() {
                             }}
                             className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold leading-none transition ${
                               isCompleted
-                                ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
+                                ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
                                 : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                             }`}
                             aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
-                            title={isCompleted ? "Вернуть в plan" : "Подтвердить как done"}
+                            title={isCompleted ? "Снять подтверждение" : "Подтвердить выполнение"}
                           >
                             {isCompleted ? "✓" : "○"}
                           </button>
                         )}
                       </div>
+                      <p className={`mt-1 min-w-0 text-sm font-medium ${isCompleted ? "text-emerald-50 line-through decoration-emerald-100/45 opacity-90" : ""}`}>
+                          {slot.title}
+                      </p>
                       {completionLabel && (
-                        <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-emerald-200/85">
+                        <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100/85">
                           {completionLabel}
                         </p>
                       )}
@@ -187,15 +186,6 @@ export default function CalendarPage() {
                       {heysBadgeLabel && (
                         <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-orange-200">
                           {heysBadgeLabel}
-                        </span>
-                      )}
-                      {statusLabel && (
-                        <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${
-                          isCompleted
-                            ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-100"
-                            : "border-white/10 text-white/70"
-                        }`}>
-                          {statusLabel}
                         </span>
                       )}
                       <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white/70">
