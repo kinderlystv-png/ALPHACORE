@@ -154,7 +154,7 @@ export default function CalendarPage() {
               const shellCls = isYesterdayPendingSlot
                 ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"
                 : isYesterdayMutedSlot
-                  ? "border-zinc-700/80 bg-zinc-900/72 text-zinc-300 opacity-80"
+                  ? "border-zinc-800/80 bg-zinc-900/72 text-zinc-300 opacity-80"
                   : isCompleted
                     ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50"
                     : SCHEDULE_TONE_CLS[slot.tone];
@@ -205,13 +205,13 @@ export default function CalendarPage() {
                               setVersion((current) => current + 1);
                             }}
                             className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold leading-none transition ${
-                              isYesterdayDay
-                                ? isCompleted
+                              isYesterdayPendingSlot
+                                ? "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
+                                : isYesterdayMutedSlot
                                   ? "border-zinc-600/80 bg-zinc-900/85 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-                                  : "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
-                                : isCompleted
-                                  ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
-                                  : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                                  : isCompleted
+                                    ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
+                                    : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                             }`}
                             aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
                             title={isCompleted ? "Снять подтверждение" : "Подтвердить выполнение"}
@@ -224,7 +224,7 @@ export default function CalendarPage() {
                           {slot.title}
                       </p>
                       {completionLabel && (
-                        <p className={`mt-1 text-[10px] uppercase tracking-[0.14em] ${isYesterdayDay ? "text-zinc-500" : "text-emerald-100/85"}`}>
+                        <p className={`mt-1 text-[10px] uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "text-zinc-500" : "text-emerald-100/85"}`}>
                           {completionLabel}
                         </p>
                       )}
@@ -236,7 +236,7 @@ export default function CalendarPage() {
                           {slot.tags.map((tag) => (
                             <span
                               key={`${slot.id}-${tag}`}
-                              className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/65"
+                              className={`rounded-full border px-2 py-0.5 text-[10px] ${isYesterdayMutedSlot ? "border-zinc-700 text-zinc-500" : "border-white/10 text-white/65"}`}
                             >
                               #{tag}
                             </span>

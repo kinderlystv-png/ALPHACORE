@@ -562,7 +562,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const reboundTimerRef = useRef<number | null>(null);
   const reboundFrameRef = useRef<number | null>(null);
   const today = todayKey();
-  const yesterdayKey = shiftDateKey(today, -1);
 
   useEffect(() => {
     setAnchor(getTodayWindowAnchor());

@@ -128,6 +128,12 @@ function dayHint(dayKey: string, todayKey: string): string | null {
   return null;
 }
 
+function shiftDateKey(dateKey: string, days: number): string {
+  const date = new Date(`${dateKey}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function taskBelongsToDay(task: Task, dayKey: string, todayKey: string, isToday: boolean): boolean {
   if (!task.dueDate) {
     return isToday && task.status === "active";
@@ -147,6 +153,7 @@ export function WeekPlanner({
   const [version, setVersion] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
   const todayKey = dateStr();
+  const yesterdayKey = useMemo(() => shiftDateKey(todayKey, -1), [todayKey]);
 
   useEffect(() => {
     setIsHydrated(true);
@@ -336,16 +343,48 @@ export function WeekPlanner({
                         const approvalState = getScheduleSlotApprovalState(slot);
                         const requiresApproval = approvalState.requiresApproval;
                         const isCompleted = approvalState.isCompleted;
+                        const isYesterdayDay = day.key === yesterdayKey;
+                        const isPendingSlot = requiresApproval && !isCompleted;
+                        const isYesterdayPendingSlot = isYesterdayDay && isPendingSlot;
+                        const isYesterdayMutedSlot = isYesterdayDay && !isYesterdayPendingSlot;
                         const completionLabel = formatCompletionLabel(approvalState.completedAt);
+                        const shellCls = isYesterdayPendingSlot
+                          ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"
+                          : isYesterdayMutedSlot
+                            ? "border-zinc-800/80 bg-zinc-900/72 text-zinc-300 opacity-80"
+                            : isCompleted
+                              ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50"
+                              : SCHEDULE_TONE_CLS[slot.tone];
+                        const timeCls = isYesterdayPendingSlot
+                          ? "text-rose-100/85"
+                          : isYesterdayMutedSlot
+                            ? "text-zinc-500"
+                            : isCompleted
+                              ? "text-emerald-100/85"
+                              : "opacity-70";
+                        const titleCls = isYesterdayPendingSlot
+                          ? "text-rose-50"
+                          : isYesterdayMutedSlot
+                            ? isCompleted
+                              ? "text-zinc-400 line-through decoration-zinc-500/40 opacity-85"
+                              : "text-zinc-400"
+                            : isCompleted
+                              ? "text-emerald-50 line-through decoration-emerald-100/45 opacity-90"
+                              : "";
+                        const subtitleCls = isYesterdayPendingSlot
+                          ? "text-rose-100/75"
+                          : isYesterdayMutedSlot
+                            ? "text-zinc-500"
+                            : "opacity-70";
 
                         return (
                           <div
                             key={slot.id}
-                            className={`rounded-xl border px-3 py-2 ${isCompleted ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50" : SCHEDULE_TONE_CLS[slot.tone]}`}
+                            className={`rounded-xl border px-3 py-2 ${shellCls}`}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="flex items-center gap-2">
-                                <p className={`font-mono text-[10px] ${isCompleted ? "text-emerald-100/85" : "opacity-70"}`}>
+                                <p className={`font-mono text-[10px] ${timeCls}`}>
                                   {formatScheduleTimeRange(slot.start, slot.end)}
                                 </p>
                                 {requiresApproval && (
@@ -356,9 +395,13 @@ export function WeekPlanner({
                                       setVersion((current) => current + 1);
                                     }}
                                     className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
-                                      isCompleted
-                                        ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
-                                        : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                                      isYesterdayPendingSlot
+                                        ? "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
+                                        : isYesterdayMutedSlot
+                                          ? "border-zinc-600/80 bg-zinc-900/85 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                                          : isCompleted
+                                            ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
+                                            : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                                     }`}
                                     aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
                                     title={isCompleted ? "Снять подтверждение" : "Подтвердить выполнение"}
@@ -367,7 +410,7 @@ export function WeekPlanner({
                                   </button>
                                 )}
                               </div>
-                              <div className="flex items-center gap-1.5">
+                              <div className={`flex items-center gap-1.5 ${isYesterdayMutedSlot ? "opacity-70" : ""}`}>
                                 {heysBadgeLabel && (
                                   <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-orange-200">
                                     {heysBadgeLabel}
@@ -375,14 +418,14 @@ export function WeekPlanner({
                                 )}
                               </div>
                             </div>
-                            <p className={`mt-1 text-xs font-medium leading-snug ${isCompleted ? "text-emerald-50 line-through decoration-emerald-100/45 opacity-90" : ""}`}>{slot.title}</p>
+                            <p className={`mt-1 text-xs font-medium leading-snug ${titleCls}`}>{slot.title}</p>
                             {completionLabel && (
-                              <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-emerald-100/85">
+                              <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "text-zinc-500" : "text-emerald-100/85"}`}>
                                 {completionLabel}
                               </p>
                             )}
                             {slot.subtitle && (
-                              <p className="mt-1 line-clamp-2 text-[10px] opacity-70">
+                              <p className={`mt-1 line-clamp-2 text-[10px] ${subtitleCls}`}>
                                 {slot.subtitle}
                               </p>
                             )}
