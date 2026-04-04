@@ -11,11 +11,13 @@ import type { JournalEntry } from "./journal";
 import { paramStatus, type MedEntry, type MedParam } from "./medical";
 import type { Project, StatusTone } from "./projects";
 import {
+	isEditableScheduleSlot,
 	minutesToTime,
 	timeToMinutes,
 	type ScheduleSlot,
 	type ScheduleTone,
 } from "./schedule";
+import type { IntradayRescheduleAction } from "./intraday-reschedule";
 import { lsGet, lsSet, uid } from "./storage";
 import { compareTasksByAttention, type Task } from "./tasks";
 import { getMetricLabel, type DayMode, type HeysMetricKey } from "./heys-day-mode";
@@ -335,6 +337,7 @@ export type AgentPracticalPlanRescheduleMove = {
 	tone: AttentionLevel;
 	title: string;
 	detail: string;
+	action: IntradayRescheduleAction;
 };
 
 type RecoveryAnchor = {
@@ -2994,18 +2997,26 @@ function buildIntradayRescheduleMoves(input: {
 		context.heys.intradayFocusMetricLabel?.toLowerCase() ??
 		context.heys.focusMetricLabel?.toLowerCase() ??
 		"энергии";
+	const focusMetricKey =
+		intraday?.focusMetricKey ?? context.heys.dayMode?.focusMetricKey ?? null;
 	const moves: AgentPracticalPlanRescheduleMove[] = [];
 
 	const livePlanningSlot =
-		(planningSlot && isUpcomingTodaySlot(planningSlot, context.today, nowMinutes)
+		(planningSlot &&
+		isEditableScheduleSlot(planningSlot) &&
+		isUpcomingTodaySlot(planningSlot, context.today, nowMinutes)
 			? planningSlot
 			: null) ??
 		upcomingTodaySlots.find(
-			(slot) => isPlanningSlot(slot) && !isTrueRecoverySlot(slot),
+			(slot) => isPlanningSlot(slot) && !isTrueRecoverySlot(slot) && isEditableScheduleSlot(slot),
 		) ??
 		null;
 
 	if (livePlanningSlot) {
+		const compressedTitle = `Decision sprint · ${clipText(projectTarget, 44)}`;
+		const compressedEnd = minutesToTime(
+			Math.min(timeToMinutes(livePlanningSlot.end), timeToMinutes(livePlanningSlot.start) + 30),
+		);
 		moves.push({
 			id: `intraday-compress-${livePlanningSlot.date}-${livePlanningSlot.start}`,
 			kind: "compress-slot",
@@ -3015,28 +3026,66 @@ function buildIntradayRescheduleMoves(input: {
 					? "Сжать ближайший work-slot до decision sprint"
 					: "Облегчить ближайший work-slot прямо сегодня",
 			detail: `${formatSlotBrief(livePlanningSlot)} → оставить только ${projectTarget} на 25–30 минут, а остаток превратить в буфер под ${focusMetric}.`,
+			action: {
+				type: "compress-slot",
+				slotId: livePlanningSlot.id,
+				date: livePlanningSlot.date,
+				title: compressedTitle,
+				end: compressedEnd,
+				tone: livePlanningSlot.tone,
+				tags: [...new Set([...livePlanningSlot.tags, "intraday-rescue", "decision-sprint"])],
+				metricKey: focusMetricKey,
+			},
 		});
 	}
 
-	const liveRecoveryAnchor =
-		recoveryAnchor && isUpcomingTodaySlot(recoveryAnchor, context.today, nowMinutes)
-			? recoveryAnchor
-			: null;
+	const liveRecoveryAnchor = recoveryAnchor && isUpcomingTodaySlot(recoveryAnchor, context.today, nowMinutes)
+		? recoveryAnchor
+		: null;
+	const liveRecoverySlot = liveRecoveryAnchor
+		? upcomingTodaySlots.find(
+				(slot) =>
+					slot.date === liveRecoveryAnchor.date &&
+					slot.start === liveRecoveryAnchor.start &&
+					slot.end === liveRecoveryAnchor.end,
+			) ?? null
+		: null;
 
 	if (liveRecoveryAnchor) {
+		const recoveryTitle = liveRecoveryAnchor.label || "Recovery / stretch + walk";
+		const recoveryTags = ["recovery", "protected", "intraday-rescue"];
 		moves.push({
 			id: `intraday-protect-${liveRecoveryAnchor.date}-${liveRecoveryAnchor.start}`,
 			kind: "protect-recovery",
 			tone: context.heys.intradayCritical ? "critical" : "watch",
 			title: "Не отдавать recovery-окно под хвосты",
 			detail: `${formatRecoveryAnchorBrief(liveRecoveryAnchor)} должно остаться пустым от переписки, мелких задач и новых обязательств, пока внутри дня едет ${focusMetric}.`,
+			action: {
+				type: "protect-recovery",
+				strategy:
+					liveRecoveryAnchor.mode === "protect" && liveRecoverySlot && isEditableScheduleSlot(liveRecoverySlot)
+						? "update-slot"
+						: "create-event",
+				slotId:
+					liveRecoveryAnchor.mode === "protect" && liveRecoverySlot && isEditableScheduleSlot(liveRecoverySlot)
+						? liveRecoverySlot.id
+						: undefined,
+				date: liveRecoveryAnchor.date,
+				start: liveRecoveryAnchor.start,
+				end: liveRecoveryAnchor.end,
+				title: recoveryTitle,
+				tone: liveRecoverySlot?.tone ?? "personal",
+				tags: [...new Set([...(liveRecoverySlot?.tags ?? []), ...recoveryTags])],
+				metricKey: focusMetricKey,
+			},
 		});
 	} else {
 		const convertibleSlot =
 			upcomingTodaySlots.find(
 				(slot) =>
+					isEditableScheduleSlot(slot) &&
 					!isTrueRecoverySlot(slot) &&
-					(slot.tone === "review" || slot.tone === "personal" || slot.tone === "cleanup"),
+					(slot.tone === "review" || slot.tone === "personal"),
 			) ?? null;
 
 		if (convertibleSlot) {
@@ -3046,6 +3095,17 @@ function buildIntradayRescheduleMoves(input: {
 				tone: protectiveMode ? "watch" : "good",
 				title: "Перевести ближайшее тихое окно в recovery",
 				detail: `${formatSlotBrief(convertibleSlot)} лучше использовать как quiet recovery / stretch + walk, а не как ещё одну попытку дожать день через силу.`,
+				action: {
+					type: "convert-slot",
+					slotId: convertibleSlot.id,
+					date: convertibleSlot.date,
+					start: convertibleSlot.start,
+					end: convertibleSlot.end,
+					title: "Recovery / stretch + walk",
+					tone: "personal",
+					tags: [...new Set([...convertibleSlot.tags, "recovery", "protected", "intraday-rescue"])],
+					metricKey: focusMetricKey,
+				},
 			});
 		}
 	}
@@ -3062,6 +3122,11 @@ function buildIntradayRescheduleMoves(input: {
 			tone: context.heys.intradayCritical ? "critical" : "watch",
 			title: "Снять из календаря хотя бы один task-slot",
 			detail: `${formatSlotBrief(customTaskSlot)} лучше не держать жёстко в остатке дня: оставить как soft task или перенести, чтобы не усиливать перегруз.`,
+			action: {
+				type: "unslot",
+				eventId: customTaskSlot.id,
+				title: customTaskSlot.title,
+			},
 		});
 	} else {
 		const futureTaskWindow =
@@ -3081,6 +3146,12 @@ function buildIntradayRescheduleMoves(input: {
 				tone: context.heys.intradayCritical ? "critical" : "watch",
 				title: "Вынести один хвост из сегодня в спокойное окно",
 				detail: `${clipText(deferrableTask.title, 44)} лучше переложить в ${formatTaskWindowSuggestion(futureTaskWindow)}, чем тащить его фоном через ухудшение ${focusMetric}.`,
+				action: {
+					type: "move-task",
+					taskId: deferrableTask.id,
+					title: deferrableTask.title,
+					dueDate: futureTaskWindow.date,
+				},
 			});
 		}
 	}

@@ -5,6 +5,8 @@ import {
   addCustomEvent,
   getCustomEvents,
   getScheduleForDate,
+  isEditableScheduleSlot,
+  minutesToTime,
   timeToMinutes,
   type CustomEvent,
   type ScheduleSlot,
@@ -17,6 +19,10 @@ import {
   type Task,
   type TaskPriority,
 } from "@/lib/tasks";
+import {
+  applyIntradayRescheduleAction,
+  type IntradayRescheduleAction,
+} from "@/lib/intraday-reschedule";
 import { useHeysSync } from "@/lib/use-heys-sync";
 import type {
   HeysDayRecord,
@@ -115,6 +121,7 @@ type IntradayRescheduleHint = {
   title: string;
   detail: string;
   tone: MetricStatus | "neutral";
+  action?: IntradayRescheduleAction;
 };
 
 type TraceItem = {
@@ -687,10 +694,11 @@ function shortenLabel(text: string, maxLength = 52): string {
 function buildIntradayRescheduleHints(input: {
   signal: HeysIntradaySignal | null | undefined;
   topMetricKey: MetricKey;
+  todaySchedule: ScheduleSlot[];
   slotOptions: WeeklySlotOption[];
   tasks: Task[];
 }): IntradayRescheduleHint[] {
-  const { signal, topMetricKey, slotOptions, tasks } = input;
+  const { signal, topMetricKey, todaySchedule, slotOptions, tasks } = input;
 
   if (
     !signal ||
@@ -704,16 +712,56 @@ function buildIntradayRescheduleHints(input: {
   const focusLabel = signal.focusMetricKey ? getMetricLabel(signal.focusMetricKey).toLowerCase() : getMetricLabel(topMetricKey).toLowerCase();
   const hints: IntradayRescheduleHint[] = [];
   const nextSlot = slotOptions[0] ?? null;
+  const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+  const livePlanningSlot = todaySchedule.find(
+    (slot) =>
+      isEditableScheduleSlot(slot) &&
+      timeToMinutes(slot.end) > nowMinutes + 5 &&
+      (slot.tone === "work" || slot.tone === "review" || slot.tone === "kinderly" || slot.tone === "heys"),
+  ) ?? null;
 
-  if (nextSlot) {
+  if (livePlanningSlot) {
+    const compressedEndMinutes = Math.min(
+      timeToMinutes(livePlanningSlot.end),
+      timeToMinutes(livePlanningSlot.start) + 30,
+    );
     hints.push({
-      id: `slot-${nextSlot.date}-${nextSlot.start}`,
+      id: `slot-${livePlanningSlot.date}-${livePlanningSlot.start}`,
       title: "Сжать ближайший слот",
       detail:
-        nextSlot.date === today
-          ? `${nextSlot.start}–${nextSlot.end} оставить только под один 25–30 мин sprint, а остаток дня не раздувать на фоне просадки ${focusLabel}.`
-          : `Следующее окно ${nextSlot.date} ${nextSlot.start}–${nextSlot.end} лучше заранее держать коротким и не забивать хвостами, если ${focusLabel} продолжит ехать.`,
+        `${livePlanningSlot.start}–${livePlanningSlot.end} оставить только под один 25–30 мин sprint, а остаток дня не раздувать на фоне просадки ${focusLabel}.`,
       tone: signal.status === "critical" ? "bad" : "warn",
+      action: {
+        type: "compress-slot",
+        slotId: livePlanningSlot.id,
+        date: livePlanningSlot.date,
+        title: `Decision sprint · ${shortenLabel(getMetricLabel(topMetricKey), 20)}`,
+        end: minutesToTime(compressedEndMinutes),
+        tone: livePlanningSlot.tone,
+        tags: [...new Set([...livePlanningSlot.tags, "intraday-rescue", "decision-sprint"])],
+        metricKey: signal.focusMetricKey ?? topMetricKey,
+      },
+    });
+  } else if (nextSlot) {
+    hints.push({
+      id: `buffer-${nextSlot.date}-${nextSlot.start}`,
+      title: "Поставить quiet buffer",
+      detail:
+        nextSlot.date === today
+          ? `${nextSlot.start}–${nextSlot.end} лучше отдать под quiet recovery buffer, а не под ещё одну рабочую волну на фоне просадки ${focusLabel}.`
+          : `Следующее спокойное окно ${nextSlot.date} ${nextSlot.start}–${nextSlot.end} можно сразу занять recovery-buffer, если ${focusLabel} продолжит ехать.`,
+      tone: signal.status === "critical" ? "bad" : "warn",
+      action: {
+        type: "protect-recovery",
+        strategy: "create-event",
+        date: nextSlot.date,
+        start: nextSlot.start,
+        end: nextSlot.end,
+        title: "Recovery / quiet buffer",
+        tone: "personal",
+        tags: ["recovery", "protected", "intraday-rescue", "quiet-buffer"],
+        metricKey: signal.focusMetricKey ?? topMetricKey,
+      },
     });
   }
 
@@ -728,6 +776,12 @@ function buildIntradayRescheduleHints(input: {
       title: "Вынести один хвост из сегодня",
       detail: `${shortenLabel(deferrableTask.title)} лучше не держать в остатке дня: перенеси или преврати в soft task, чтобы не усиливать drift по ${focusLabel}.`,
       tone: signal.status === "critical" ? "bad" : "warn",
+      action: {
+        type: "move-task",
+        taskId: deferrableTask.id,
+        title: deferrableTask.title,
+        dueDate: resolveAutopilotTaskDate(topMetricKey, deferrableTask.priority),
+      },
     });
   }
 
@@ -2781,6 +2835,7 @@ export function HeysHealthPanel() {
   const intradayRescheduleHints = buildIntradayRescheduleHints({
     signal: intradaySignal,
     topMetricKey: topMetric.key,
+    todaySchedule: getScheduleForDate(todayDateKey()),
     slotOptions: weeklySlotOptions,
     tasks,
   });
@@ -2956,6 +3011,22 @@ export function HeysHealthPanel() {
   function handleTraceItemFocus(metricKey: MetricKey | null): void {
     if (!metricKey) return;
     setSelectedMetricKey(metricKey);
+  }
+
+  function handleApplyIntradayHint(hint: IntradayRescheduleHint): void {
+    if (!hint.action) {
+      setActionFeedback({
+        tone: "info",
+        text: `Для «${hint.title}» пока нет безопасного автоприменения.`,
+      });
+      return;
+    }
+
+    const result = applyIntradayRescheduleAction(hint.action);
+    setActionFeedback({
+      tone: result.outcome === "applied" ? "success" : "info",
+      text: result.message,
+    });
   }
 
   function handleApplyCompoundBundle(bundle: CompoundActionBundle): void {
@@ -3261,6 +3332,15 @@ export function HeysHealthPanel() {
                           </span>
                         </div>
                         <p className="mt-1 text-[12px] leading-5 text-zinc-400">{hint.detail}</p>
+                        {hint.action && (
+                          <button
+                            type="button"
+                            onClick={() => handleApplyIntradayHint(hint)}
+                            className="mt-3 rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:border-sky-400/40"
+                          >
+                            Применить
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>

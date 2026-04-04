@@ -31,6 +31,7 @@ import {
   type AttentionLevel,
 } from "@/lib/agent-control";
 import { getMetricLabel } from "@/lib/heys-day-mode";
+import { applyIntradayRescheduleAction } from "@/lib/intraday-reschedule";
 import { activeHabits, getChecks, streak, todayStr } from "@/lib/habits";
 import { getJournalEntries } from "@/lib/journal";
 import { getEntries as getMedicalEntries } from "@/lib/medical";
@@ -771,7 +772,13 @@ function getPlanRescheduleLabel(kind: PracticalPlanRescheduleMove["kind"]): stri
   }
 }
 
-function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
+function PracticalPlanCard({
+  plan,
+  onApplyRescheduleMove,
+}: {
+  plan: AgentPracticalPlan;
+  onApplyRescheduleMove: (move: PracticalPlanRescheduleMove) => void;
+}) {
   return (
     <section className="rounded-3xl border border-sky-500/20 bg-linear-to-br from-sky-950/20 via-zinc-950/70 to-zinc-950/90 p-4 shadow-lg shadow-black/10">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -887,6 +894,13 @@ function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
               </div>
               <p className="mt-2 text-sm font-medium text-zinc-100">{move.title}</p>
               <p className="mt-1 text-xs leading-5 text-zinc-400">{move.detail}</p>
+              <button
+				type="button"
+				onClick={() => onApplyRescheduleMove(move)}
+				className="mt-3 rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:border-sky-400/40"
+			>
+				Применить
+			</button>
             </div>
           ))}
         </div>
@@ -1132,6 +1146,15 @@ export function AgentControlPanel({
     }
   }, [notify, practicalPlan, recommendations]);
 
+  const handleApplyRescheduleMove = useCallback((move: PracticalPlanRescheduleMove) => {
+    const result = applyIntradayRescheduleAction(move.action);
+    refreshRuntimeContext();
+    notify({
+      tone: result.outcome === "applied" ? "success" : "info",
+      text: result.message,
+    });
+  }, [notify, refreshRuntimeContext]);
+
   return (
     <section className="rounded-4xl border border-zinc-800/60 bg-linear-to-br from-zinc-900/50 to-zinc-950/90 p-5 shadow-2xl shadow-black/20 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1220,7 +1243,7 @@ export function AgentControlPanel({
         </div>
       </div>
 
-      {practicalPlan && <div className="mt-4"><PracticalPlanCard plan={practicalPlan} /></div>}
+      {practicalPlan && <div className="mt-4"><PracticalPlanCard plan={practicalPlan} onApplyRescheduleMove={handleApplyRescheduleMove} /></div>}
 
       {recommendations.length > 0 ? (
         <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
