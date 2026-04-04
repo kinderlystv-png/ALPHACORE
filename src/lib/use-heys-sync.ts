@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { HeysHealthSignals, HeysSyncSnapshot } from "./heys-bridge";
 
+type HeysListener = () => void;
+
 type HeysSyncState = {
   signals: HeysHealthSignals | null;
   snapshot: HeysSyncSnapshot | null;
@@ -18,6 +20,13 @@ let sharedSignals: HeysHealthSignals | null = null;
 let sharedSnapshot: HeysSyncSnapshot | null = null;
 let lastFetched = 0;
 let fetchPromise: Promise<void> | null = null;
+const listeners = new Set<HeysListener>();
+
+function notifyListeners(): void {
+  for (const listener of listeners) {
+    listener();
+  }
+}
 
 async function doFetch(): Promise<void> {
   const res = await fetch("/api/heys-sync");
@@ -26,6 +35,7 @@ async function doFetch(): Promise<void> {
   sharedSignals = data.signals;
   sharedSnapshot = data.snapshot;
   lastFetched = Date.now();
+  notifyListeners();
 }
 
 export function useHeysSync(): HeysSyncState {
@@ -37,6 +47,12 @@ export function useHeysSync(): HeysSyncState {
     sharedSnapshot?.syncedAt ?? null,
   );
 
+  const syncFromShared = useCallback(() => {
+    setSignals(sharedSignals);
+    setSnapshot(sharedSnapshot);
+    setLastSynced(sharedSnapshot?.syncedAt ?? null);
+  }, []);
+
   const refresh = useCallback(() => {
     if (fetchPromise) return;
 
@@ -45,9 +61,7 @@ export function useHeysSync(): HeysSyncState {
 
     fetchPromise = doFetch()
       .then(() => {
-        setSignals(sharedSignals);
-        setSnapshot(sharedSnapshot);
-        setLastSynced(sharedSnapshot?.syncedAt ?? null);
+        syncFromShared();
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "HEYS sync failed");
@@ -56,7 +70,14 @@ export function useHeysSync(): HeysSyncState {
         setLoading(false);
         fetchPromise = null;
       });
-  }, []);
+  }, [syncFromShared]);
+
+  useEffect(() => {
+    listeners.add(syncFromShared);
+    return () => {
+      listeners.delete(syncFromShared);
+    };
+  }, [syncFromShared]);
 
   useEffect(() => {
     // Initial fetch if stale or never fetched

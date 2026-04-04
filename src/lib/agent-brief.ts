@@ -17,6 +17,30 @@ function todayLabel(): string {
   return `${d.getDate()} ${months[d.getMonth()]}, ${days[d.getDay()]}`;
 }
 
+function getHeysSectionLines(
+  snapshot: AgentControlSnapshot,
+  mode: "brief" | "review",
+): string[] {
+  const health = snapshot.areas.find((area) => area.key === "health");
+  const recovery = snapshot.areas.find((area) => area.key === "recovery");
+  const heysEvidence = [...(health?.evidence ?? []), ...(recovery?.evidence ?? [])]
+    .filter((line, index, list) => line.startsWith("HEYS:") && list.indexOf(line) === index)
+    .map((line) => line.replace(/^HEYS:\s*/, ""));
+
+  if (!heysEvidence.length && !health?.summary.includes("Сон") && !recovery?.summary.includes("Сон")) {
+    return [];
+  }
+
+  const head = [
+    health ? `${health.emoji} ${health.summary}` : null,
+    recovery
+      ? `${recovery.emoji} ${mode === "brief" ? recovery.insight : recovery.summary}`
+      : null,
+  ].filter((line): line is string => Boolean(line));
+
+  return [...head, ...heysEvidence].slice(0, mode === "brief" ? 3 : 4);
+}
+
 export function generateMorningBrief(snapshot: AgentControlSnapshot): string {
   const lines: string[] = [];
 
@@ -42,6 +66,15 @@ export function generateMorningBrief(snapshot: AgentControlSnapshot): string {
     lines.push("🟡 На контроле:");
     for (const a of watch) {
       lines.push(`  ${a.emoji} ${a.label} (${a.score}) — ${a.summary}`);
+    }
+    lines.push("");
+  }
+
+  const heysLines = getHeysSectionLines(snapshot, "brief");
+  if (heysLines.length > 0) {
+    lines.push("🫀 HEYS сегодня:");
+    for (const line of heysLines) {
+      lines.push(`  • ${line}`);
     }
     lines.push("");
   }
@@ -89,6 +122,15 @@ export function generateEveningReview(snapshot: AgentControlSnapshot): string {
       for (const e of a.evidence) {
         lines.push(`  • ${e}`);
       }
+    }
+    lines.push("");
+  }
+
+  const heysLines = getHeysSectionLines(snapshot, "review");
+  if (heysLines.length > 0) {
+    lines.push("🫀 Что говорит HEYS:");
+    for (const line of heysLines) {
+      lines.push(`  • ${line}`);
     }
     lines.push("");
   }

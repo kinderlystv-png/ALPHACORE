@@ -153,6 +153,65 @@ function fmtNum(v: number | null | undefined, digits = 1): string {
   return digits === 0 ? String(Math.round(v)) : v.toFixed(digits);
 }
 
+function getPrimaryActionState(h: NonNullable<ReturnType<typeof useHeysSync>["signals"]>): {
+  tone: "good" | "watch" | "critical";
+  title: string;
+  detail: string;
+  hint: string;
+} {
+  if (!h.hasRecentData) {
+    return {
+      tone: "watch",
+      title: "Контур пока собирается",
+      detail: "HEYS ещё не набрал достаточно свежих точек, чтобы уверенно ловить ритм.",
+      hint: "Нужно хотя бы 3–4 дня свежих check-in, чтобы панель стала точнее.",
+    };
+  }
+
+  if (h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7) {
+    return {
+      tone: "critical",
+      title: "Главный рычаг — засыпание",
+      detail: `${Math.round(h.lateBedtimeRatio * 100)}% дней уходят после 01:00, поэтому даже нормальные шаги и настроение работают вполсилы.`,
+      hint: "Сдвигай подготовку ко сну на 15 минут раньше каждые 3 дня и держи 00:00 как hard stop.",
+    };
+  }
+
+  if (h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7) {
+    return {
+      tone: "watch",
+      title: "Главный рычаг — NEAT / шаги",
+      detail: `Сейчас только ${Math.round(h.stepsGoalRatio * 100)}% от цели по шагам — тело не добирает базового движения.`,
+      hint: "Добавь 1–2 walking windows по 10–15 минут и не складывай всю активность в одну тренировку.",
+    };
+  }
+
+  if ((h.wellbeingAvg ?? 10) < 6.5) {
+    return {
+      tone: "watch",
+      title: "Главный рычаг — восстановление",
+      detail: `Самочувствие ${fmtNum(h.wellbeingAvg)}/10 просело сильнее, чем настроение — база recovery держится неустойчиво.`,
+      hint: "Сегодня лучше защищать мягкий ритм: сон, вода, прогулка и меньше героического дожима.",
+    };
+  }
+
+  if ((h.waterAvg ?? 0) < 1500) {
+    return {
+      tone: "watch",
+      title: "Главный рычаг — вода",
+      detail: `Среднее ${fmtNum(h.waterAvg, 0)} мл/день — это уже может тихо бить по энергии и recovery.`,
+      hint: "Поставь 2 опорные точки: стакан воды утром и отдельный water block после обеда.",
+    };
+  }
+
+  return {
+    tone: "good",
+    title: "База держится",
+    detail: "HEYS не показывает явной красной дыры — значит, главный фокус можно отдавать execution, не ломая ритм.",
+    hint: "Удерживай сон и не давай позднему отходу снова стать нормой.",
+  };
+}
+
 /* ── Main panel ── */
 
 export function HeysHealthPanel() {
@@ -238,6 +297,19 @@ export function HeysHealthPanel() {
       : (h.wellbeingAvg ?? 10) < 6.5
         ? "warn"
         : "good";
+  const actionState = getPrimaryActionState(h);
+  const actionToneClass =
+    actionState.tone === "critical"
+      ? "border-rose-500/20 bg-rose-500/8"
+      : actionState.tone === "watch"
+        ? "border-amber-500/20 bg-amber-500/8"
+        : "border-emerald-500/20 bg-emerald-500/8";
+  const actionTextClass =
+    actionState.tone === "critical"
+      ? "text-rose-200"
+      : actionState.tone === "watch"
+        ? "text-amber-200"
+        : "text-emerald-200";
 
   return (
     <div className="rounded-2xl border border-sky-500/15 bg-linear-to-br from-sky-950/8 to-zinc-950 p-4">
@@ -262,6 +334,18 @@ export function HeysHealthPanel() {
               ? `обновлено ${new Date(lastSynced).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`
               : "обновить"}
           </button>
+        </div>
+      </div>
+
+      <div className={`mb-3 rounded-xl border px-3 py-3 ${actionToneClass}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className={`text-[10px] uppercase tracking-[0.18em] ${actionTextClass}`}>
+              {actionState.title}
+            </p>
+            <p className="mt-1 text-sm text-zinc-100">{actionState.detail}</p>
+          </div>
+          <p className="max-w-md text-[11px] leading-5 text-zinc-400">{actionState.hint}</p>
         </div>
       </div>
 

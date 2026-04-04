@@ -44,6 +44,7 @@ import {
   getWeeklyFocusReport,
   weeklyCompletions,
 } from "@/lib/productivity";
+import { useHeysSync } from "@/lib/use-heys-sync";
 
 function ProdBars({ data }: { data: DayCompletions[] }) {
   const max = Math.max(...data.map((day) => day.count), 1);
@@ -209,6 +210,7 @@ function MedicalTrend({ data }: { data: MedicalTrendPoint[] }) {
 
 export function AlphacoreDashboard() {
   const router = useRouter();
+  const { lastSynced: heysLastSynced } = useHeysSync();
   const [agentControl, setAgentControl] = useState<AgentControlSnapshot | null>(null);
   const [stats, setStats] = useState<ActivityStats | null>(null);
   const [completions, setCompletions] = useState<DayCompletions[]>([]);
@@ -340,6 +342,12 @@ export function AlphacoreDashboard() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [refreshDashboard]);
+
+  useEffect(() => {
+    if (heysLastSynced) {
+      refreshDashboard();
+    }
+  }, [heysLastSynced, refreshDashboard]);
 
   useEffect(() => {
     if (!flash) return;
