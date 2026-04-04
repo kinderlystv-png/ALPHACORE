@@ -168,7 +168,7 @@ function minutesToCalendarTime(minutes: number): string {
 function shiftDateKey(dateKey: string, days: number): string {
   const date = new Date(`${dateKey}T00:00:00`);
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return dateStr(date);
 }
 
 function copyTitle(title: string): string {
