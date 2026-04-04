@@ -1868,7 +1868,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
                   const isTaskBackedSlot = Boolean(linkedTask) && slot.kind !== "event";
                   const isDoneTaskSlot = linkedTask?.status === "done";
-                  const taskCompletionLabel = linkedTask ? formatTaskCompletionLabel(linkedTask) : null;
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
                   const isHeysSynced = isHeysSyncedScheduleSlot(slot);
                   const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
@@ -1981,42 +1980,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                               {heysBadgeLabel}
                             </span>
                           )}
-                          {(isCustomSlot || isTaskBackedSlot) && (
-                            <div className="absolute right-2 top-1.5 z-10 flex items-center gap-1">
-                              {isCustomSlot && (
-                                <span className={`pointer-events-none rounded-full border px-1 py-0.5 text-[8px] font-medium uppercase tracking-[0.12em] ${
-                                  isDoneTaskSlot
-                                    ? "border-emerald-400/25 bg-emerald-500/14 text-emerald-100"
-                                    : "border-white/12 bg-zinc-950/70 text-zinc-200"
-                                }`}>
-                                  {slotKindLabel}
-                                </span>
-                              )}
-
-                              {isTaskBackedSlot && (
-                                <button
-                                  type="button"
-                                  aria-label={isDoneTaskSlot ? "Вернуть задачу в активные" : "Отметить задачу как выполненную"}
-                                  title={isDoneTaskSlot ? "Вернуть в active" : "Отметить как done"}
-                                  className={`relative z-10 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold transition ${
-                                    isDoneTaskSlot
-                                      ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
-                                      : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
-                                  }`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (!linkedTask) return;
-                                    toggleTaskCompletion(linkedTask.id);
-                                  }}
-                                  onPointerDown={(e) => {
-                                    e.stopPropagation();
-                                  }}
-                                >
-                                  {isDoneTaskSlot ? "✓" : "○"}
-                                </button>
-                              )}
-                            </div>
-                          )}
                           {isEditable && (
                             <button
                               type="button"
@@ -2032,22 +1995,56 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                               <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
                             </button>
                           )}
-                          <div className="min-w-0">
-                            <p className={`text-[10px] font-medium leading-tight ${c.text} ${isDoneTaskSlot ? "opacity-80" : ""}`}>
-                              {slot.start}–{slot.end}
-                            </p>
-                            <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isDoneTaskSlot ? "line-through decoration-white/30 opacity-70" : ""}`}>
-                              {slot.title}
-                            </p>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-[10px] font-medium leading-tight ${c.text} ${isDoneTaskSlot ? "opacity-80" : ""}`}>
+                                {slot.start}–{slot.end}
+                              </p>
+                              <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isDoneTaskSlot ? "line-through decoration-white/30 opacity-70" : ""}`}>
+                                {slot.title}
+                              </p>
+                            </div>
+
+                            {(isCustomSlot || isTaskBackedSlot) && (
+                              <div className="mt-0.5 flex shrink-0 items-center gap-1 self-start">
+                                {isCustomSlot && (
+                                  <span className={`pointer-events-none rounded-full border px-1 py-0.5 text-[8px] font-medium uppercase leading-none tracking-widest ${
+                                    isDoneTaskSlot
+                                      ? "border-emerald-400/25 bg-emerald-500/14 text-emerald-100"
+                                      : "border-white/12 bg-zinc-950/70 text-zinc-200"
+                                  }`}>
+                                    {slotKindLabel}
+                                  </span>
+                                )}
+
+                                {isTaskBackedSlot && (
+                                  <button
+                                    type="button"
+                                    aria-label={isDoneTaskSlot ? "Вернуть задачу в активные" : "Отметить задачу как выполненную"}
+                                    title={isDoneTaskSlot ? "Вернуть в active" : "Отметить как done"}
+                                    className={`relative z-10 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
+                                      isDoneTaskSlot
+                                        ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
+                                        : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                                    }`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!linkedTask) return;
+                                      toggleTaskCompletion(linkedTask.id);
+                                    }}
+                                    onPointerDown={(e) => {
+                                      e.stopPropagation();
+                                    }}
+                                  >
+                                    {isDoneTaskSlot ? "✓" : "○"}
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                           {projectLabel && !isSupportSlot && height > 46 && (
                             <p className="mt-1 inline-flex max-w-full truncate rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-200">
                               {projectLabel}
-                            </p>
-                          )}
-                          {linkedTask && !isSupportSlot && height > 44 && (
-                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isDoneTaskSlot ? "text-emerald-200/85" : "text-zinc-400"}`}>
-                              {isDoneTaskSlot ? taskCompletionLabel ?? linkedTask.status : `${linkedTask.status} · ${linkedTask.id.slice(0, 8)}`}
                             </p>
                           )}
                           {!isSupportSlot && height > 40 && slot.subtitle && (
