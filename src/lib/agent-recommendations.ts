@@ -297,6 +297,7 @@ export type AgentPracticalPlan = {
 	dayModeSummary: string | null;
 	dayModeTactics: string[];
 	dayModeNoGo: string[];
+	weeklyNudges: AgentPracticalPlanNudge[];
 	mainDecision: string;
 	backupMoves: string[];
 	doneCriterion: string;
@@ -308,6 +309,14 @@ export type AgentPracticalPlan = {
 		schedule: string;
 		journal: string;
 	};
+};
+
+export type AgentPracticalPlanNudge = {
+	id: string;
+	kind: "protect" | "focus" | "avoid" | "rebalance";
+	tone: AttentionLevel;
+	title: string;
+	detail: string;
 };
 
 type RecoveryAnchor = {
@@ -2804,6 +2813,97 @@ function buildCandidates(
 	});
 }
 
+function buildWeeklyNudges(input: {
+	context: RecommendationRuntimeContext;
+	dayMode: DayMode | null;
+	planningSlot: ScheduleSlot | null;
+	recoveryAnchor: RecoveryAnchor | null;
+	projectTarget: string;
+	protectiveMode: boolean;
+	strictProtectiveMode: boolean;
+	executionMode: boolean;
+}): AgentPracticalPlanNudge[] {
+	const {
+		context,
+		dayMode,
+		planningSlot,
+		recoveryAnchor,
+		projectTarget,
+		protectiveMode,
+		strictProtectiveMode,
+		executionMode,
+	} = input;
+	const nudges: AgentPracticalPlanNudge[] = [];
+	const overloadedDay = context.schedule.overloadedDays[0] ?? null;
+	const taskWindow = context.tasks.distribution.suggestions[0] ?? null;
+	const overflowTasks = context.tasks.distribution.overflowTasks.slice(0, 2);
+
+	if (recoveryAnchor) {
+		nudges.push({
+			id: `protect-${recoveryAnchor.date}-${recoveryAnchor.start}`,
+			kind: "protect",
+			tone: strictProtectiveMode ? "critical" : protectiveMode ? "watch" : "good",
+			title:
+				recoveryAnchor.mode === "protect"
+					? "Не отдавать recovery-якорь под срочность"
+					: recoveryAnchor.mode === "create"
+						? "Поставить recovery-окно заранее"
+						: "Перевести найденное окно в recovery",
+			detail:
+				dayMode && (dayMode.id === "recovery" || dayMode.id === "damage-control")
+					? `${dayMode.label}: ${formatRecoveryAnchorBrief(recoveryAnchor)} должно пережить неделю без размена на срочные хвосты.`
+					: `${formatRecoveryAnchorBrief(recoveryAnchor)} — это якорь недели, а не запасной слот под всё подряд.`,
+		});
+	}
+
+	if (planningSlot) {
+		nudges.push({
+			id: `focus-${planningSlot.date}-${planningSlot.start}`,
+			kind: "focus",
+			tone: executionMode ? "good" : protectiveMode ? "watch" : "good",
+			title:
+				executionMode
+					? "Использовать лучшее окно как execution-window"
+					: protectiveMode
+						? "Свести planning-окно к мягкому sprint"
+						: "Не размывать лучшее окно дня",
+			detail: `${formatSlotBrief(planningSlot)} → держать только ${projectTarget}, без открытия новых параллельных треков.`,
+		});
+	}
+
+	if (overloadedDay) {
+		nudges.push({
+			id: `avoid-${overloadedDay.date}`,
+			kind: "avoid",
+			tone: strictProtectiveMode ? "critical" : "watch",
+			title: `Не докидывать новое в ${formatDateKeyRu(overloadedDay.date)}`,
+			detail: `${formatPressureDay(overloadedDay)} — лучше использовать этот день для буферов и логистики, а не для новых p1 или лишнего execution.`,
+		});
+	}
+
+	if (taskWindow) {
+		nudges.push({
+			id: `rebalance-window-${taskWindow.date}-${taskWindow.start}`,
+			kind: "rebalance",
+			tone: "good",
+			title: "Разложить unslotted tasks по найденному окну",
+			detail: `${formatTaskWindowSuggestion(taskWindow)} — это уже найденный канал для хвостов, не нужно тащить их обратно в самый шумный день.`,
+		});
+	}
+
+	if (overflowTasks.length > 0) {
+		nudges.push({
+			id: "rebalance-overflow",
+			kind: "rebalance",
+			tone: overflowTasks.length > 1 ? "watch" : "good",
+			title: "Не пытаться впихнуть всю неделю в один день",
+			detail: `Пока без понятного слота остаются: ${overflowTasks.map((task) => clipText(task.title, 30)).join(" · ")}. Их лучше разнести или осознанно отложить, а не держать фоном.`,
+		});
+	}
+
+	return nudges.slice(0, 4);
+}
+
 export function buildAgentPracticalPlan(
 	recommendations: AgentRecommendation[],
 	context: RecommendationRuntimeContext | null | undefined,
@@ -2940,6 +3040,16 @@ export function buildAgentPracticalPlan(
 			.map((task) => clipText(task.title, 34))
 			.join(" · ")}`
 		: null;
+	const weeklyNudges = buildWeeklyNudges({
+		context,
+		dayMode,
+		planningSlot,
+		recoveryAnchor,
+		projectTarget,
+		protectiveMode,
+		strictProtectiveMode,
+		executionMode,
+	});
 
 	const scheduleUpdate = recoveryAnchor
 		? recoveryAnchor.mode === "protect"
@@ -2972,6 +3082,7 @@ export function buildAgentPracticalPlan(
 		dayModeSummary: context.heys.summary,
 		dayModeTactics: context.heys.tactics.slice(0, 3),
 		dayModeNoGo: context.heys.noGo.slice(0, 3),
+		weeklyNudges,
 		mainDecision,
 		backupMoves,
 		doneCriterion:

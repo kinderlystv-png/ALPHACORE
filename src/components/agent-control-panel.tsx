@@ -185,6 +185,9 @@ function buildBundleOrchestrationPrompt(
     practicalPlan?.clarificationQuestions.length
       ? `Ниже уже есть suggested question-pass на ${practicalPlan.clarificationQuestions.length} вопрос(а/ов).`
       : null,
+    practicalPlan?.weeklyNudges.length
+      ? `Weekly nudges: ${practicalPlan.weeklyNudges.map((nudge) => `${nudge.title} — ${nudge.detail}`).join(" | ")}`
+      : null,
     "",
     "Что мне нужно:",
     "- выбери 1 главный шаг на сегодня;",
@@ -255,6 +258,13 @@ function buildPracticalPlanSection(plan: AgentPracticalPlan): string {
           ...(plan.dayModeNoGo.length > 0
             ? ["Не делать", ...plan.dayModeNoGo.map((item) => `- ${item}`)]
             : []),
+          "",
+        ]
+      : []),
+    ...(plan.weeklyNudges.length > 0
+      ? [
+          "Weekly nudges",
+          ...plan.weeklyNudges.map((nudge) => `- [${nudge.kind}] ${nudge.title} — ${nudge.detail}`),
           "",
         ]
       : []),
@@ -691,6 +701,34 @@ function RecommendationCard({
   );
 }
 
+type PracticalPlanNudge = AgentPracticalPlan["weeklyNudges"][number];
+
+function getPlanNudgeIcon(kind: PracticalPlanNudge["kind"]): string {
+  switch (kind) {
+    case "protect":
+      return "🛡️";
+    case "focus":
+      return "🎯";
+    case "avoid":
+      return "⛔";
+    case "rebalance":
+      return "🧭";
+  }
+}
+
+function getPlanNudgeLabel(kind: PracticalPlanNudge["kind"]): string {
+  switch (kind) {
+    case "protect":
+      return "protect";
+    case "focus":
+      return "focus";
+    case "avoid":
+      return "avoid";
+    case "rebalance":
+      return "rebalance";
+  }
+}
+
 function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
   return (
     <section className="rounded-3xl border border-sky-500/20 bg-linear-to-br from-sky-950/20 via-zinc-950/70 to-zinc-950/90 p-4 shadow-lg shadow-black/10">
@@ -763,6 +801,29 @@ function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
                     </ul>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {plan.weeklyNudges.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Weekly nudges</p>
+              <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                {plan.weeklyNudges.map((nudge) => (
+                  <div
+                    key={nudge.id}
+                    className="rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm">{getPlanNudgeIcon(nudge.kind)}</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${LEVEL_PILL_CLS[nudge.tone]}`}>
+                        {getPlanNudgeLabel(nudge.kind)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-zinc-100">{nudge.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-zinc-400">{nudge.detail}</p>
+                  </div>
+                ))}
               </div>
             </div>
           )}
