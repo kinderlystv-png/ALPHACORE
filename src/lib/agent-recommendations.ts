@@ -17,6 +17,7 @@ import {
 } from "./schedule";
 import { lsGet, lsSet, uid } from "./storage";
 import { compareTasksByAttention, type Task } from "./tasks";
+import { getMetricLabel, type DayMode, type HeysMetricKey } from "./heys-day-mode";
 
 export const AGENT_PROMPT_FEEDBACK_KEY = "alphacore_agent_prompt_feedback";
 export const AGENT_CLARIFICATION_FEEDBACK_KEY = "alphacore_agent_clarification_feedback";
@@ -127,6 +128,16 @@ export type RecommendationRuntimeInput = {
 	medicalEntries: MedEntry[];
 	todaySchedule: ScheduleSlot[];
 	upcomingSchedule: ScheduleSlot[];
+	heysDayMode?: DayMode | null;
+};
+
+export type RecommendationDayModeContext = {
+	dayMode: DayMode | null;
+	focusArea: AttentionAreaKey | null;
+	focusMetricLabel: string | null;
+	summary: string | null;
+	tactics: string[];
+	noGo: string[];
 };
 
 export type RecommendationRuntimeContext = {
@@ -167,6 +178,7 @@ export type RecommendationRuntimeContext = {
 		review: ScheduleSlot[];
 		overloadedDays: RecommendationSchedulePressureDay[];
 	};
+	heys: RecommendationDayModeContext;
 };
 
 export type TaskWindowAssignment = {
@@ -280,6 +292,11 @@ export type AgentPracticalPlan = {
 	clarificationQuestions: AgentClarificationQuestion[];
 	planningContourSummary: string | null;
 	mergedThemes: string[];
+	dayModeLabel: string | null;
+	dayModeFocus: string | null;
+	dayModeSummary: string | null;
+	dayModeTactics: string[];
+	dayModeNoGo: string[];
 	mainDecision: string;
 	backupMoves: string[];
 	doneCriterion: string;
@@ -300,6 +317,99 @@ type RecoveryAnchor = {
 	label: string;
 	mode: "protect" | "convert" | "create";
 };
+
+function getDayModeAreaKey(metricKey: HeysMetricKey): AttentionAreaKey {
+	switch (metricKey) {
+		case "steps":
+		case "training":
+		case "weight":
+			return "health";
+		default:
+			return "recovery";
+	}
+}
+
+function buildDayModeTactics(dayMode: DayMode): string[] {
+	switch (dayMode.id) {
+		case "damage-control":
+			return [
+				"Сначала убрать шум и оставить только один decision sprint.",
+				"Защитить recovery-окно раньше любых новых обещаний.",
+				"Все действия пропускать через фильтр «это реально спасает день или просто выглядит полезно?»",
+			];
+		case "recovery":
+			return [
+				"Строить день вокруг сна, воды, прогулки и мягких связок, а не вокруг силы воли.",
+				"Рабочий прогресс делать через короткий slot/sprint, а не через тяжёлый full push.",
+				"Если энергия просела, сначала чинить базу, потом добирать execution.",
+			];
+		case "execution":
+			return [
+				"Использовать лучшее окно дня как execution-window под один главный узел.",
+				"Оставить хотя бы один recovery-якорь, чтобы хороший фон не превратился в перегруз.",
+				"Продвигать прогресс через фокус-метрику, а не через параллельные треки.",
+			];
+		case "light-rhythm":
+			return [
+				"Держать день лёгким и не раздувать его сверх текущей базы.",
+				"Разбрасывать задачи по слотам недели, а не тащить всё в один день.",
+				"Предпочитать мягкие опорные действия вместо hero mode.",
+			];
+	}
+}
+
+function buildDayModeNoGo(dayMode: DayMode): string[] {
+	switch (dayMode.id) {
+		case "damage-control":
+			return [
+				"Не добавлять второй тяжёлый рабочий блок поверх перегруза.",
+				"Не лечить состояние героизмом и новыми обязательствами.",
+				"Не отдавать recovery-слот под срочность.",
+			];
+		case "recovery":
+			return [
+				"Не ставить today-plan на голой воле.",
+				"Не открывать параллельно 3 важных направления.",
+				"Не жертвовать сном ради ложного ощущения прогресса.",
+			];
+		case "execution":
+			return [
+				"Не превращать хороший фон в overload ради лишнего результата.",
+				"Не открывать новый трек, пока не продвинут главный узел.",
+				"Не разменивать вечерний recovery-якорь на случайную срочность.",
+			];
+		case "light-rhythm":
+			return [
+				"Не считать средний день поводом для максимальной нагрузки.",
+				"Не оставлять все решения без слота и без порядка.",
+				"Не менять тактику каждый час от случайного сигнала.",
+			];
+	}
+}
+
+function buildRecommendationDayModeContext(
+	dayMode: DayMode | null | undefined,
+): RecommendationDayModeContext {
+	if (!dayMode) {
+		return {
+			dayMode: null,
+			focusArea: null,
+			focusMetricLabel: null,
+			summary: null,
+			tactics: [],
+			noGo: [],
+		};
+	}
+
+	return {
+		dayMode,
+		focusArea: getDayModeAreaKey(dayMode.focusMetricKey),
+		focusMetricLabel: getMetricLabel(dayMode.focusMetricKey),
+		summary: `${dayMode.label} → ${dayMode.summary}`,
+		tactics: buildDayModeTactics(dayMode),
+		noGo: buildDayModeNoGo(dayMode),
+	};
+}
 
 type TaskTrack = "kinderly" | "heys" | "birthday" | "ops" | "general";
 
@@ -1721,6 +1831,7 @@ export function buildClarificationLearningProfile(
 export function buildRecommendationRuntimeContext(
 	input: RecommendationRuntimeInput,
 ): RecommendationRuntimeContext {
+	const heysContext = buildRecommendationDayModeContext(input.heysDayMode ?? null);
 	const actionable = input.tasks
 		.filter((task) => task.status === "inbox" || task.status === "active")
 		.sort((left, right) => compareTasksByAttention(left, right, input.today));
@@ -1813,13 +1924,20 @@ export function buildRecommendationRuntimeContext(
 			review: upcomingSchedule.filter((slot) => slot.tone === "review").slice(0, 4),
 			overloadedDays: buildSchedulePressureDays(upcomingSchedule),
 		},
+		heys: heysContext,
 	};
 }
 
 function findPriorityForArea(
 	area: AttentionArea,
 	priorities: AgentPriority[],
+	heysContext?: RecommendationDayModeContext | null,
 ): AgentPriority | null {
+	const dayModePriority = priorities.find((priority) => priority.id.startsWith("heys-day-mode-")) ?? null;
+	if (dayModePriority && heysContext?.focusArea === area.key) {
+		return dayModePriority;
+	}
+
 	switch (area.key) {
 		case "work":
 			return (
@@ -2551,13 +2669,23 @@ function buildPrompt(
 	priority: AgentPriority | null,
 	runtimeData?: CandidateRuntimeData,
 ): string {
+	const dayMode = snapshot.heysDayMode;
 	const areaSignals = uniquePromptLines(area.evidence).slice(0, 1);
 	const liveSignals = uniquePromptLines(runtimeData?.promptLines ?? []).slice(0, 3);
 	const runtimeInstructions = uniquePromptLines(runtimeData?.requestLines ?? []).slice(0, 1);
+	const dayModeInstruction = dayMode
+		? `Уважай режим дня (${dayMode.label}) и строй ответ через ${getMetricLabel(dayMode.focusMetricKey).toLowerCase()}: ${dayMode.calendarStrategy}`
+		: null;
 
 	const contextLines = [
 		`Контекст ALPHACORE:`,
 		`- Баланс: ${snapshot.balanceScore}/100`,
+		...(dayMode
+			? [
+				`- HEYS day mode: ${dayMode.label} · фокус ${getMetricLabel(dayMode.focusMetricKey).toLowerCase()}`,
+				`- Стратегия режима: ${dayMode.calendarStrategy}`,
+			]
+			: []),
 		`- Зона: ${area.label} (${area.level})`,
 		`- Почему сейчас: ${priority?.reason ?? area.insight}`,
 		`- Текущая сводка: ${area.summary}`,
@@ -2600,8 +2728,9 @@ function buildPrompt(
 
 	const taskLines = uniquePromptLines([
 		...askByArea[area.key],
+		dayModeInstruction,
 		...runtimeInstructions,
-	]).slice(0, 3);
+	]).slice(0, 4);
 
 	const taskBlock = [
 		"Что нужно от агента:",
@@ -2634,7 +2763,7 @@ function buildCandidates(
 	runtimeContext?: RecommendationRuntimeContext | null,
 ): RecommendationCandidate[] {
 	return snapshot.areas.map((area) => {
-		const priority = findPriorityForArea(area, snapshot.priorities);
+		const priority = findPriorityForArea(area, snapshot.priorities, runtimeContext?.heys ?? null);
 		const baseTags = [...AREA_TAGS[area.key]];
 		const runtimeData = runtimeContext ? buildCandidateRuntimeData(area.key, runtimeContext) : null;
 
@@ -2642,6 +2771,8 @@ function buildCandidates(
 		if (priority?.id === "ops-overdue") baseTags.push("overdue");
 		if (priority?.id === "reflection-reset") baseTags.push("review");
 		if (priority?.id === "health-floor") baseTags.push("routine");
+		if (runtimeContext?.heys.dayMode) baseTags.push(`mode-${runtimeContext.heys.dayMode.id}`);
+		if (runtimeContext?.heys.focusArea === area.key) baseTags.push("mode-focus");
 
 		return {
 			id:
@@ -2667,6 +2798,7 @@ function buildCandidates(
 				BASE_WEIGHT[priority?.level ?? area.level] +
 				Math.max(0, Math.round((100 - area.score) / 3)) +
 				(priority ? 12 : 0) +
+				(runtimeContext?.heys.focusArea === area.key ? 8 : 0) +
 				(runtimeData?.weightBoost ?? 0),
 		};
 	});
@@ -2690,8 +2822,13 @@ export function buildAgentPracticalPlan(
 	const planningSlot = pickPlanningSlot(context);
 	const recoveryAnchor = pickRecoveryAnchor(context);
 	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
+	const dayMode = context.heys.dayMode;
+	const protectiveMode = dayMode?.id === "recovery" || dayMode?.id === "damage-control";
+	const strictProtectiveMode = dayMode?.id === "damage-control";
+	const executionMode = dayMode?.id === "execution";
 	const energyConflict =
 		cleanupToday.length > 0 ||
+		protectiveMode ||
 		areaSet.has("health") ||
 		areaSet.has("recovery");
 	const clarificationProfile = buildClarificationLearningProfile(
@@ -2711,22 +2848,38 @@ export function buildAgentPracticalPlan(
 		: leadTask
 			? clipText(leadTask.title, 78)
 			: "сузить день до одного следующего шага";
+	const modeFocusLabel = context.heys.focusMetricLabel
+		? context.heys.focusMetricLabel.toLowerCase()
+		: null;
 
-	const mainDecision = energyConflict
-		? planningSlot
-			? prefersMiniSprint
-				? `В ${planningSlot.start}–${planningSlot.end} сделать один короткий sprint по ${projectTarget}; не доводить до финала и отдельное cardio сегодня не добавлять.`
-				: `В ${planningSlot.start}–${planningSlot.end} сделать один decision sprint по ${projectTarget}; отдельное cardio сегодня не добавлять.`
-			: `Не добавлять отдельное cardio сегодня и сузить работу до одного planning-узла: ${projectTarget}.`
-		: planningSlot
-			? prefersDecisionFirst
-				? `В ${planningSlot.start}–${planningSlot.end} сначала сделать decision sprint по ${projectTarget}, а не пытаться сразу дожать всё до финала.`
-				: prefersMiniSprint
-					? `В ${planningSlot.start}–${planningSlot.end} сделать один короткий sprint по ${projectTarget}.`
-					: `В ${planningSlot.start}–${planningSlot.end} развернуть один рабочий узел по ${projectTarget}.`
-			: `Оставить на сегодня один главный узел: ${projectTarget}.`;
+	const mainDecision = strictProtectiveMode
+		? recoveryAnchor
+			? `Режим ${dayMode.label}: сначала защитить ${formatRecoveryAnchorBrief(recoveryAnchor)}, потом оставить только один decision sprint по ${projectTarget}; всё остальное не форсировать.`
+			: `Режим ${dayMode?.label}: убрать всё второстепенное и свести день к одному decision sprint по ${projectTarget}, без отдельного cardio и новых обязательств.`
+		: protectiveMode
+			? planningSlot
+				? `Режим ${dayMode?.label}: в ${planningSlot.start}–${planningSlot.end} сделать один мягкий sprint по ${projectTarget}, а день вести через ${modeFocusLabel ?? "восстановление"}.`
+				: `Режим ${dayMode?.label}: оставить один мягкий узел по ${projectTarget} и подчинить день ${modeFocusLabel ?? "восстановлению"}.`
+			: executionMode
+				? planningSlot
+					? `Режим ${dayMode?.label}: использовать ${planningSlot.start}–${planningSlot.end} как execution-window по ${projectTarget}, не открывая новые параллельные треки.`
+					: `Режим ${dayMode?.label}: продвинуть один главный узел — ${projectTarget}, сохранив recovery-якорь нетронутым.`
+				: energyConflict
+					? planningSlot
+						? prefersMiniSprint
+							? `В ${planningSlot.start}–${planningSlot.end} сделать один короткий sprint по ${projectTarget}; не доводить до финала и отдельное cardio сегодня не добавлять.`
+							: `В ${planningSlot.start}–${planningSlot.end} сделать один decision sprint по ${projectTarget}; отдельное cardio сегодня не добавлять.`
+						: `Не добавлять отдельное cardio сегодня и сузить работу до одного planning-узла: ${projectTarget}.`
+					: planningSlot
+						? prefersDecisionFirst
+							? `В ${planningSlot.start}–${planningSlot.end} сначала сделать decision sprint по ${projectTarget}, а не пытаться сразу дожать всё до финала.`
+							: prefersMiniSprint
+								? `В ${planningSlot.start}–${planningSlot.end} сделать один короткий sprint по ${projectTarget}.`
+								: `В ${planningSlot.start}–${planningSlot.end} развернуть один рабочий узел по ${projectTarget}.`
+						: `Оставить на сегодня один главный узел: ${projectTarget}.`;
 
 	const backupMoves = uniquePromptLines([
+		...context.heys.tactics.slice(0, 1),
 		energyConflict
 			? "Если после cleanup энергии мало — ограничиться task + calendar + journal, без второй рабочей волны."
 			: prefersSlotFirst
@@ -2745,6 +2898,7 @@ export function buildAgentPracticalPlan(
 	]).slice(0, 2);
 
 	const doneParts = uniquePromptLines([
+		dayMode ? `режим ${dayMode.label} не сломан` : null,
 		energyConflict ? "отдельного cardio не добавлено" : null,
 		leadProject || leadTask ? "один рабочий узел зафиксирован" : null,
 		recoveryAnchor ? "одно recovery-окно стоит в календаре" : null,
@@ -2752,6 +2906,7 @@ export function buildAgentPracticalPlan(
 	]);
 
 	const mergedThemes = uniquePromptLines([
+		context.heys.summary,
 		areaSet.has("health") && areaSet.has("recovery")
 			? "Здоровье + восстановление → один энергоконтур без дублирования cardio и recovery-советов."
 			: null,
@@ -2793,10 +2948,11 @@ export function buildAgentPracticalPlan(
 				? `Добавить ${formatRecoveryAnchorBrief(recoveryAnchor)} как невыбиваемое recovery-окно.`
 				: `Перевести ${formatRecoveryAnchorBrief(recoveryAnchor)} в recovery / stretch + walk без рабочих задач.`
 		: planningSlot
-			? `Забронировать ${planningSlot.start}–${planningSlot.end} сегодня под decision sprint без новых параллельных задач.`
+			? `${dayMode ? `${dayMode.label}: ` : ""}забронировать ${planningSlot.start}–${planningSlot.end} сегодня под ${protectiveMode ? "мягкий" : "decision"} sprint без новых параллельных задач.`
 			: "Добавить одно recovery-окно на неделе и не смешивать его с работой.";
 
 	const journalLineParts = uniquePromptLines([
+		dayMode ? `Режим дня: ${dayMode.label}.` : null,
 		energyConflict ? "Сегодня не форсирую отдельное cardio после cleanup." : "Сегодня режу план до одного главного узла.",
 		leadProject
 			? `Центр тяжести: ${leadProject.name} — ${buildProjectFocusLabel(leadProject, energyConflict)}.`
@@ -2811,6 +2967,11 @@ export function buildAgentPracticalPlan(
 		clarificationQuestions,
 		planningContourSummary,
 		mergedThemes,
+		dayModeLabel: dayMode?.label ?? null,
+		dayModeFocus: context.heys.focusMetricLabel,
+		dayModeSummary: context.heys.summary,
+		dayModeTactics: context.heys.tactics.slice(0, 3),
+		dayModeNoGo: context.heys.noGo.slice(0, 3),
 		mainDecision,
 		backupMoves,
 		doneCriterion:

@@ -115,7 +115,7 @@ function collectUpcomingSchedule(today: string, days = 7) {
   return slots;
 }
 
-function loadRuntimeContext(): RecommendationRuntimeContext {
+function loadRuntimeContext(snapshot: AgentControlSnapshot): RecommendationRuntimeContext {
   const today = todayStr();
   const todayDate = dateFromKey(today);
 
@@ -130,6 +130,7 @@ function loadRuntimeContext(): RecommendationRuntimeContext {
     medicalEntries: getMedicalEntries(),
     todaySchedule: getScheduleForDate(today),
     upcomingSchedule: collectUpcomingSchedule(today, 7),
+    heysDayMode: snapshot.heysDayMode,
   });
 }
 
@@ -240,6 +241,20 @@ function buildPracticalPlanSection(plan: AgentPracticalPlan): string {
       ? [
           "Сшитые пересечения:",
           ...plan.mergedThemes.map((theme) => `- ${theme}`),
+          "",
+        ]
+      : []),
+    ...(plan.dayModeLabel
+      ? [
+          "Режим дня",
+          `${plan.dayModeLabel}${plan.dayModeFocus ? ` → ${plan.dayModeFocus.toLowerCase()}` : ""}`,
+          ...(plan.dayModeSummary ? [plan.dayModeSummary] : []),
+          ...(plan.dayModeTactics.length > 0
+            ? ["Тактика режима", ...plan.dayModeTactics.map((item) => `- ${item}`)]
+            : []),
+          ...(plan.dayModeNoGo.length > 0
+            ? ["Не делать", ...plan.dayModeNoGo.map((item) => `- ${item}`)]
+            : []),
           "",
         ]
       : []),
@@ -703,6 +718,55 @@ function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
         <div className="space-y-4">
+          {plan.dayModeLabel && (
+            <div className="rounded-3xl border border-sky-500/20 bg-sky-500/5 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[10px] text-sky-100">
+                  {plan.dayModeLabel}
+                </span>
+                {plan.dayModeFocus && (
+                  <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
+                    фокус: {plan.dayModeFocus.toLowerCase()}
+                  </span>
+                )}
+              </div>
+
+              {plan.dayModeSummary && (
+                <p className="mt-3 text-sm text-zinc-300">{plan.dayModeSummary}</p>
+              )}
+
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {plan.dayModeTactics.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-zinc-500">Тактика режима</p>
+                    <ul className="mt-2 space-y-2 text-sm text-zinc-300">
+                      {plan.dayModeTactics.map((item) => (
+                        <li key={item} className="flex gap-2">
+                          <span className="mt-0.5 text-zinc-600">•</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {plan.dayModeNoGo.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-zinc-500">Не делать</p>
+                    <ul className="mt-2 space-y-2 text-sm text-zinc-400">
+                      {plan.dayModeNoGo.map((item) => (
+                        <li key={item} className="flex gap-2">
+                          <span className="mt-0.5 text-zinc-600">•</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {plan.planningContourSummary && (
             <div>
               <p className="text-[10px] uppercase tracking-widest text-zinc-500">Единый контур</p>
@@ -826,8 +890,8 @@ export function AgentControlPanel({
   const [reasonPickerId, setReasonPickerId] = useState<string | null>(null);
 
   const refreshRuntimeContext = useCallback(() => {
-    setRuntimeContext(loadRuntimeContext());
-  }, []);
+    setRuntimeContext(loadRuntimeContext(snapshot));
+  }, [snapshot]);
 
   useEffect(() => {
     setFeedbackEvents(getRecommendationFeedbackEvents());
@@ -998,7 +1062,7 @@ export function AgentControlPanel({
                 <p className="text-sm font-semibold text-zinc-50">🤖 AI prompts для среды разработки</p>
                 <p className="mt-1 text-xs text-zinc-500">
                   {runtimeContext
-                    ? `Карточки уже grounded в живых данных: ${runtimeContext.planning.unslottedTasks.length} задач без слота, ${runtimeContext.planning.calendarTasks.length} дел уже стоят в календаре, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий и ${runtimeContext.journal.recent.length} свежих записей.`
+                    ? `Карточки уже grounded в живых данных: ${runtimeContext.planning.unslottedTasks.length} задач без слота, ${runtimeContext.planning.calendarTasks.length} дел уже стоят в календаре, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий и ${runtimeContext.journal.recent.length} свежих записей.${runtimeContext.heys.dayMode ? ` Текущий режим: ${runtimeContext.heys.dayMode.label}.` : ""}`
                     : "Карточки строятся из текущего контекста ALPHACORE и подстраиваются по copy / dislike / implemented."}
                 </p>
               </div>
@@ -1014,6 +1078,11 @@ export function AgentControlPanel({
                 <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
                   {recommendations.length} активных
                 </span>
+                {runtimeContext?.heys.dayMode && (
+                  <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
+                    mode-aware: {runtimeContext.heys.dayMode.label}
+                  </span>
+                )}
               </div>
             </div>
           </div>
