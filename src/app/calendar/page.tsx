@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
 import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
 import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import { WeekPlanner } from "@/components/week-planner";
+import { getCalendarDayPressure } from "@/lib/calendar-day-pressure";
 import {
   formatCompletionLabel,
   getSlotAttentionState,
@@ -64,6 +66,10 @@ export default function CalendarPage() {
             family: 0,
           },
     [isHydrated, selectedDate, version],
+  );
+  const selectedPressure = useMemo(
+    () => (isHydrated ? getCalendarDayPressure({ dateKey: selectedDate, slots }) : null),
+    [isHydrated, selectedDate, slots],
   );
 
   return (
@@ -124,6 +130,13 @@ export default function CalendarPage() {
               <p className="mt-1 text-sm text-zinc-500">
                 Чем плотнее день — тем полезнее видеть контекст и вручную подтверждать, что реально произошло, а что осталось только планом.
               </p>
+              {selectedPressure && (
+                <CalendarDayPressureChip
+                  pressure={selectedPressure}
+                  variant="full"
+                  className="mt-3 max-w-lg"
+                />
+              )}
             </div>
             <span className="rounded-full border border-zinc-800 px-3 py-1 text-[10px] uppercase tracking-widest text-zinc-500">
               {slots.length} слотов

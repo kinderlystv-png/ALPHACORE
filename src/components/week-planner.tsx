@@ -3,8 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
 import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
 import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
+import {
+  getCalendarDayPressure,
+  type CalendarDayPressure,
+} from "@/lib/calendar-day-pressure";
 import {
   formatCompletionLabel,
   getSlotAttentionState,
@@ -48,6 +53,7 @@ type PlannerDay = {
   dateLabel: string;
   hint: string | null;
   isToday: boolean;
+  pressure: CalendarDayPressure | null;
   tasks: Task[];
   slots: ScheduleSlot[];
 };
@@ -180,6 +186,7 @@ export function WeekPlanner({
           }).format(date),
           hint: dayHint(key, todayKey),
           isToday: key === todayKey,
+          pressure: null,
           tasks: [],
           slots: [],
         };
@@ -192,6 +199,7 @@ export function WeekPlanner({
       const key = dateStr(date);
       const isToday = key === todayKey;
       const scheduledTaskIds = new Set(getScheduledTaskIds(key));
+      const slots = getScheduleForDate(key);
 
       return {
         key,
@@ -204,10 +212,11 @@ export function WeekPlanner({
         }).format(date),
         hint: dayHint(key, todayKey),
         isToday,
+        pressure: getCalendarDayPressure({ dateKey: key, slots }),
         tasks: openTasks
           .filter((task) => taskBelongsToDay(task, key, todayKey, isToday) && !scheduledTaskIds.has(task.id))
           .sort((left, right) => compareTasksByAttention(left, right, todayKey)),
-        slots: getScheduleForDate(key),
+        slots,
       };
     });
   }, [horizonStart, isHydrated, todayKey, version]);
@@ -256,11 +265,16 @@ export function WeekPlanner({
                   </p>
                   <h3 className="mt-1 text-sm font-semibold text-zinc-50">{day.dateLabel}</h3>
                 </div>
-                {day.hint && (
-                  <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-sky-300">
-                    {day.hint}
-                  </span>
-                )}
+                <div className="flex flex-col items-end gap-1">
+                  {day.hint && (
+                    <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-sky-300">
+                      {day.hint}
+                    </span>
+                  )}
+                  {day.pressure && (
+                    <CalendarDayPressureChip pressure={day.pressure} variant="pill" />
+                  )}
+                </div>
               </header>
 
               <div className="mt-3 flex flex-1 flex-col gap-3">

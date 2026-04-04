@@ -3,12 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProjectSelectManager } from "@/components/project-select-manager";
+import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
 import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
 import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import {
   getSlotCarryoverActions,
   getSlotCarryoverDecision,
 } from "@/lib/calendar-slot-carryover";
+import {
+  getCalendarDayPressure,
+  type CalendarDayPressure,
+} from "@/lib/calendar-day-pressure";
 import {
   formatCompletionLabel,
   getSlotAttentionState,
@@ -571,6 +576,7 @@ type DayColumn = {
   isToday: boolean;
   isPast: boolean;
   isWeekend: boolean;
+  pressure: CalendarDayPressure;
   tasks: Task[];
   slots: ScheduleSlot[];
 };
@@ -754,6 +760,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       const isWeekend = weekday === 0 || weekday === 6;
       const scheduledTaskIds = new Set(getScheduledTaskIds(key));
       const slots = getScheduleForDate(key);
+      const pressure = getCalendarDayPressure({ dateKey: key, slots });
 
       return {
         key,
@@ -763,6 +770,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         isToday,
         isPast,
         isWeekend,
+        pressure,
         tasks: tasks
           .filter((t) => taskBelongsToDay(t, key, today, isToday) && !scheduledTaskIds.has(t.id))
           .sort((a, b) => compareTasksByAttention(a, b, today)),
@@ -1911,6 +1919,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               >
                 {col.dateLabel}
               </p>
+
+              <div className="mt-1.5 flex justify-center">
+                <CalendarDayPressureChip pressure={col.pressure} variant="pill" />
+              </div>
 
               {/* All-day tasks */}
               {col.tasks.length > 0 && (
