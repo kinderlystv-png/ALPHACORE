@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  getHeysSyncedSlotBadgeLabel,
   getScheduledTaskIds,
+  isHeysSyncedScheduleSlot,
   type ScheduleSlot,
   SCHEDULE_TONE_CLS,
   getScheduleForDate,
@@ -138,7 +140,7 @@ export function WeekPlanner({
     return subscribeAppDataChange((keys) => {
       if (
         keys.some((key) =>
-          ["alphacore_tasks", "alphacore_schedule_custom"].includes(key),
+          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides"].includes(key),
         )
       ) {
         setVersion((current) => current + 1);
@@ -291,22 +293,34 @@ export function WeekPlanner({
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {day.slots.map((slot) => (
-                        <div
-                          key={slot.id}
-                          className={`rounded-xl border px-3 py-2 ${SCHEDULE_TONE_CLS[slot.tone]}`}
-                        >
-                          <p className="font-mono text-[10px] opacity-70">
-                            {slot.start}–{slot.end}
-                          </p>
-                          <p className="mt-1 text-xs font-medium leading-snug">{slot.title}</p>
-                          {slot.subtitle && (
-                            <p className="mt-1 line-clamp-2 text-[10px] opacity-70">
-                              {slot.subtitle}
-                            </p>
-                          )}
-                        </div>
-                      ))}
+                      {day.slots.map((slot) => {
+                        const isHeysSynced = isHeysSyncedScheduleSlot(slot);
+                        const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
+
+                        return (
+                          <div
+                            key={slot.id}
+                            className={`rounded-xl border px-3 py-2 ${SCHEDULE_TONE_CLS[slot.tone]}`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="font-mono text-[10px] opacity-70">
+                                {slot.start}–{slot.end}
+                              </p>
+                              {heysBadgeLabel && (
+                                <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-orange-200">
+                                  {heysBadgeLabel}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-xs font-medium leading-snug">{slot.title}</p>
+                            {slot.subtitle && (
+                              <p className="mt-1 line-clamp-2 text-[10px] opacity-70">
+                                {slot.subtitle}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </section>

@@ -13,7 +13,9 @@ import {
 } from "@/lib/life-areas";
 import {
   addCustomEvent,
+  getHeysSyncedSlotBadgeLabel,
   getScheduledTaskIds,
+  isHeysSyncedScheduleSlot,
   isEditableScheduleSlot,
   removeEditableScheduleSlot,
   unscheduleCustomTaskEvent,
@@ -1637,6 +1639,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const c = toneColor(slot.tone);
                   const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
+                  const isHeysSynced = isHeysSyncedScheduleSlot(slot);
+                  const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
                   const isCustomSlot = slot.id.startsWith("custom-");
@@ -1659,12 +1663,20 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         ? "px-1.5 py-1.5"
                         : "px-1 py-1"
                       : !isEditable
-                        ? "px-2 py-1"
-                        : height >= 96
-                          ? "px-2 pt-5 pb-5"
-                          : height >= 64
-                            ? "px-2 pt-4 pb-4"
-                            : "px-2 pt-3 pb-3";
+                        ? isHeysSynced
+                          ? "px-2 pt-5 pb-1"
+                          : "px-2 py-1"
+                        : isHeysSynced
+                          ? height >= 96
+                            ? "px-2 pt-6 pb-5"
+                            : height >= 64
+                              ? "px-2 pt-5 pb-4"
+                              : "px-2 pt-4 pb-3"
+                          : height >= 96
+                            ? "px-2 pt-5 pb-5"
+                            : height >= 64
+                              ? "px-2 pt-4 pb-4"
+                              : "px-2 pt-3 pb-3";
                   const handleButtonHeight = height >= 64 ? "h-5" : "h-4";
                   const handleGripSize = height >= 64 ? "h-1 w-4" : "h-0.5 w-3";
                   const handleOpacity = isActiveSlot
@@ -1686,7 +1698,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       ? "ring-2 ring-rose-400/80 shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_14px_28px_rgba(127,29,29,0.28)]"
                       : isSelectedSlot
                         ? "ring-1 ring-white/12 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_10px_24px_rgba(0,0,0,0.22)]"
-                        : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]";
+                        : isHeysSynced
+                          ? "shadow-[0_0_0_1px_rgba(251,146,60,0.24),0_10px_24px_rgba(0,0,0,0.22)]"
+                          : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]";
                   const slotZIndex = isChildcareBackground ? 0 : isSelectedSlot ? 14 : isSupportSlot ? 11 : 12;
 
                   return (
@@ -1730,6 +1744,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         </>
                       ) : (
                         <>
+                          {isHeysSynced && !isSupportSlot && heysBadgeLabel && (
+                            <span className="pointer-events-none absolute left-2 top-1.5 z-10 rounded-full border border-orange-400/30 bg-orange-500/12 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-orange-100">
+                              {heysBadgeLabel}
+                            </span>
+                          )}
                           {isCustomSlot && (
                             <span className="pointer-events-none absolute right-2 top-1.5 z-10 rounded-full border border-white/12 bg-zinc-950/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-zinc-200">
                               {slotKindLabel}

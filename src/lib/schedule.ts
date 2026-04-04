@@ -31,6 +31,7 @@ export type ScheduleSlot = {
   tone: ScheduleTone;
   tags: string[];
   source: ScheduleSource;
+  origin?: AutomationOrigin;
   kind?: "task" | "event";
   taskId?: string | null;
   project?: string;
@@ -47,6 +48,7 @@ export type ScheduleOverride = {
   subtitle?: string;
   tone: ScheduleTone;
   tags: string[];
+  origin?: AutomationOrigin;
   hidden?: boolean;
 };
 
@@ -82,6 +84,24 @@ export const SCHEDULE_TONE_CLS: Record<ScheduleTone, string> = {
   family: "border-fuchsia-500/25 bg-fuchsia-950/20 text-fuchsia-300",
   review: "border-amber-500/25 bg-amber-950/20 text-amber-300",
 };
+
+export function isHeysSyncedOrigin(origin: AutomationOrigin | null | undefined): boolean {
+  return origin?.source === "heys" && origin.bundleLabel === "heys-activity-sync";
+}
+
+export function isHeysSyncedScheduleSlot(
+  slot: Pick<ScheduleSlot, "origin" | "tags">,
+): boolean {
+  return isHeysSyncedOrigin(slot.origin) || slot.tags.includes("heys-actual");
+}
+
+export function getHeysSyncedSlotBadgeLabel(
+  slot: Pick<ScheduleSlot, "tags">,
+): string {
+  if (slot.tags.includes("household")) return "HEYS · быт";
+  if (slot.tags.includes("training")) return "HEYS · трен";
+  return "HEYS · факт";
+}
 
 export const SCHEDULE_RULES = [
   "С 1 апреля без уборщицы: если был праздник, на следующий день нужен слот на уборку.",
@@ -747,6 +767,7 @@ function applyOverrides(
           subtitle: override.subtitle,
           tone: override.tone,
           tags: override.tags,
+          origin: override.origin,
           source,
         })),
     );
@@ -769,6 +790,7 @@ function upsertOverride(
     subtitle: patch.subtitle ?? slot.subtitle,
     tone: patch.tone ?? slot.tone,
     tags: patch.tags ?? slot.tags,
+    origin: patch.origin ?? slot.origin,
     hidden: patch.hidden ?? false,
   };
 
@@ -1043,6 +1065,7 @@ export function updateEditableScheduleSlot(
           title: updated.title,
           tone: updated.tone,
           tags: updated.tags,
+          origin: updated.origin,
           kind: updated.kind,
           taskId: updated.taskId,
           project: updated.project,
@@ -1063,6 +1086,7 @@ export function updateEditableScheduleSlot(
         subtitle: override.subtitle,
         tone: override.tone,
         tags: override.tags,
+        origin: override.origin,
         source: override.originalSource,
       }
     : null;
@@ -1085,6 +1109,7 @@ function getCustomSlots(dateKey: string): ScheduleSlot[] {
     title: e.title,
     tone: e.tone,
     tags: e.tags,
+    origin: e.origin,
     kind: e.kind ?? "task",
     taskId: e.taskId ?? null,
     project: e.project,

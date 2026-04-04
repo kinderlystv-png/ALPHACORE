@@ -2,6 +2,7 @@ import {
   addCustomEvent,
   getCustomEvents,
   getScheduleForDate,
+  isHeysSyncedOrigin,
   isEditableScheduleSlot,
   minutesToTime,
   timeToMinutes,
@@ -384,14 +385,21 @@ function reconcileSingleActivity(activity: HeysActualActivity): Omit<HeysActivit
 
   const nearbySlot = findNearbyPlannedSlot(activity);
   if (nearbySlot) {
+    const nextOrigin = createOrigin(activity);
     const changed =
       nearbySlot.start !== activity.start ||
       nearbySlot.end !== activity.end;
+    const needsOriginStamp =
+      !isHeysSyncedOrigin(nearbySlot.origin) ||
+      nearbySlot.origin?.bundleId !== nextOrigin.bundleId ||
+      nearbySlot.origin?.bundlePart !== nextOrigin.bundlePart ||
+      nearbySlot.origin?.bundleRunId !== nextOrigin.bundleRunId;
 
-    if (changed) {
+    if (changed || needsOriginStamp) {
       updateEditableScheduleSlot(nearbySlot, {
         start: activity.start,
         end: activity.end,
+        origin: nextOrigin,
       });
     }
 
@@ -399,9 +407,9 @@ function reconcileSingleActivity(activity: HeysActualActivity): Omit<HeysActivit
 
     return {
       created: 0,
-      updated: changed ? 1 : 0,
+      updated: changed || needsOriginStamp ? 1 : 0,
       matchedTasks: matchedTaskDone ? 1 : 0,
-      skipped: changed || matchedTaskDone ? 0 : 1,
+      skipped: changed || needsOriginStamp || matchedTaskDone ? 0 : 1,
     };
   }
 

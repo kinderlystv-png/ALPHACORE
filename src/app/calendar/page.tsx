@@ -1,26 +1,42 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { WeekPlanner } from "@/components/week-planner";
 import {
+  getHeysSyncedSlotBadgeLabel,
   SCHEDULE_RULES,
   SCHEDULE_TONE_CLS,
   getMonthDates,
   getMonthLabel,
   getScheduleForDate,
   getScheduleSummary,
+  isHeysSyncedScheduleSlot,
 } from "@/lib/schedule";
+import { subscribeAppDataChange } from "@/lib/storage";
 
 export default function CalendarPage() {
+  const [version, setVersion] = useState(0);
   const monthDates = useMemo(() => getMonthDates(new Date()), []);
   const today = monthDates.find((item) => item.isToday)?.key ?? monthDates[0]?.key;
   const [selectedDate, setSelectedDate] = useState(today);
 
+  useEffect(() => {
+    return subscribeAppDataChange((keys) => {
+      if (
+        keys.some((key) =>
+          ["alphacore_schedule_custom", "alphacore_schedule_overrides"].includes(key),
+        )
+      ) {
+        setVersion((current) => current + 1);
+      }
+    });
+  }, []);
+
   const selected = monthDates.find((item) => item.key === selectedDate) ?? monthDates[0];
-  const slots = useMemo(() => getScheduleForDate(selectedDate), [selectedDate]);
-  const summary = useMemo(() => getScheduleSummary(selectedDate), [selectedDate]);
+  const slots = useMemo(() => getScheduleForDate(selectedDate), [selectedDate, version]);
+  const summary = useMemo(() => getScheduleSummary(selectedDate), [selectedDate, version]);
 
   return (
     <AppShell>
@@ -87,43 +103,57 @@ export default function CalendarPage() {
           </div>
 
           <div className="mt-4 space-y-2">
-            {slots.map((slot) => (
-              <div
-                key={slot.id}
-                className={`rounded-xl border px-4 py-3 ${SCHEDULE_TONE_CLS[slot.tone]}`}
-              >
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="font-mono text-xs opacity-70">
-                      {slot.start}–{slot.end}
-                    </p>
-                    <p className="mt-1 text-sm font-medium">{slot.title}</p>
-                    {slot.subtitle && (
-                      <p className="mt-1 text-xs opacity-70">{slot.subtitle}</p>
-                    )}
-                    {slot.tags.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {slot.tags.map((tag) => (
-                          <span
-                            key={`${slot.id}-${tag}`}
-                            className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/65"
-                          >
-                            #{tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+            {slots.map((slot) => {
+              const isHeysSynced = isHeysSyncedScheduleSlot(slot);
+              const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
+              const sourceLabel =
+                slot.source === "studio"
+                  ? "schedule.xlsx"
+                  : slot.source === "derived"
+                    ? "rule"
+                    : "week";
+
+              return (
+                <div
+                  key={slot.id}
+                  className={`rounded-xl border px-4 py-3 ${SCHEDULE_TONE_CLS[slot.tone]}`}
+                >
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs opacity-70">
+                        {slot.start}–{slot.end}
+                      </p>
+                      <p className="mt-1 text-sm font-medium">{slot.title}</p>
+                      {slot.subtitle && (
+                        <p className="mt-1 text-xs opacity-70">{slot.subtitle}</p>
+                      )}
+                      {slot.tags.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {slot.tags.map((tag) => (
+                            <span
+                              key={`${slot.id}-${tag}`}
+                              className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/65"
+                            >
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {heysBadgeLabel && (
+                        <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-orange-200">
+                          {heysBadgeLabel}
+                        </span>
+                      )}
+                      <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white/70">
+                        {sourceLabel}
+                      </span>
+                    </div>
                   </div>
-                  <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white/70">
-                    {slot.source === "studio"
-                      ? "schedule.xlsx"
-                      : slot.source === "derived"
-                        ? "rule"
-                        : "week"}
-                  </span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
