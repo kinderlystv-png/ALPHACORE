@@ -56,6 +56,9 @@ const QUICK_MENU_ESTIMATED_HEIGHT = 560;
 const SUPPORT_LANE_RATIO = 0.36;
 const SLOT_SIDE_INSET_PX = 4;
 const SLOT_LANE_GAP_PX = 6;
+const COMPLETION_MARKER_H = 18;
+const COMPLETION_MARKER_STACK_OFFSET_PX = 12;
+const COMPLETION_MARKER_CLUSTER_MIN = 18;
 
 const QUICK_TONE_OPTIONS: Array<{ value: ScheduleTone; label: string }> = [
   { value: "work", label: "💼 Работа" },
@@ -99,6 +102,26 @@ function slotTop(startTime: string): number {
 function slotHeight(start: string, end: string): number {
   const duration = timeToMinutes(end) - timeToMinutes(start);
   return Math.max((duration / 60) * ROW_H, 20);
+}
+
+function getTaskCompletionDetails(
+  task: Pick<Task, "completedAt">,
+): { dateKey: string; minutes: number; timeLabel: string } | null {
+  if (!task.completedAt) return null;
+
+  const completedAt = new Date(task.completedAt);
+  if (Number.isNaN(completedAt.getTime())) return null;
+
+  return {
+    dateKey: dateStr(completedAt),
+    minutes: completedAt.getHours() * 60 + completedAt.getMinutes(),
+    timeLabel: `${String(completedAt.getHours()).padStart(2, "0")}:${String(completedAt.getMinutes()).padStart(2, "0")}`,
+  };
+}
+
+function completionMarkerTop(minutes: number): number {
+  const clampedMinutes = clamp(minutes, HOUR_START * 60, HOUR_END * 60 - 1);
+  return ((clampedMinutes - HOUR_START * 60) / 60) * ROW_H;
 }
 
 function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: boolean): boolean {
@@ -334,6 +357,14 @@ type DayColumn = {
   isWeekend: boolean;
   tasks: Task[];
   slots: ScheduleSlot[];
+  completionMarkers: CompletionMarker[];
+};
+
+type CompletionMarker = {
+  id: string;
+  task: Task;
+  timeLabel: string;
+  top: number;
 };
 
 type WeekCalendarGridProps = {
@@ -427,6 +458,46 @@ function getCompactStart(columns: DayColumn[], compactCount: number): number {
   return Math.max(0, Math.min(todayIndex - 1, columns.length - compactCount));
 }
 
+function buildCompletionMarkers(tasks: Task[]): CompletionMarker[] {
+  let previousMinute: number | null = null;
+  let previousStackIndex = 0;
+
+  return tasks
+    .map((task) => {
+      const completion = getTaskCompletionDetails(task);
+      return completion ? { task, completion } : null;
+    })
+    .filter(
+      (entry): entry is { task: Task; completion: { dateKey: string; minutes: number; timeLabel: string } } => entry != null,
+    )
+    .sort((left, right) => {
+      return (
+        left.completion.minutes - right.completion.minutes ||
+        (left.task.completedAt ?? "").localeCompare(right.task.completedAt ?? "") ||
+        left.task.title.localeCompare(right.task.title, "ru")
+      );
+    })
+    .map(({ task, completion }) => {
+      const inCluster =
+        previousMinute != null && completion.minutes - previousMinute < COMPLETION_MARKER_CLUSTER_MIN;
+      const stackIndex = inCluster ? previousStackIndex + 1 : 0;
+
+      previousMinute = completion.minutes;
+      previousStackIndex = stackIndex;
+
+      return {
+        id: task.id,
+        task,
+        timeLabel: completion.timeLabel,
+        top: clamp(
+          completionMarkerTop(completion.minutes) + stackIndex * COMPLETION_MARKER_STACK_OFFSET_PX,
+          2,
+          TOTAL_HOURS * ROW_H - COMPLETION_MARKER_H - 2,
+        ),
+      } satisfies CompletionMarker;
+    });
+}
+
 /* ── Component ── */
 
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
@@ -514,7 +585,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   }, [days, shouldCenterNow, today]);
 
   const columns = useMemo<DayColumn[]>(() => {
+    const allTasks = getTasks();
     const tasks = getActionableTasks(today);
+    const completedTasks = allTasks.filter((task) => task.status === "done" && !!task.completedAt);
+
     return days.map((date) => {
       const key = dateStr(date);
       const isToday = key === today;
@@ -522,6 +596,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       const weekday = date.getDay();
       const isWeekend = weekday === 0 || weekday === 6;
       const scheduledTaskIds = new Set(getScheduledTaskIds(key));
+      const slots = getScheduleForDate(key);
+
       return {
         key,
         date,
@@ -533,7 +609,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         tasks: tasks
           .filter((t) => taskBelongsToDay(t, key, today, isToday) && !scheduledTaskIds.has(t.id))
           .sort((a, b) => compareTasksByAttention(a, b, today)),
-        slots: getScheduleForDate(key),
+        slots,
+        completionMarkers: buildCompletionMarkers(
+          completedTasks.filter((task) => {
+            if (scheduledTaskIds.has(task.id)) return false;
+            return getTaskCompletionDetails(task)?.dateKey === key;
+          }),
+        ),
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1807,6 +1889,30 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           )}
                         </>
                       )}
+                    </div>
+                  );
+                })}
+
+                {col.completionMarkers.map((marker) => {
+                  const color = taskColor(marker.task);
+                  const dot = AREA_COLOR[taskArea(marker.task)].dot;
+
+                  return (
+                    <div
+                      key={`done-${marker.id}`}
+                      className={`pointer-events-none absolute inset-x-1 overflow-hidden rounded-lg border bg-zinc-950/90 px-2 py-0.5 shadow-[0_10px_22px_rgba(0,0,0,0.22)] backdrop-blur-sm ${color.border}`}
+                      style={{ top: marker.top, height: COMPLETION_MARKER_H, zIndex: 16 }}
+                      title={`${marker.timeLabel} · ${marker.task.title}`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                          {marker.timeLabel}
+                        </span>
+                        <p className={`min-w-0 truncate text-[10px] font-medium leading-none ${color.text}`}>
+                          ✅ {marker.task.title}
+                        </p>
+                      </div>
                     </div>
                   );
                 })}
