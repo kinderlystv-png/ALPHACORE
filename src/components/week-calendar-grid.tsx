@@ -35,6 +35,7 @@ import {
   type Task,
   compareTasksByAttention,
   getActionableTasks,
+  toggleDone,
   updateTask,
 } from "@/lib/tasks";
 
@@ -556,6 +557,12 @@ function buildCompletionMarkers(tasks: Task[]): CompletionMarker[] {
         ),
       } satisfies CompletionMarker;
     });
+}
+
+function formatTaskCompletionLabel(task: Pick<Task, "completedAt">): string | null {
+  const completion = getTaskCompletionDetails(task);
+  if (!completion) return null;
+  return `done · ${completion.timeLabel}`;
 }
 
 /* ── Component ── */
@@ -1332,6 +1339,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setQuickMenu(null);
   }, []);
 
+  const toggleQuickSlotTask = useCallback((taskId: string) => {
+    toggleDone(taskId);
+    setVersion((value) => value + 1);
+  }, []);
+
   useEffect(() => {
     if (!quickMenu) return;
 
@@ -1390,6 +1402,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     updateTask(taskId, { dueDate: targetDay });
     return true;
   }, [linkedTasksById]);
+
+  const toggleTaskCompletion = useCallback((taskId: string) => {
+    toggleDone(taskId);
+    setVersion((value) => value + 1);
+  }, []);
 
   const scheduleTaskFromDrop = useCallback((
     taskId: string,
@@ -1849,13 +1866,16 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       );
                   const c = toneColor(slot.tone);
                   const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
+                  const isTaskBackedSlot = Boolean(linkedTask) && slot.kind !== "event";
+                  const isDoneTaskSlot = linkedTask?.status === "done";
+                  const taskCompletionLabel = linkedTask ? formatTaskCompletionLabel(linkedTask) : null;
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
                   const isHeysSynced = isHeysSyncedScheduleSlot(slot);
                   const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
                   const isCustomSlot = slot.id.startsWith("custom-");
-                  const slotKindLabel = slot.kind === "event" ? "event" : "task";
+                  const slotKindLabel = isDoneTaskSlot ? "done" : slot.kind === "event" ? "event" : "task";
                   const isBlockingSlot =
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
@@ -1902,7 +1922,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
                   const shellTone = isChildcareBackground
                     ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
-                    : `${c.border} ${c.bg}`;
+                    : isDoneTaskSlot
+                      ? `${c.border} ${c.bg} saturate-[0.78]`
+                      : `${c.border} ${c.bg}`;
                   const shellDepth = isChildcareBackground
                     ? "shadow-none"
                     : isBlockingSlot
@@ -1960,7 +1982,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                             </span>
                           )}
                           {isCustomSlot && (
-                            <span className="pointer-events-none absolute right-2 top-1.5 z-10 rounded-full border border-white/12 bg-zinc-950/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-zinc-200">
+                            <span className={`pointer-events-none absolute right-2 top-1.5 z-10 rounded-full border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] ${
+                              isDoneTaskSlot
+                                ? "border-emerald-400/25 bg-emerald-500/14 text-emerald-100"
+                                : "border-white/12 bg-zinc-950/70 text-zinc-200"
+                            }`}>
                               {slotKindLabel}
                             </span>
                           )}
@@ -1979,20 +2005,47 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                               <span className={`mt-1 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.04)] ${handleGripTone} ${handleGripSize}`} />
                             </button>
                           )}
-                          <p className={`text-[10px] font-medium leading-tight ${c.text}`}>
-                            {slot.start}–{slot.end}
-                          </p>
-                          <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
-                            {slot.title}
-                          </p>
+                          <div className="flex items-start gap-2">
+                            {isTaskBackedSlot && (
+                              <button
+                                type="button"
+                                aria-label={isDoneTaskSlot ? "Вернуть задачу в активные" : "Отметить задачу как выполненную"}
+                                title={isDoneTaskSlot ? "Вернуть в active" : "Отметить как done"}
+                                className={`relative z-10 mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold transition ${
+                                  isDoneTaskSlot
+                                    ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
+                                    : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                                }`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!linkedTask) return;
+                                  toggleTaskCompletion(linkedTask.id);
+                                }}
+                                onPointerDown={(e) => {
+                                  e.stopPropagation();
+                                }}
+                              >
+                                {isDoneTaskSlot ? "✓" : "○"}
+                              </button>
+                            )}
+
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-[10px] font-medium leading-tight ${c.text} ${isDoneTaskSlot ? "opacity-80" : ""}`}>
+                                {slot.start}–{slot.end}
+                              </p>
+                              <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isDoneTaskSlot ? "line-through decoration-white/30 opacity-70" : ""}`}>
+                                {slot.title}
+                              </p>
+                            </div>
+                          </div>
                           {projectLabel && !isSupportSlot && height > 46 && (
                             <p className="mt-1 inline-flex max-w-full truncate rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-200">
                               {projectLabel}
                             </p>
                           )}
                           {linkedTask && !isSupportSlot && height > 44 && (
-                            <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-zinc-400">
-                              {linkedTask.status} · {linkedTask.id.slice(0, 8)}
+                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isDoneTaskSlot ? "text-emerald-200/85" : "text-zinc-400"}`}>
+                              {isDoneTaskSlot ? taskCompletionLabel ?? linkedTask.status : `${linkedTask.status} · ${linkedTask.id.slice(0, 8)}`}
                             </p>
                           )}
                           {!isSupportSlot && height > 40 && slot.subtitle && (
@@ -2174,6 +2227,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           : null;
         const isCustomSlot = slot.id.startsWith("custom-");
         const isTaskBackedSlot = isCustomSlot && slot.kind !== "event";
+        const isDoneTaskSlot = linkedTask?.status === "done";
+        const completionLabel = linkedTask ? formatTaskCompletionLabel(linkedTask) : null;
         const startMin = timeToMinutes(slot.start);
         const endMin = timeToMinutes(slot.end);
         const durationMin = endMin - startMin;
@@ -2336,6 +2391,33 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     size="sm"
                     align="right"
                   />
+                </div>
+              )}
+
+              {isTaskBackedSlot && linkedTask && (
+                <div className="mb-3 rounded-2xl border border-zinc-800 bg-zinc-900/55 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Статус задачи</p>
+                      <p className={`mt-1 text-sm font-semibold ${isDoneTaskSlot ? "text-emerald-100" : "text-zinc-100"}`}>
+                        {isDoneTaskSlot ? (completionLabel ?? "done") : "active"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleQuickSlotTask(linkedTask.id)}
+                      className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
+                        isDoneTaskSlot
+                          ? "border-emerald-500/30 bg-emerald-950/30 text-emerald-100 hover:border-emerald-400/50 hover:bg-emerald-950/45"
+                          : "border-sky-500/30 bg-sky-950/30 text-sky-100 hover:border-sky-400/50 hover:bg-sky-950/45"
+                      }`}
+                    >
+                      {isDoneTaskSlot ? "Вернуть в active" : "Отметить done"}
+                    </button>
+                  </div>
+                  <p className="mt-2 text-[11px] text-zinc-500">
+                    Слот показывает запланированное окно, а выполнение подтверждается вручную.
+                  </p>
                 </div>
               )}
 

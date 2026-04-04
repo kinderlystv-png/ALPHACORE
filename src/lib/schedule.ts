@@ -951,10 +951,13 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
       origin: event.origin,
     });
   } else {
+    const preserveDoneState = linkedTask.status === "done";
+
     updateTask(linkedTask.id, {
       title: event.title,
       dueDate: event.date,
-      status: "active",
+      status: preserveDoneState ? "done" : "active",
+      completedAt: preserveDoneState ? linkedTask.completedAt : undefined,
       project: event.project,
       projectId: event.projectId,
       origin: linkedTask.origin ?? event.origin,
