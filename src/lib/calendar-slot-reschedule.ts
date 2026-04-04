@@ -27,7 +27,10 @@ function normalizeShortLabel(label: string): string {
   return label.replace(/\./g, "");
 }
 
-function buildLabels(dateKey: string, todayKey: string): Pick<SlotQuickRescheduleOption, "buttonLabel" | "description"> {
+export function getSlotQuickRescheduleLabel(
+  dateKey: string,
+  todayKey: string,
+): Pick<SlotQuickRescheduleOption, "buttonLabel" | "description"> {
   const tomorrowKey = shiftDateKey(todayKey, 1);
 
   if (dateKey === todayKey) {
@@ -64,7 +67,7 @@ export function getSlotQuickRescheduleOptions(
   return [...new Set(candidateDates)]
     .filter((dateKey) => dateKey !== slotDateKey)
     .map((dateKey, index) => {
-      const labels = buildLabels(dateKey, todayKey);
+      const labels = getSlotQuickRescheduleLabel(dateKey, todayKey);
 
       return {
         key: `reschedule-${dateKey}`,

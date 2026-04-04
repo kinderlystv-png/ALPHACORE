@@ -1,6 +1,6 @@
-import { getSlotQuickRescheduleOptions } from "@/lib/calendar-slot-reschedule";
+import { getSlotQuickRescheduleLabel } from "@/lib/calendar-slot-reschedule";
 import { shiftDateKey } from "@/lib/calendar-slot-attention";
-import { timeToMinutes, type ScheduleSlot } from "@/lib/schedule";
+import { getScheduleForDate, timeToMinutes, type ScheduleSlot } from "@/lib/schedule";
 
 export type SlotCarryoverDecision = {
   staleDays: number;
@@ -43,6 +43,15 @@ type SlotCarryoverDecisionInput = {
   isCompleted: boolean;
 };
 
+type CarryoverDayPressure = {
+  dateKey: string;
+  totalSlots: number;
+  parties: number;
+  cleanup: number;
+  family: number;
+  loadScore: number;
+};
+
 function diffDays(fromDateKey: string, toDateKey: string): number {
   const fromDate = new Date(`${fromDateKey}T00:00:00`);
   const toDate = new Date(`${toDateKey}T00:00:00`);
@@ -73,6 +82,120 @@ function getPreferredMoveTargets(slotDate: string, todayKey: string, staleDays: 
   }
 
   return [todayKey, tomorrowKey, plusTwoKey];
+}
+
+function getCarryoverDayPressure(dateKey: string): CarryoverDayPressure {
+  const slots = getScheduleForDate(dateKey);
+  const parties = slots.filter((slot) => slot.tone === "kinderly").length;
+  const cleanup = slots.filter((slot) => slot.tone === "cleanup").length;
+  const family = slots.filter((slot) => slot.tone === "family").length;
+
+  return {
+    dateKey,
+    totalSlots: slots.length,
+    parties,
+    cleanup,
+    family,
+    loadScore: parties * 6 + cleanup * 5 + family * 2 + slots.length,
+  };
+}
+
+function buildCarryoverMoveHint(
+  slot: Pick<ScheduleSlot, "tone">,
+  pressure: CarryoverDayPressure,
+): string {
+  if (slot.tone === "cleanup") {
+    if (pressure.parties === 0 && pressure.cleanup === 0) return "без party и cleanup";
+    if (pressure.parties === 0) return "без party-нагрузки";
+    if (pressure.cleanup === 0) return "без второго cleanup";
+  }
+
+  if ((slot.tone === "personal" || slot.tone === "health") && pressure.parties === 0 && pressure.cleanup === 0) {
+    return "день спокойнее";
+  }
+
+  if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) {
+    return "нагрузка ниже";
+  }
+
+  if (pressure.cleanup === 0 && pressure.loadScore <= 9) return "без cleanup";
+  if (pressure.parties === 0 && pressure.loadScore <= 9) return "без party";
+  if (pressure.loadScore <= 7) return "день мягче";
+
+  return "контур спокойнее";
+}
+
+function scoreCarryoverMoveTarget(
+  slot: Pick<ScheduleSlot, "tone" | "taskId">,
+  pressure: CarryoverDayPressure,
+  todayKey: string,
+  staleDays: number,
+): number {
+  const daysAhead = diffDays(pressure.dateKey, todayKey);
+  let score = pressure.loadScore + daysAhead * 3;
+
+  if (pressure.parties > 0) {
+    score += slot.tone === "kinderly" ? 2 : slot.tone === "cleanup" ? 14 : 10;
+  }
+
+  if (pressure.cleanup > 0) {
+    score += slot.tone === "cleanup" ? 8 : slot.tone === "personal" || slot.tone === "health" ? 10 : 7;
+  }
+
+  if (pressure.family > 0 && slot.tone !== "family") {
+    score += 2;
+  }
+
+  if (slot.taskId) {
+    if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) score -= 5;
+  } else if (slot.tone === "cleanup") {
+    if (pressure.parties === 0 && pressure.cleanup === 0) score -= 6;
+    if (pressure.dateKey === todayKey) score += 2;
+  } else if (slot.tone === "personal" || slot.tone === "health") {
+    if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) score -= 7;
+  } else {
+    if (pressure.parties === 0 && pressure.cleanup === 0 && pressure.loadScore <= 6) score -= 4;
+  }
+
+  if (staleDays >= 2 && pressure.dateKey === todayKey) {
+    score += 6;
+  }
+
+  if (staleDays === 1 && pressure.dateKey === todayKey && pressure.loadScore <= 8) {
+    score -= 2;
+  }
+
+  return score;
+}
+
+function getRankedCarryoverMoveTargets(
+  slot: Pick<ScheduleSlot, "date" | "tone" | "taskId">,
+  todayKey: string,
+  staleDays: number,
+): Array<{
+  dateKey: string;
+  buttonLabel: string;
+  description: string;
+  score: number;
+}> {
+  const candidateDates = Array.from({ length: 7 }, (_, index) => shiftDateKey(todayKey, index))
+    .filter((dateKey) => dateKey !== slot.date);
+
+  return candidateDates
+    .map((dateKey) => {
+      const labels = getSlotQuickRescheduleLabel(dateKey, todayKey);
+      const pressure = getCarryoverDayPressure(dateKey);
+      const hint = buildCarryoverMoveHint(slot, pressure);
+      const score = scoreCarryoverMoveTarget(slot, pressure, todayKey, staleDays);
+
+      return {
+        dateKey,
+        buttonLabel: labels.buttonLabel,
+        description: `${labels.description} · ${hint}`,
+        score,
+      };
+    })
+    .sort((left, right) => left.score - right.score || left.dateKey.localeCompare(right.dateKey));
 }
 
 export function getSlotCarryoverDecision({
@@ -173,24 +296,20 @@ export function getSlotCarryoverActions({
   const staleDays = decision.staleDays;
   const durationMin = timeToMinutes(slot.end) - timeToMinutes(slot.start);
   const compressTargetMin = getCompressTargetMinutes(durationMin);
-  const moveOptionsByDate = new Map(
-    getSlotQuickRescheduleOptions(slot.date, todayKey).map((option) => [option.dateKey, option]),
-  );
-
-  const preferredMoveActions = getPreferredMoveTargets(slot.date, todayKey, staleDays)
-    .map((dateKey) => moveOptionsByDate.get(dateKey))
-    .filter((option): option is NonNullable<typeof option> => Boolean(option))
+  const preferredDates = new Set(getPreferredMoveTargets(slot.date, todayKey, staleDays));
+  const preferredMoveActions = getRankedCarryoverMoveTargets(slot, todayKey, staleDays)
+    .filter((target) => preferredDates.has(target.dateKey))
     .slice(0, 2)
-    .map((option, index) => {
+    .map((target, index) => {
       const priority: "primary" | "secondary" = index === 0 ? "primary" : "secondary";
 
       return {
-        key: `carryover-move-${option.dateKey}`,
+        key: `carryover-move-${target.dateKey}`,
         type: "move-slot" as const,
-        buttonLabel: option.buttonLabel,
-        description: option.description,
+        buttonLabel: target.buttonLabel,
+        description: target.description,
         priority,
-        dateKey: option.dateKey,
+        dateKey: target.dateKey,
       } satisfies SlotCarryoverAction;
     });
 
