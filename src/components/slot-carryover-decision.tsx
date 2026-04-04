@@ -5,6 +5,7 @@ import {
   getSlotCarryoverDecision,
 } from "@/lib/calendar-slot-carryover";
 import {
+  removeEditableScheduleSlot,
   type ScheduleSlot,
   unscheduleCustomTaskEvent,
   updateEditableScheduleSlot,
@@ -128,6 +129,13 @@ export function SlotCarryoverDecision({
                   if (action.type === "compress-slot") {
                     const updated = updateEditableScheduleSlot(slot, { end: action.end });
                     if (!updated) return;
+                    onApplied?.();
+                    return;
+                  }
+
+                  if (action.type === "dismiss-slot") {
+                    const removed = removeEditableScheduleSlot(slot);
+                    if (!removed) return;
                     onApplied?.();
                     return;
                   }

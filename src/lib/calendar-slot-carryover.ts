@@ -1,6 +1,11 @@
 import { getSlotQuickRescheduleLabel } from "@/lib/calendar-slot-reschedule";
 import { shiftDateKey } from "@/lib/calendar-slot-attention";
-import { getScheduleForDate, timeToMinutes, type ScheduleSlot } from "@/lib/schedule";
+import {
+  getScheduleForDate,
+  isEditableScheduleSlot,
+  timeToMinutes,
+  type ScheduleSlot,
+} from "@/lib/schedule";
 
 export type SlotCarryoverDecision = {
   staleDays: number;
@@ -37,10 +42,18 @@ export type SlotCarryoverAction =
       hint?: string;
       priority: "primary" | "secondary";
       end: string;
+    }
+  | {
+      key: string;
+      type: "dismiss-slot";
+      buttonLabel: string;
+      description: string;
+      hint?: string;
+      priority: "primary" | "secondary";
     };
 
 type SlotCarryoverDecisionInput = {
-  slot: Pick<ScheduleSlot, "date" | "start" | "end" | "title" | "tags" | "taskId" | "tone">;
+  slot: Pick<ScheduleSlot, "id" | "date" | "start" | "end" | "title" | "tags" | "taskId" | "tone" | "source" | "origin">;
   todayKey: string;
   requiresApproval: boolean;
   isCompleted: boolean;
@@ -80,6 +93,35 @@ function getCompressTargetMinutes(durationMin: number): number | null {
   if (durationMin >= 120) return 60;
   if (durationMin >= 90) return 45;
   return null;
+}
+
+function buildDismissCarryoverAction(
+  slot: Pick<ScheduleSlot, "id" | "date" | "start" | "end" | "title" | "tags" | "tone" | "source" | "origin">,
+): SlotCarryoverAction | null {
+  if (!isEditableScheduleSlot(slot)) {
+    return null;
+  }
+
+  const title = slot.title.toLowerCase();
+  const isRecoveryLike =
+    slot.tone === "personal" ||
+    slot.tags.includes("recovery") ||
+    slot.tags.includes("rest") ||
+    title.includes("отдых");
+  const hint = isRecoveryLike
+    ? "Если это окно уже не нужно, лучше спокойно снять его из плана, чем переносить recovery по инерции."
+    : slot.tone === "cleanup"
+      ? "Если уборка уже потеряла смысл, лучше убрать старый хвост, чем таскать его по неделе ради галочки."
+      : "Если слот уже потерял смысл, лучше снять хвост из плана, чем переносить его просто по инерции.";
+
+  return {
+    key: "carryover-dismiss-slot",
+    type: "dismiss-slot",
+    buttonLabel: "Неактуально",
+    description: "убрать старый слот из плана",
+    hint,
+    priority: "secondary",
+  };
 }
 
 function getPreferredMoveTargets(slotDate: string, todayKey: string, staleDays: number): string[] {
@@ -396,6 +438,7 @@ export function getSlotCarryoverActions({
   const staleDays = decision.staleDays;
   const durationMin = timeToMinutes(slot.end) - timeToMinutes(slot.start);
   const compressTargetMin = getCompressTargetMinutes(durationMin);
+  const dismissAction = buildDismissCarryoverAction(slot);
   const preferredDates = new Set(getPreferredMoveTargets(slot.date, todayKey, staleDays));
   const preferredMoveActions = getRankedCarryoverMoveTargets(slot, todayKey, staleDays)
     .filter((target) => preferredDates.has(target.dateKey))
@@ -447,16 +490,17 @@ export function getSlotCarryoverActions({
         priority: "primary" as const,
         end: minutesToClock(compressedEndMinutes),
       },
-      ...preferredMoveActions.map((action, index) => {
-        const priority: "primary" | "secondary" = index === 0 ? "secondary" : action.priority;
+      ...preferredMoveActions.slice(0, 1).map((action) => {
+        const priority: "primary" | "secondary" = "secondary";
 
         return {
           ...action,
           priority,
         } satisfies SlotCarryoverAction;
       }),
+      ...(dismissAction ? [dismissAction] : []),
     ].slice(0, 3) as SlotCarryoverAction[];
   }
 
-  return preferredMoveActions as SlotCarryoverAction[];
+  return [...preferredMoveActions, ...(dismissAction ? [dismissAction] : [])].slice(0, 3) as SlotCarryoverAction[];
 }
