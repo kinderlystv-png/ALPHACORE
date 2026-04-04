@@ -202,6 +202,22 @@ type BundleContextProfile = {
   isWeekend: boolean;
 };
 
+type DayModeId = "execution" | "recovery" | "damage-control" | "light-rhythm";
+
+type DayMode = {
+  id: DayModeId;
+  label: string;
+  tone: MetricStatus | "neutral";
+  summary: string;
+  detail: string;
+  focusMetricKey: MetricKey;
+  reasons: string[];
+  calendarStrategy: string;
+  forceActionKind: "task" | "slot" | null;
+  preferBundle: boolean;
+  bundleBiasIds: string[];
+};
+
 type CompoundBundleChoice = {
   bundle: CompoundActionBundle;
   score: number;
@@ -785,6 +801,183 @@ function getRecommendedCompoundAction(metricKey: MetricKey): CompoundActionBundl
   return getCompoundActionBundles().find((bundle) => bundle.appliesTo.includes(metricKey)) ?? null;
 }
 
+function pushUniqueReason(reasons: string[], text: string | null): void {
+  if (!text || reasons.includes(text)) return;
+  reasons.push(text);
+}
+
+function getDayModeFocusMetricKey(
+  modeId: DayModeId,
+  h: HeysHealthSignals,
+  fallbackMetricKey: MetricKey,
+  sleepGoal: number | null | undefined,
+): MetricKey {
+  const weightGap =
+    h.weightCurrent != null && h.weightGoal != null
+      ? h.weightCurrent - h.weightGoal
+      : null;
+  const sleepGap =
+    h.sleepHoursAvg != null
+      ? Math.max(0, (sleepGoal ?? 8) - h.sleepHoursAvg)
+      : 0;
+
+  switch (modeId) {
+    case "damage-control":
+      if ((h.stressAvg ?? 0) > 5) return "stress";
+      if ((h.wellbeingAvg ?? 10) < 6) return "wellbeing";
+      if ((h.lateBedtimeRatio ?? 0) > 0.7) return "bedtime";
+      if ((h.waterAvg ?? 0) < 1500) return "water";
+      return fallbackMetricKey;
+    case "recovery":
+      if ((h.lateBedtimeRatio ?? 0) > 0.65) return "bedtime";
+      if (sleepGap > 0.6) return "sleep";
+      if ((h.waterAvg ?? 0) < 1600) return "water";
+      if ((h.wellbeingAvg ?? 10) < 6.6) return "wellbeing";
+      return fallbackMetricKey;
+    case "execution":
+      if (h.trainingDaysWeek < 3) return "training";
+      if (weightGap != null && weightGap > 4) return "weight";
+      if ((h.stepsGoalRatio ?? 1) < 0.9) return "steps";
+      if (fallbackMetricKey === "sleep" || fallbackMetricKey === "bedtime") {
+        return "training";
+      }
+      return fallbackMetricKey;
+    case "light-rhythm":
+      if ((h.stepsGoalRatio ?? 1) < 0.85) return "steps";
+      if ((h.waterAvg ?? 0) < 1800) return "water";
+      if ((h.stressAvg ?? 0) > 4) return "stress";
+      return fallbackMetricKey;
+    default:
+      return fallbackMetricKey;
+  }
+}
+
+function getHeysDayMode(
+  h: HeysHealthSignals,
+  context: BundleContextProfile,
+  fallbackMetricKey: MetricKey,
+  sleepGoal: number | null | undefined,
+): DayMode {
+  const lateRatio = h.lateBedtimeRatio ?? 0;
+  const sleepHours = h.sleepHoursAvg ?? sleepGoal ?? 7.5;
+  const sleepGap = Math.max(0, (sleepGoal ?? 8) - sleepHours);
+  const wellbeing = h.wellbeingAvg ?? 7;
+  const stress = h.stressAvg ?? 3;
+  const sleepQuality = h.sleepQualityAvg ?? 6;
+  const water = h.waterAvg ?? 1800;
+  const stepsRatio = h.stepsGoalRatio ?? 1;
+  const overloadedDay = context.dayLoad >= 10 || context.parties > 0 || context.cleanup > 0;
+  const reasons: string[] = [];
+
+  pushUniqueReason(reasons, lateRatio > 0.7 ? `${Math.round(lateRatio * 100)}% поздних отходов` : null);
+  pushUniqueReason(reasons, sleepGap > 0.6 ? `сон ниже цели на ${fmtNum(sleepGap)}ч` : null);
+  pushUniqueReason(reasons, wellbeing < 6.6 ? `самочувствие ${fmtNum(wellbeing)}/10` : null);
+  pushUniqueReason(reasons, stress > 4.5 ? `стресс ${fmtNum(stress)}/10` : null);
+  pushUniqueReason(reasons, water < 1600 ? `${fmtNum(water, 0)} мл воды` : null);
+  pushUniqueReason(reasons, context.dayLoad >= 9 ? "день уже плотный" : null);
+  pushUniqueReason(reasons, context.parties > 0 ? "есть party-нагрузка" : null);
+  pushUniqueReason(reasons, context.cleanup > 0 ? "есть cleanup-слоты" : null);
+
+  if (!h.hasRecentData) {
+    return {
+      id: "light-rhythm",
+      label: "Light rhythm",
+      tone: "neutral",
+      summary: "HEYS ещё собирает базу, поэтому день лучше вести мягко, без ложной уверенности.",
+      detail: "Пока сигнал сырой, автопилот удерживает лёгкий ритм и не разгоняет лишние commitments на пустом месте.",
+      focusMetricKey: fallbackMetricKey,
+      reasons: ["мало свежих check-in", "лучше не разгонять план вслепую"],
+      calendarStrategy: "Ставить только мягкие якоря ритма и дождаться более плотного HEYS-сигнала.",
+      forceActionKind: "slot",
+      preferBundle: false,
+      bundleBiasIds: ["movement-recovery-pair"],
+    };
+  }
+
+  if (
+    ((wellbeing < 5.8 || stress > 5.5 || sleepQuality < 4.5) && overloadedDay) ||
+    ((lateRatio > 0.82 || sleepGap > 1) && stress > 5) ||
+    (wellbeing < 5.4 && sleepQuality < 5)
+  ) {
+    return {
+      id: "damage-control",
+      label: "Damage control",
+      tone: "bad",
+      summary: "Сегодня не hero mode: сначала нужно снять шум и удержать базу, иначе день начнёт разваливаться сам.",
+      detail: "Автопилот будет тянуть в защитные окна и короткие reset-связки, а не в ещё одну тяжёлую задачу поверх перегруза.",
+      focusMetricKey: getDayModeFocusMetricKey("damage-control", h, fallbackMetricKey, sleepGoal),
+      reasons: reasons.slice(0, 3),
+      calendarStrategy: "Срезать лишний шум, защитить recovery-окно и only then решать, что из execution вообще нужно спасать.",
+      forceActionKind: "slot",
+      preferBundle: true,
+      bundleBiasIds: ["sleep-hydration-reset", "review-shutdown-pair"],
+    };
+  }
+
+  if (
+    lateRatio > 0.65 ||
+    sleepGap > 0.6 ||
+    wellbeing < 6.6 ||
+    water < 1600 ||
+    stress > 4.5
+  ) {
+    return {
+      id: "recovery",
+      label: "Recovery mode",
+      tone: "warn",
+      summary: "База держится тонко: день лучше строить вокруг восстановления, а не вокруг силы воли.",
+      detail: "Автопилот будет предпочитать защищённые окна и compound-мувы, которые мягко выправляют ритм без лишнего давления.",
+      focusMetricKey: getDayModeFocusMetricKey("recovery", h, fallbackMetricKey, sleepGoal),
+      reasons: reasons.slice(0, 3),
+      calendarStrategy: "Защищать сон, воду, прогулку и recovery, а тяжёлые обещания переносить только после стабилизации фона.",
+      forceActionKind: "slot",
+      preferBundle: true,
+      bundleBiasIds: ["sleep-hydration-reset", "movement-recovery-pair"],
+    };
+  }
+
+  if (
+    wellbeing >= 7 &&
+    stress <= 3.5 &&
+    sleepQuality >= 6 &&
+    lateRatio < 0.45 &&
+    stepsRatio >= 0.75
+  ) {
+    const executionReasons: string[] = [];
+    pushUniqueReason(executionReasons, `самочувствие ${fmtNum(wellbeing)}/10`);
+    pushUniqueReason(executionReasons, `стресс ${fmtNum(stress)}/10`);
+    pushUniqueReason(executionReasons, `${Math.round(stepsRatio * 100)}% шаговой базы`);
+
+    return {
+      id: "execution",
+      label: "Execution mode",
+      tone: "good",
+      summary: "Тело держит базу, поэтому сегодня можно давать нормальный execution без лишней цены для recovery.",
+      detail: "Автопилот не выключает ритм, но уже может работать на прогресс: training, steps и долгие контуры вместо аварийных reset-действий.",
+      focusMetricKey: getDayModeFocusMetricKey("execution", h, fallbackMetricKey, sleepGoal),
+      reasons: executionReasons.slice(0, 3),
+      calendarStrategy: "Можно брать полезные execution-шаги, пока хотя бы один якорь сна и recovery остаётся защищённым.",
+      forceActionKind: null,
+      preferBundle: false,
+      bundleBiasIds: ["movement-recovery-pair", "weight-rhythm-pair"],
+    };
+  }
+
+  return {
+    id: "light-rhythm",
+    label: "Light rhythm",
+    tone: "neutral",
+    summary: "День не аварийный, но и не тот случай, где стоит резко разгонять систему.",
+    detail: "Автопилот держит мягкий ритм: короткие окна, умеренная нагрузка и без лишнего hero mode там, где ещё нет запаса.",
+    focusMetricKey: getDayModeFocusMetricKey("light-rhythm", h, fallbackMetricKey, sleepGoal),
+    reasons: reasons.slice(0, 3),
+    calendarStrategy: "Держать день лёгким, распределять действия по неделе и не превращать средний фон в лишний стресс.",
+    forceActionKind: "slot",
+    preferBundle: false,
+    bundleBiasIds: ["movement-recovery-pair", "weight-rhythm-pair"],
+  };
+}
+
 function buildBundleContextProfile(): BundleContextProfile {
   const dateKey = todayDateKey();
   const todayLoad = getDayLoad(dateKey);
@@ -813,6 +1006,7 @@ function scoreCompoundActionBundle(
   metricKey: MetricKey,
   context: BundleContextProfile,
   learning: LearnedBundleStat | null,
+  dayMode: DayMode,
 ): CompoundBundleChoice {
   let score = 4;
   const reasons: string[] = [];
@@ -822,6 +1016,19 @@ function scoreCompoundActionBundle(
     if (learning.improved > 0) {
       reasons.push(`история ${learning.improved}/${learning.resolved}`);
     }
+  }
+
+  if (dayMode.bundleBiasIds.includes(bundle.id)) {
+    score += dayMode.id === "damage-control" ? 3 : dayMode.id === "recovery" ? 2 : 1;
+    reasons.push(
+      dayMode.id === "damage-control"
+        ? "под emergency-режим"
+        : dayMode.id === "recovery"
+          ? "под recovery-режим"
+          : dayMode.id === "execution"
+            ? "не ломает execution"
+            : "держит мягкий ритм",
+    );
   }
 
   switch (bundle.id) {
@@ -873,6 +1080,25 @@ function scoreCompoundActionBundle(
       break;
   }
 
+  if (dayMode.id === "damage-control") {
+    if (bundle.id === "weight-rhythm-pair") score -= 3;
+    if (bundle.id === "movement-recovery-pair" && context.dayLoad >= 10) score -= 1;
+  }
+
+  if (dayMode.id === "recovery") {
+    if (bundle.id === "weight-rhythm-pair") score -= 2;
+    if (bundle.id === "review-shutdown-pair" && !context.isEvening && !context.isLateEvening) {
+      score -= 1;
+    }
+  }
+
+  if (dayMode.id === "execution") {
+    if (bundle.id === "sleep-hydration-reset" && !context.isEvening && !context.isLateEvening) {
+      score -= 1;
+    }
+    if (bundle.id === "review-shutdown-pair" && context.isMorning) score -= 2;
+  }
+
   if (context.isWeekend && bundle.id === "sleep-hydration-reset") {
     score += 1;
     reasons.push("выходной recovery");
@@ -894,6 +1120,7 @@ function getRankedCompoundActionBundles(
   metricKey: MetricKey,
   context: BundleContextProfile,
   stats: LearnedBundleStat[],
+  dayMode: DayMode,
 ): CompoundBundleChoice[] {
   return getCompoundActionBundles()
     .filter((bundle) => bundle.appliesTo.includes(metricKey))
@@ -903,6 +1130,7 @@ function getRankedCompoundActionBundles(
         metricKey,
         context,
         getPreferredBundleStat(bundle.id, stats),
+        dayMode,
       ),
     )
     .sort(
@@ -2026,7 +2254,12 @@ export function HeysHealthPanel() {
   const { signals: h, snapshot, loading, error, lastSynced, refresh } = useHeysSync();
   const [selectedMetricKey, setSelectedMetricKey] = useState<MetricKey | null>(null);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
-  const defaultMetricKey = h ? getDefaultMetricKey(h) : "sleep";
+  const bundleContext = buildBundleContextProfile();
+  const fallbackMetricKey = h ? getDefaultMetricKey(h) : "sleep";
+  const previewDayMode = h
+    ? getHeysDayMode(h, bundleContext, fallbackMetricKey, snapshot?.profile?.sleepHoursGoal)
+    : null;
+  const defaultMetricKey = previewDayMode?.focusMetricKey ?? fallbackMetricKey;
 
   useEffect(() => {
     setSelectedMetricKey((current) => current ?? defaultMetricKey);
@@ -2059,6 +2292,10 @@ export function HeysHealthPanel() {
   }
 
   if (!snapshot || !h) return null;
+
+  const dayMode =
+    previewDayMode ??
+    getHeysDayMode(h, bundleContext, fallbackMetricKey, snapshot.profile?.sleepHoursGoal);
 
   const days = [...snapshot.days].sort((a, b) => a.date.localeCompare(b.date));
   const latestDayWithSleep = [...days].reverse().find((day) => day.sleepStart);
@@ -2555,7 +2792,10 @@ export function HeysHealthPanel() {
     metrics.find((metric) => metric.key === selectedMetricKey) ??
     metrics.find((metric) => metric.key === defaultMetricKey) ??
     metrics[0]!;
-  const topMetric = metrics.find((metric) => metric.key === defaultMetricKey) ?? metrics[0]!;
+  const topMetric =
+    metrics.find((metric) => metric.key === dayMode.focusMetricKey) ??
+    metrics.find((metric) => metric.key === defaultMetricKey) ??
+    metrics[0]!;
   const topActionPlan = getMetricActionPlan(topMetric.key);
   const selectedActionPlan = getMetricActionPlan(selectedMetric.key);
   const learningStats = buildLearningStats(
@@ -2570,16 +2810,17 @@ export function HeysHealthPanel() {
     days,
     snapshot.profile?.weightGoal,
   );
-  const bundleContext = buildBundleContextProfile();
   const recommendedBundleChoices = getRankedCompoundActionBundles(
     topMetric.key,
     bundleContext,
     bundleLearningStats,
+    dayMode,
   );
   const selectedBundleChoices = getRankedCompoundActionBundles(
     selectedMetric.key,
     bundleContext,
     bundleLearningStats,
+    dayMode,
   );
   const recommendedBundleChoice = recommendedBundleChoices[0] ?? null;
   const selectedBundleChoice = selectedBundleChoices[0] ?? null;
@@ -2596,12 +2837,16 @@ export function HeysHealthPanel() {
   const learnedHighlights = learningStats
     .filter((stat) => stat.improved > 0 && stat.resolved > 0)
     .slice(0, 3);
-  const effectiveTopRecommendation = topMetricLearning?.actionKind ?? topActionPlan.recommended;
+  const effectiveTopRecommendation =
+    dayMode.forceActionKind ?? topMetricLearning?.actionKind ?? topActionPlan.recommended;
   const isLearnedOverride =
-    topMetricLearning != null && topMetricLearning.actionKind !== topActionPlan.recommended;
+    dayMode.forceActionKind == null &&
+    topMetricLearning != null &&
+    topMetricLearning.actionKind !== topActionPlan.recommended;
   const shouldBiasToBundle =
     recommendedBundleChoice != null &&
-    (recommendedBundleChoice.score >= 8 ||
+    (dayMode.preferBundle ||
+      recommendedBundleChoice.score >= 8 ||
       (recommendedBundleLearning != null &&
         recommendedBundleLearning.score > 1 &&
         recommendedBundleLearning.resolved >= 2));
@@ -2971,10 +3216,10 @@ export function HeysHealthPanel() {
               )}
               <span className="text-[11px] text-zinc-400">
                 {shouldBiasToBundle && recommendedBundle
-                  ? `автопилот уже видит силу связки «${recommendedBundle.label}»`
+                  ? `${dayMode.label}: автопилот тянет в связку «${recommendedBundle.label}»`
                   : effectiveTopRecommendation === "slot"
-                  ? `автопилот подберёт окно для «${topActionPlan.slot.title}»`
-                  : `автопилот поставит задачу «${topActionPlan.task.title}»`}
+                  ? `${dayMode.label}: автопилот подберёт окно для «${topActionPlan.slot.title}»`
+                  : `${dayMode.label}: автопилот поставит задачу «${topActionPlan.task.title}»`}
               </span>
               {topMetricLearning && (
                 <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(topMetricLearning.score > 0 ? "good" : "warn")}`}>
@@ -3024,6 +3269,50 @@ export function HeysHealthPanel() {
                 {actionFeedback.text}
               </span>
             )}
+          </div>
+        </div>
+      </div>
+
+      <div className={`mb-3 rounded-xl border p-3 ${toneCardClass(dayMode.tone)}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Режим дня</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h4 className="text-sm font-semibold text-zinc-100">{dayMode.label}</h4>
+              <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(dayMode.tone)}`}>
+                фокус: {getMetricEmoji(dayMode.focusMetricKey)} {getMetricLabel(dayMode.focusMetricKey)}
+              </span>
+              <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-400">
+                {dayMode.preferBundle
+                  ? "compound-first"
+                  : dayMode.forceActionKind === "slot"
+                    ? "windows-first"
+                    : "execution-safe"}
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-zinc-300">{dayMode.summary}</p>
+            <p className="mt-2 text-[12px] leading-5 text-zinc-400">{dayMode.detail}</p>
+          </div>
+
+          <div className="max-w-md space-y-2">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Почему сейчас</p>
+            <div className="flex flex-wrap gap-2">
+              {dayMode.reasons.length > 0 ? (
+                dayMode.reasons.map((reason) => (
+                  <span
+                    key={reason}
+                    className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(dayMode.tone)}`}
+                  >
+                    {reason}
+                  </span>
+                ))
+              ) : (
+                <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-400">
+                  режим пока без жёстких флагов
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] leading-5 text-zinc-400">{dayMode.calendarStrategy}</p>
           </div>
         </div>
       </div>
@@ -3336,6 +3625,9 @@ export function HeysHealthPanel() {
             <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3">
               <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Следующее действие</p>
               <p className="mt-1 text-sm leading-6 text-zinc-200">{selectedMetric.drilldown.action}</p>
+              <p className="mt-2 text-[11px] leading-5 text-zinc-400">
+                Общий режим сейчас — {dayMode.label}: {dayMode.calendarStrategy}
+              </p>
               {selectedMetricLearning && (
                 <p className="mt-2 text-[11px] leading-5 text-zinc-400">
                   По этой метрике у тебя лучше всего срабатывают {getActionKindLabel(selectedMetricLearning.actionKind)} — {selectedMetricLearning.improved}/{selectedMetricLearning.resolved} улучшений.
