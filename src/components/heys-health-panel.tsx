@@ -48,6 +48,7 @@ type MetricDefinition = {
 };
 
 type MetricActionPlan = {
+  recommended: "task" | "slot";
   task: {
     title: string;
     priority: TaskPriority;
@@ -327,6 +328,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
   switch (metricKey) {
     case "sleep":
       return {
+        recommended: "slot",
         task: {
           title: "Защитить вечерний shutdown и сон",
           priority: "p1",
@@ -343,6 +345,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "bedtime":
       return {
+        recommended: "slot",
         task: {
           title: "Сдвинуть подготовку ко сну на 15 минут раньше",
           priority: "p1",
@@ -359,6 +362,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "steps":
       return {
+        recommended: "slot",
         task: {
           title: "Добавить 2 walking windows по 10–15 минут",
           priority: "p1",
@@ -375,6 +379,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "training":
       return {
+        recommended: "slot",
         task: {
           title: "Защитить тренировочный слот на неделе",
           priority: "p2",
@@ -393,6 +398,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "weight":
       return {
+        recommended: "task",
         task: {
           title: "Собрать мягкий контур: сон + шаги + еда",
           priority: "p2",
@@ -409,6 +415,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "mood":
       return {
+        recommended: "task",
         task: {
           title: "Сделать короткий review и телесный reset",
           priority: "p2",
@@ -425,6 +432,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "wellbeing":
       return {
+        recommended: "slot",
         task: {
           title: "Облегчить день и защитить recovery",
           priority: "p1",
@@ -441,6 +449,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "water":
       return {
+        recommended: "slot",
         task: {
           title: "Поставить 2 water checkpoints",
           priority: "p2",
@@ -457,6 +466,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     case "stress":
       return {
+        recommended: "slot",
         task: {
           title: "Снизить шум и добавить recovery-слот",
           priority: "p1",
@@ -473,6 +483,7 @@ function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {
       };
     default:
       return {
+        recommended: "task",
         task: {
           title: "Проверить сигнал HEYS и превратить его в действие",
           priority: "p2",
@@ -1082,13 +1093,15 @@ export function HeysHealthPanel() {
     metrics.find((metric) => metric.key === selectedMetricKey) ??
     metrics.find((metric) => metric.key === defaultMetricKey) ??
     metrics[0]!;
+  const topMetric = metrics.find((metric) => metric.key === defaultMetricKey) ?? metrics[0]!;
+  const topActionPlan = getMetricActionPlan(topMetric.key);
   const selectedActionPlan = getMetricActionPlan(selectedMetric.key);
 
-  function handleCreateTaskAction(): void {
-    const dueDate = todayDateKey(selectedActionPlan.task.dueOffset ?? 0);
+  function createTaskFromPlan(plan: MetricActionPlan): void {
+    const dueDate = todayDateKey(plan.task.dueOffset ?? 0);
     const existing = getTasks().find(
       (task) =>
-        task.title === selectedActionPlan.task.title &&
+        task.title === plan.task.title &&
         task.dueDate === dueDate &&
         (task.status === "active" || task.status === "inbox"),
     );
@@ -1096,52 +1109,69 @@ export function HeysHealthPanel() {
     if (existing) {
       setActionFeedback({
         tone: "info",
-        text: `Такая задача уже есть: ${selectedActionPlan.task.title}`,
+        text: `Такая задача уже есть: ${plan.task.title}`,
       });
       return;
     }
 
-    addTask(selectedActionPlan.task.title, {
-      priority: selectedActionPlan.task.priority,
+    addTask(plan.task.title, {
+      priority: plan.task.priority,
       dueDate,
-      status: selectedActionPlan.task.priority === "p1" ? "active" : "inbox",
+      status: plan.task.priority === "p1" ? "active" : "inbox",
     });
 
-    setActionFeedback({ tone: "success", text: selectedActionPlan.task.success });
+    setActionFeedback({ tone: "success", text: plan.task.success });
   }
 
-  function handleCreateSlotAction(): void {
+  function createSlotFromPlan(plan: MetricActionPlan): void {
     const date = resolveSlotDate(
-      selectedActionPlan.slot.start,
-      selectedActionPlan.slot.dateOffset ?? 0,
+      plan.slot.start,
+      plan.slot.dateOffset ?? 0,
     );
 
     const existing = getCustomEvents(date).find(
       (event) =>
-        event.title === selectedActionPlan.slot.title &&
-        event.start === selectedActionPlan.slot.start &&
-        event.end === selectedActionPlan.slot.end,
+        event.title === plan.slot.title &&
+        event.start === plan.slot.start &&
+        event.end === plan.slot.end,
     );
 
     if (existing) {
       setActionFeedback({
         tone: "info",
-        text: `Такой слот уже есть: ${selectedActionPlan.slot.title}`,
+        text: `Такой слот уже есть: ${plan.slot.title}`,
       });
       return;
     }
 
     addCustomEvent({
       date,
-      start: selectedActionPlan.slot.start,
-      end: selectedActionPlan.slot.end,
-      title: selectedActionPlan.slot.title,
-      tone: selectedActionPlan.slot.tone,
-      tags: selectedActionPlan.slot.tags,
+      start: plan.slot.start,
+      end: plan.slot.end,
+      title: plan.slot.title,
+      tone: plan.slot.tone,
+      tags: plan.slot.tags,
       kind: "event",
     });
 
-    setActionFeedback({ tone: "success", text: selectedActionPlan.slot.success });
+    setActionFeedback({ tone: "success", text: plan.slot.success });
+  }
+
+  function handleCreateTaskAction(): void {
+    createTaskFromPlan(selectedActionPlan);
+  }
+
+  function handleCreateSlotAction(): void {
+    createSlotFromPlan(selectedActionPlan);
+  }
+
+  function handleApplyRecommendation(): void {
+    if (topActionPlan.recommended === "slot") {
+      createSlotFromPlan(topActionPlan);
+      return;
+    }
+
+    createTaskFromPlan(topActionPlan);
   }
 
   return (
@@ -1177,11 +1207,44 @@ export function HeysHealthPanel() {
               {actionState.title}
             </p>
             <p className="mt-1 text-sm text-zinc-100">{actionState.detail}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleApplyRecommendation}
+                className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                  actionState.tone === "critical"
+                    ? "border-rose-400/35 bg-rose-500/15 text-rose-100 hover:border-rose-300/60"
+                    : actionState.tone === "watch"
+                      ? "border-amber-400/35 bg-amber-500/15 text-amber-100 hover:border-amber-300/60"
+                      : "border-emerald-400/35 bg-emerald-500/15 text-emerald-100 hover:border-emerald-300/60"
+                }`}
+              >
+                ✨ Применить рекомендацию
+              </button>
+              <span className="text-[11px] text-zinc-400">
+                {topActionPlan.recommended === "slot"
+                  ? `создаст слот «${topActionPlan.slot.title}»`
+                  : `создаст задачу «${topActionPlan.task.title}»`}
+              </span>
+            </div>
             <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-zinc-500">
               Кликни по метрике ниже, чтобы раскрыть контекст и следующий шаг.
             </p>
           </div>
-          <p className="max-w-md text-[11px] leading-5 text-zinc-400">{actionState.hint}</p>
+          <div className="max-w-md space-y-2">
+            <p className="text-[11px] leading-5 text-zinc-400">{actionState.hint}</p>
+            {actionFeedback && (
+              <span
+                className={`inline-flex rounded-full border px-2 py-1 text-[10px] ${
+                  actionFeedback.tone === "success"
+                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                    : "border-zinc-700 bg-zinc-900/50 text-zinc-300"
+                }`}
+              >
+                {actionFeedback.text}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1294,17 +1357,6 @@ export function HeysHealthPanel() {
                 >
                   🗓 Защитить слот
                 </button>
-                {actionFeedback && (
-                  <span
-                    className={`rounded-full border px-2 py-1 text-[10px] ${
-                      actionFeedback.tone === "success"
-                        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
-                        : "border-zinc-700 bg-zinc-900/50 text-zinc-300"
-                    }`}
-                  >
-                    {actionFeedback.text}
-                  </span>
-                )}
               </div>
             </div>
           </div>
