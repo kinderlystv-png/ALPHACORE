@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  formatScheduleTimeRange,
   getHeysSyncedSlotBadgeLabel,
   getScheduleSlotApprovalState,
   getScheduledTaskIds,
@@ -346,7 +347,7 @@ export function WeekPlanner({
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="flex items-center gap-2">
                                 <p className={`font-mono text-[10px] ${isCompleted ? "text-emerald-100/85" : "opacity-70"}`}>
-                                  {slot.start}–{slot.end}
+                                  {formatScheduleTimeRange(slot.start, slot.end)}
                                 </p>
                                 {requiresApproval && (
                                   <button

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekPlanner } from "@/components/week-planner";
 import {
+  formatScheduleTimeRange,
   getHeysSyncedSlotBadgeLabel,
   getScheduleSlotApprovalState,
   SCHEDULE_RULES,
@@ -155,7 +156,7 @@ export default function CalendarPage() {
                     <div className="min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <p className={`font-mono text-xs ${isCompleted ? "text-emerald-100/85" : "opacity-70"}`}>
-                          {slot.start}–{slot.end}
+                          {formatScheduleTimeRange(slot.start, slot.end)}
                         </p>
                         {requiresApproval && (
                           <button

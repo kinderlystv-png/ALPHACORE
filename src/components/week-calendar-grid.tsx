@@ -13,6 +13,8 @@ import {
 } from "@/lib/life-areas";
 import {
   addCustomEvent,
+  formatScheduleClockTime,
+  formatScheduleTimeRange,
   getScheduleSlotApprovalState,
   getHeysSyncedSlotBadgeLabel,
   getScheduledTaskIds,
@@ -458,6 +460,7 @@ type ActivePointerEdit = {
   pointerType: string;
   originClientX: number;
   originClientY: number;
+  pointerOffsetMin: number;
   originColumnIndex: number;
   originalSlot: ScheduleSlot | null;
   base: EditableSlotDraft;
@@ -857,13 +860,17 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       const baseStartMin = timeToMinutes(edit.base.start);
       const baseEndMin = timeToMinutes(edit.base.end);
       const duration = baseEndMin - baseStartMin;
-      const deltaMin = snapMinutes(((clientY - edit.originClientY) / ROW_H) * 60);
+      const pointerMin = getSnappedMinutesFromClientY(clientY);
       const targetDate = getPointerDayKey(clientX);
 
       let draft = edit.draft;
 
       if (edit.mode === "move") {
-        const nextStart = clamp(baseStartMin + deltaMin, HOUR_START * 60, HOUR_END * 60 - duration);
+        const nextStart = clamp(
+          pointerMin - edit.pointerOffsetMin,
+          HOUR_START * 60,
+          HOUR_END * 60 - duration,
+        );
         draft = {
           ...edit.base,
           date: targetDate,
@@ -873,7 +880,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       }
 
       if (edit.mode === "resize-start") {
-        const nextStart = clamp(baseStartMin + deltaMin, HOUR_START * 60, baseEndMin - MIN_SLOT_MIN);
+        const nextStart = clamp(pointerMin, HOUR_START * 60, baseEndMin - MIN_SLOT_MIN);
         draft = {
           ...edit.base,
           start: minutesToCalendarTime(nextStart),
@@ -881,7 +888,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       }
 
       if (edit.mode === "resize-end") {
-        const nextEnd = clamp(baseEndMin + deltaMin, baseStartMin + MIN_SLOT_MIN, HOUR_END * 60);
+        const nextEnd = clamp(pointerMin, baseStartMin + MIN_SLOT_MIN, HOUR_END * 60);
         draft = {
           ...edit.base,
           end: minutesToCalendarTime(nextEnd),
@@ -890,7 +897,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
       if (edit.mode === "create") {
         const anchorMin = baseStartMin;
-        const pointerMin = getSnappedMinutesFromClientY(clientY);
         const low = clamp(Math.min(anchorMin, pointerMin), HOUR_START * 60, HOUR_END * 60 - MIN_SLOT_MIN);
         const high = clamp(Math.max(anchorMin, pointerMin), low + MIN_SLOT_MIN, HOUR_END * 60);
 
@@ -939,6 +945,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             tags: ["custom"],
             kind: "task" as const,
           };
+      const baseStartMin = timeToMinutes(base.start);
+      const baseEndMin = timeToMinutes(base.end);
+      const durationMin = Math.max(baseEndMin - baseStartMin, MIN_SLOT_MIN);
+      const pointerOffsetMin = pending.slot && pending.mode === "move"
+        ? clamp(startMin - baseStartMin, 0, durationMin)
+        : 0;
 
       const next: ActivePointerEdit = {
         mode: pending.mode,
@@ -946,6 +958,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         pointerType: pending.pointerType,
         originClientX: pending.startX,
         originClientY: pending.startY,
+        pointerOffsetMin,
         originColumnIndex: Math.max(originColumnIndex, 0),
         originalSlot: pending.slot,
         base,
@@ -1951,7 +1964,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
                                 <p className={`text-[10px] font-medium leading-tight ${primaryTextClass}`}>
-                                  {slot.start}–{slot.end}
+                                  {formatScheduleTimeRange(slot.start, slot.end)}
                                 </p>
                                 {requiresApproval && (
                                   <button
@@ -2049,7 +2062,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       style={{ top: draftTop, left: draftLaneMetrics.left, width: draftLaneMetrics.width, height: draftHeight, minHeight: 20 }}
                     >
                       <p className={`text-[10px] font-semibold leading-tight ${activeEdit.blocked ? "text-rose-100" : draftColor.text}`}>
-                        {activeEdit.draft.start}–{activeEdit.draft.end}
+                        {formatScheduleTimeRange(activeEdit.draft.start, activeEdit.draft.end)}
                       </p>
                       <p className={`mt-0.5 font-semibold leading-snug ${activeEdit.blocked ? "text-rose-100" : draftColor.text} ${draftLaneMetrics.isSupportLane ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
                         {activeEdit.originalSlot ? activeEdit.draft.title : "Новый слот"}
@@ -2101,7 +2114,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 }}
               >
                 <p className="text-[10px] font-semibold leading-tight text-rose-100">
-                  {targetDraft.start}–{targetDraft.end}
+                  {formatScheduleTimeRange(targetDraft.start, targetDraft.end)}
                 </p>
                 <p className="mt-0.5 truncate text-[11px] font-semibold leading-snug text-rose-100">
                   {reboundPreview.title}
@@ -2181,7 +2194,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 <div className="min-w-0">
                   <p className="truncate text-[11px] uppercase tracking-[0.16em] text-zinc-500">Быстрые команды</p>
                   <p className="truncate text-sm font-semibold text-zinc-100">{slot.title}</p>
-                  <p className="mt-0.5 text-[11px] text-zinc-400">{slot.start}–{slot.end}</p>
+                  <p className="mt-0.5 text-[11px] text-zinc-400">{formatScheduleTimeRange(slot.start, slot.end)}</p>
                   {draftProjectLabel && (
                     <p className="mt-1 inline-flex rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-200">
                       {draftProjectLabel}
@@ -2442,7 +2455,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             <div className="pointer-events-none fixed z-50" style={{ left: tooltipLeft, top: tooltipTop, width: tooltipWidth }}>
               <div className={`rounded-2xl border px-3 py-2 shadow-[0_14px_30px_rgba(0,0,0,0.28)] backdrop-blur ${tooltipColor}`}>
                 <p className="text-[11px] font-semibold tracking-[0.02em]">
-                  {activeEdit.draft.start}–{activeEdit.draft.end}
+                  {formatScheduleTimeRange(activeEdit.draft.start, activeEdit.draft.end)}
                 </p>
                 <div className="mt-1 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em]">
                   <span className={activeEdit.blocked ? "text-rose-200" : "text-zinc-400"}>
@@ -2465,7 +2478,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             </div>
 
             <div className="pointer-events-none absolute inset-0 z-20" style={{ top: headerHeight, left: 56, width: "calc(100% - 56px)", height: TOTAL_HOURS * ROW_H }}>
-              {[{ top: startTop, label: activeEdit.draft.start }, { top: endTop, label: activeEdit.draft.end }].map((guide) => (
+              {[
+                { top: startTop, label: formatScheduleClockTime(activeEdit.draft.start) },
+                { top: endTop, label: formatScheduleClockTime(activeEdit.draft.end) },
+              ].map((guide) => (
                 <div key={`${guide.label}-${guide.top}`} className="absolute left-0 right-0" style={{ top: guide.top }}>
                   <div className={`border-t border-dashed ${guideColor}`} />
                   <span className={`absolute left-2 top-0 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(0,0,0,0.18)] ${tooltipColor}`}>

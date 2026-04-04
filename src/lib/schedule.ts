@@ -626,6 +626,14 @@ export function minutesToTime(minutes: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+export function formatScheduleClockTime(time: string): string {
+  return minutesToTime(timeToMinutes(time));
+}
+
+export function formatScheduleTimeRange(start: string, end: string): string {
+  return `${formatScheduleClockTime(start)}–${formatScheduleClockTime(end)}`;
+}
+
 function addMinutes(time: string, delta: number): string {
   return minutesToTime(timeToMinutes(time) + delta);
 }
