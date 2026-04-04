@@ -130,6 +130,13 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
   return isToday && task.dueDate < today;
 }
 
+function isYesterdayUndoneTask(
+  task: Pick<Task, "dueDate" | "status">,
+  today: string,
+): boolean {
+  return task.status !== "done" && task.dueDate === shiftDateKey(today, -1);
+}
+
 function formatHour(hour: number): string {
   const displayHour = hour % 24;
   return `${String(displayHour).padStart(2, "0")}:00`;
@@ -1688,6 +1695,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 <div className="mt-1.5 flex flex-col gap-1">
                   {col.tasks.map((t) => {
                     const c = taskColor(t);
+                    const isYesterdayCarryover = isYesterdayUndoneTask(t, today);
+                    const chipTone = isYesterdayCarryover
+                      ? "border-rose-400/55 bg-linear-to-br from-rose-500/24 via-red-500/18 to-rose-950/34 text-rose-50 shadow-[0_8px_18px_rgba(127,29,29,0.24)]"
+                      : col.isPast
+                        ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
+                        : `${c.border} ${c.bg} ${c.text}`;
+
                     return (
                       <span
                         key={t.id}
@@ -1699,11 +1713,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           onDragStartTask(t.id, col.key);
                         }}
                         onDragEnd={onDragEnd}
-                        className={`block w-full truncate rounded-md border px-2 py-1 text-left text-[10px] font-medium leading-tight ${
-                          col.isPast
-                            ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
-                            : `cursor-grab ${c.border} ${c.bg} ${c.text}`
-                        }`}
+                        className={`block w-full truncate rounded-md border px-2 py-1 text-left text-[10px] font-medium leading-tight ${!col.isPast ? "cursor-grab" : ""} ${chipTone}`}
                       >
                         {t.title}
                       </span>
@@ -1782,8 +1792,19 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
             {visibleColumns.map((col) => {
+              const isYesterdayColumn = col.key === shiftDateKey(today, -1);
+
               return (
-                <div key={`overlay-${col.key}`} className={`relative ${col.isPast ? "opacity-30 grayscale" : ""}`}>
+                <div
+                  key={`overlay-${col.key}`}
+                  className={`relative ${
+                    col.isPast
+                      ? isYesterdayColumn
+                        ? "opacity-70"
+                        : "opacity-30 grayscale"
+                      : ""
+                  }`}
+                >
                   <div
                     className={`pointer-events-none absolute inset-y-0 right-0 w-px ${
                       col.isToday ? "bg-sky-400/28" : "bg-zinc-500/42"
@@ -1832,6 +1853,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const approvalState = getScheduleSlotApprovalState(slot);
                   const requiresApproval = approvalState.requiresApproval;
                   const isCompletedSlot = approvalState.isCompleted;
+                  const isYesterdayCarryoverTask = Boolean(
+                    linkedTask && isYesterdayUndoneTask(linkedTask, today) && !isCompletedSlot,
+                  );
                   const completionLabel = formatCompletionLabel(approvalState.completedAt);
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
                   const isHeysSynced = isHeysSyncedScheduleSlot(slot);
@@ -1882,12 +1906,22 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         ? "opacity-70"
                         : "opacity-0";
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
-                  const primaryTextClass = isCompletedSlot ? "text-emerald-50" : c.text;
-                  const secondaryTextClass = isCompletedSlot ? "text-emerald-100/80" : "text-zinc-500";
+                  const primaryTextClass = isCompletedSlot
+                    ? "text-emerald-50"
+                    : isYesterdayCarryoverTask
+                      ? "text-rose-50"
+                      : c.text;
+                  const secondaryTextClass = isCompletedSlot
+                    ? "text-emerald-100/80"
+                    : isYesterdayCarryoverTask
+                      ? "text-rose-100/80"
+                      : "text-zinc-500";
                   const shellTone = isChildcareBackground
                     ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
                     : isCompletedSlot
                       ? "border-emerald-400/55 bg-linear-to-br from-emerald-400/32 via-emerald-500/22 to-emerald-950/42"
+                      : isYesterdayCarryoverTask
+                        ? "border-rose-500/50 bg-linear-to-br from-rose-500/22 via-red-500/16 to-rose-950/34"
                       : `${c.border} ${c.bg}`;
                   const shellDepth = isChildcareBackground
                     ? "shadow-none"
