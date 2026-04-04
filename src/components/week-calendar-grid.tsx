@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProjectSelectManager } from "@/components/project-select-manager";
 import {
+  formatCompletionLabel,
+  getSlotAttentionState,
+  getYesterdayKey,
+  shiftDateKey,
+} from "@/lib/calendar-slot-attention";
+import {
   AREA_COLOR,
   AREA_LEGEND,
   type LifeArea,
@@ -163,12 +169,6 @@ function minutesToCalendarTime(minutes: number): string {
   const h = Math.floor(safe / 60);
   const m = safe % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function shiftDateKey(dateKey: string, days: number): string {
-  const date = new Date(`${dateKey}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return dateStr(date);
 }
 
 function copyTitle(title: string): string {
@@ -525,14 +525,6 @@ function getCompactStart(columns: DayColumn[], compactCount: number): number {
   return Math.max(0, Math.min(todayIndex - 1, columns.length - compactCount));
 }
 
-function formatCompletionLabel(completedAt?: string | null): string | null {
-  if (!completedAt) return null;
-
-  const completion = getTaskCompletionDetails({ completedAt });
-  if (!completion) return null;
-  return `подтверждено ${completion.timeLabel}`;
-}
-
 /* ── Component ── */
 
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
@@ -562,7 +554,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const reboundTimerRef = useRef<number | null>(null);
   const reboundFrameRef = useRef<number | null>(null);
   const today = todayKey();
-  const yesterdayKey = shiftDateKey(today, -1);
+  const yesterdayKey = getYesterdayKey(today);
 
   useEffect(() => {
     setAnchor(getTodayWindowAnchor());
@@ -1867,8 +1859,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const approvalState = getScheduleSlotApprovalState(slot);
                   const requiresApproval = approvalState.requiresApproval;
                   const isCompletedSlot = approvalState.isCompleted;
-                  const isYesterdayPendingSlot = isYesterdayColumn && requiresApproval && !isCompletedSlot;
-                  const isYesterdayMutedSlot = isYesterdayColumn && !isYesterdayPendingSlot;
+                  const attentionState = getSlotAttentionState({
+                    dayKey: col.key,
+                    todayKey: today,
+                    requiresApproval,
+                    isCompleted: isCompletedSlot,
+                  });
+                  const { isYesterdayPendingSlot, isYesterdayMutedSlot } = attentionState;
                   const isOverdueCarryoverTask = Boolean(
                     !isYesterdayMutedSlot && linkedTask && isOverdueUndoneTask(linkedTask, today) && !isCompletedSlot,
                   );

@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  formatCompletionLabel,
+  getSlotAttentionState,
+} from "@/lib/calendar-slot-attention";
+import {
   formatScheduleTimeRange,
   getHeysSyncedSlotBadgeLabel,
   getScheduleSlotApprovalState,
@@ -26,15 +30,6 @@ const TASK_PRIO_CLS: Record<Task["priority"], string> = {
   p2: "border-amber-500/30 bg-amber-500/10 text-amber-300",
   p3: "border-zinc-700 bg-zinc-800/60 text-zinc-400",
 };
-
-function formatCompletionLabel(completedAt?: string | null): string | null {
-  if (!completedAt) return null;
-
-  const value = new Date(completedAt);
-  if (Number.isNaN(value.getTime())) return null;
-
-  return `подтверждено ${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
-}
 
 type WeekPlannerProps = {
   anchorDate?: Date | string;
@@ -128,12 +123,6 @@ function dayHint(dayKey: string, todayKey: string): string | null {
   return null;
 }
 
-function shiftDateKey(dateKey: string, days: number): string {
-  const date = new Date(`${dateKey}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
 function taskBelongsToDay(task: Task, dayKey: string, todayKey: string, isToday: boolean): boolean {
   if (!task.dueDate) {
     return isToday && task.status === "active";
@@ -153,7 +142,6 @@ export function WeekPlanner({
   const [version, setVersion] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
   const todayKey = dateStr();
-  const yesterdayKey = useMemo(() => shiftDateKey(todayKey, -1), [todayKey]);
 
   useEffect(() => {
     setIsHydrated(true);
@@ -343,10 +331,13 @@ export function WeekPlanner({
                         const approvalState = getScheduleSlotApprovalState(slot);
                         const requiresApproval = approvalState.requiresApproval;
                         const isCompleted = approvalState.isCompleted;
-                        const isYesterdayDay = day.key === yesterdayKey;
-                        const isPendingSlot = requiresApproval && !isCompleted;
-                        const isYesterdayPendingSlot = isYesterdayDay && isPendingSlot;
-                        const isYesterdayMutedSlot = isYesterdayDay && !isYesterdayPendingSlot;
+                        const attentionState = getSlotAttentionState({
+                          dayKey: day.key,
+                          todayKey,
+                          requiresApproval,
+                          isCompleted,
+                        });
+                        const { isYesterdayPendingSlot, isYesterdayMutedSlot } = attentionState;
                         const completionLabel = formatCompletionLabel(approvalState.completedAt);
                         const shellCls = isYesterdayPendingSlot
                           ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"

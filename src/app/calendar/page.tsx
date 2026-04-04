@@ -5,6 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekPlanner } from "@/components/week-planner";
 import {
+  formatCompletionLabel,
+  getSlotAttentionState,
+} from "@/lib/calendar-slot-attention";
+import {
   formatScheduleTimeRange,
   getHeysSyncedSlotBadgeLabel,
   getScheduleSlotApprovalState,
@@ -19,27 +23,11 @@ import {
 } from "@/lib/schedule";
 import { subscribeAppDataChange } from "@/lib/storage";
 
-function formatCompletionLabel(completedAt?: string | null): string | null {
-  if (!completedAt) return null;
-
-  const value = new Date(completedAt);
-  if (Number.isNaN(value.getTime())) return null;
-
-  return `подтверждено ${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
-}
-
-function shiftDateKey(dateKey: string, days: number): string {
-  const date = new Date(`${dateKey}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
 export default function CalendarPage() {
   const [version, setVersion] = useState(0);
   const [isHydrated, setIsHydrated] = useState(false);
   const monthDates = useMemo(() => getMonthDates(new Date()), []);
   const today = monthDates.find((item) => item.isToday)?.key ?? monthDates[0]?.key;
-  const yesterdayKey = useMemo(() => shiftDateKey(today, -1), [today]);
   const [selectedDate, setSelectedDate] = useState(today);
 
   useEffect(() => {
@@ -146,10 +134,13 @@ export default function CalendarPage() {
               const approvalState = getScheduleSlotApprovalState(slot);
               const requiresApproval = approvalState.requiresApproval;
               const isCompleted = approvalState.isCompleted;
-              const isYesterdayDay = selectedDate === yesterdayKey;
-              const isPendingSlot = requiresApproval && !isCompleted;
-              const isYesterdayPendingSlot = isYesterdayDay && isPendingSlot;
-              const isYesterdayMutedSlot = isYesterdayDay && !isYesterdayPendingSlot;
+              const attentionState = getSlotAttentionState({
+                dayKey: selectedDate,
+                todayKey: today,
+                requiresApproval,
+                isCompleted,
+              });
+              const { isYesterdayPendingSlot, isYesterdayMutedSlot } = attentionState;
               const completionLabel = formatCompletionLabel(approvalState.completedAt);
               const shellCls = isYesterdayPendingSlot
                 ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"
@@ -221,7 +212,7 @@ export default function CalendarPage() {
                         )}
                       </div>
                       <p className={`mt-1 min-w-0 text-sm font-medium ${titleCls}`}>
-                          {slot.title}
+                        {slot.title}
                       </p>
                       {completionLabel && (
                         <p className={`mt-1 text-[10px] uppercase tracking-[0.14em] ${isYesterdayMutedSlot ? "text-zinc-500" : "text-emerald-100/85"}`}>
