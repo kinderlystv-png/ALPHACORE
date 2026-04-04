@@ -187,6 +187,28 @@ type ActionCreateResult = {
   dateLabel?: string;
 };
 
+type BundleContextProfile = {
+  dateKey: string;
+  dayLoad: number;
+  parties: number;
+  cleanup: number;
+  family: number;
+  tomorrowLoad: number;
+  tomorrowParties: number;
+  isMorning: boolean;
+  isDaytime: boolean;
+  isEvening: boolean;
+  isLateEvening: boolean;
+  isWeekend: boolean;
+};
+
+type CompoundBundleChoice = {
+  bundle: CompoundActionBundle;
+  score: number;
+  reasons: string[];
+  learning: LearnedBundleStat | null;
+};
+
 function Sparkline({
   points,
   color = "sky",
@@ -761,6 +783,133 @@ function getCompoundActionBundles(): CompoundActionBundle[] {
 
 function getRecommendedCompoundAction(metricKey: MetricKey): CompoundActionBundle | null {
   return getCompoundActionBundles().find((bundle) => bundle.appliesTo.includes(metricKey)) ?? null;
+}
+
+function buildBundleContextProfile(): BundleContextProfile {
+  const dateKey = todayDateKey();
+  const todayLoad = getDayLoad(dateKey);
+  const tomorrowLoad = getDayLoad(todayDateKey(1));
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+
+  return {
+    dateKey,
+    dayLoad: todayLoad.score,
+    parties: todayLoad.parties,
+    cleanup: todayLoad.cleanup,
+    family: todayLoad.family,
+    tomorrowLoad: tomorrowLoad.score,
+    tomorrowParties: tomorrowLoad.parties,
+    isMorning: minutes < 12 * 60,
+    isDaytime: minutes >= 12 * 60 && minutes < 17 * 60,
+    isEvening: minutes >= 17 * 60 && minutes < 21 * 60,
+    isLateEvening: minutes >= 21 * 60,
+    isWeekend: [0, 6].includes(now.getDay()),
+  };
+}
+
+function scoreCompoundActionBundle(
+  bundle: CompoundActionBundle,
+  metricKey: MetricKey,
+  context: BundleContextProfile,
+  learning: LearnedBundleStat | null,
+): CompoundBundleChoice {
+  let score = 4;
+  const reasons: string[] = [];
+
+  if (learning) {
+    score += Math.max(-2, Math.min(4, learning.score));
+    if (learning.improved > 0) {
+      reasons.push(`история ${learning.improved}/${learning.resolved}`);
+    }
+  }
+
+  switch (bundle.id) {
+    case "sleep-hydration-reset":
+      if (["sleep", "bedtime", "water"].includes(metricKey)) score += 3;
+      if (context.isEvening || context.isLateEvening) {
+        score += 3;
+        reasons.push("вечернее окно");
+      }
+      if (context.dayLoad >= 9 || context.cleanup > 0 || context.parties > 0) {
+        score += 2;
+        reasons.push("день плотный");
+      }
+      if (context.isMorning) score -= 1;
+      break;
+    case "movement-recovery-pair":
+      if (["steps", "wellbeing", "stress", "training"].includes(metricKey)) score += 3;
+      if (context.isMorning || context.isDaytime) {
+        score += 2;
+        reasons.push("можно встроить движение днём");
+      }
+      if (context.dayLoad >= 10 || context.parties > 0) {
+        score -= 2;
+      }
+      if (context.cleanup > 0) score -= 1;
+      break;
+    case "review-shutdown-pair":
+      if (metricKey === "mood" || metricKey === "stress" || metricKey === "bedtime") score += 3;
+      if (context.isEvening || context.isLateEvening) {
+        score += 3;
+        reasons.push("время мягко закрыть день");
+      }
+      if (context.dayLoad >= 8) {
+        score += 1;
+        reasons.push("много шума за день");
+      }
+      if (context.isMorning) score -= 2;
+      break;
+    case "weight-rhythm-pair":
+      if (metricKey === "weight") score += 4;
+      if (context.isDaytime || context.isMorning) {
+        score += 1;
+      }
+      if (context.dayLoad <= 7 && context.tomorrowLoad <= 9) {
+        score += 2;
+        reasons.push("есть шанс стабилизировать ритм");
+      }
+      if (context.parties > 1 || context.cleanup > 0) score -= 2;
+      break;
+  }
+
+  if (context.isWeekend && bundle.id === "sleep-hydration-reset") {
+    score += 1;
+    reasons.push("выходной recovery");
+  }
+
+  if (context.isLateEvening && bundle.id !== "sleep-hydration-reset" && bundle.id !== "review-shutdown-pair") {
+    score -= 1;
+  }
+
+  return {
+    bundle,
+    score,
+    reasons: reasons.slice(0, 3),
+    learning,
+  };
+}
+
+function getRankedCompoundActionBundles(
+  metricKey: MetricKey,
+  context: BundleContextProfile,
+  stats: LearnedBundleStat[],
+): CompoundBundleChoice[] {
+  return getCompoundActionBundles()
+    .filter((bundle) => bundle.appliesTo.includes(metricKey))
+    .map((bundle) =>
+      scoreCompoundActionBundle(
+        bundle,
+        metricKey,
+        context,
+        getPreferredBundleStat(bundle.id, stats),
+      ),
+    )
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        (right.learning?.improved ?? 0) - (left.learning?.improved ?? 0),
+    );
 }
 
 function makeBundleRunId(): string {
@@ -2409,8 +2558,6 @@ export function HeysHealthPanel() {
   const topMetric = metrics.find((metric) => metric.key === defaultMetricKey) ?? metrics[0]!;
   const topActionPlan = getMetricActionPlan(topMetric.key);
   const selectedActionPlan = getMetricActionPlan(selectedMetric.key);
-  const recommendedBundle = getRecommendedCompoundAction(topMetric.key);
-  const selectedBundle = getRecommendedCompoundAction(selectedMetric.key);
   const learningStats = buildLearningStats(
     tasks,
     customEvents,
@@ -2423,19 +2570,29 @@ export function HeysHealthPanel() {
     days,
     snapshot.profile?.weightGoal,
   );
+  const bundleContext = buildBundleContextProfile();
+  const recommendedBundleChoices = getRankedCompoundActionBundles(
+    topMetric.key,
+    bundleContext,
+    bundleLearningStats,
+  );
+  const selectedBundleChoices = getRankedCompoundActionBundles(
+    selectedMetric.key,
+    bundleContext,
+    bundleLearningStats,
+  );
+  const recommendedBundleChoice = recommendedBundleChoices[0] ?? null;
+  const selectedBundleChoice = selectedBundleChoices[0] ?? null;
+  const recommendedBundle = recommendedBundleChoice?.bundle ?? null;
+  const selectedBundle = selectedBundleChoice?.bundle ?? null;
   const topMetricLearning = getPreferredLearningForMetric(topMetric.key, learningStats);
   const selectedMetricLearning = getPreferredLearningForMetric(selectedMetric.key, learningStats);
-  const recommendedBundleLearning = getPreferredBundleStat(
-    recommendedBundle?.id,
-    bundleLearningStats,
-  );
-  const selectedBundleLearning = getPreferredBundleStat(
-    selectedBundle?.id,
-    bundleLearningStats,
-  );
+  const recommendedBundleLearning = recommendedBundleChoice?.learning ?? null;
+  const selectedBundleLearning = selectedBundleChoice?.learning ?? null;
   const learnedBundleHighlights = bundleLearningStats
     .filter((stat) => stat.improved > 0 && stat.resolved > 0)
     .slice(0, 3);
+  const recommendedBundleAlternatives = recommendedBundleChoices.slice(1, 3);
   const learnedHighlights = learningStats
     .filter((stat) => stat.improved > 0 && stat.resolved > 0)
     .slice(0, 3);
@@ -2443,10 +2600,11 @@ export function HeysHealthPanel() {
   const isLearnedOverride =
     topMetricLearning != null && topMetricLearning.actionKind !== topActionPlan.recommended;
   const shouldBiasToBundle =
-    recommendedBundle != null &&
-    recommendedBundleLearning != null &&
-    recommendedBundleLearning.score > 1 &&
-    recommendedBundleLearning.resolved >= 2;
+    recommendedBundleChoice != null &&
+    (recommendedBundleChoice.score >= 8 ||
+      (recommendedBundleLearning != null &&
+        recommendedBundleLearning.score > 1 &&
+        recommendedBundleLearning.resolved >= 2));
   const weeklySlotOptions =
     effectiveTopRecommendation === "slot"
       ? getAutopilotSlotOptions(topMetric.key, topActionPlan).slice(0, 3)
@@ -2850,6 +3008,9 @@ export function HeysHealthPanel() {
                 Compound layer: рядом доступна связка «{recommendedBundle.label}». {recommendedBundleLearning
                   ? `По ней уже есть ${recommendedBundleLearning.improved}/${recommendedBundleLearning.resolved} улучшений — ${getConfidenceLabel(recommendedBundleLearning.confidence)}.`
                   : "Это новый уровень рычага: статистика по связке начнёт копиться после первых применений."}
+                {recommendedBundleChoice?.reasons.length
+                  ? ` Почему сейчас: ${recommendedBundleChoice.reasons.join(" · ")}.`
+                  : ""}
               </p>
             )}
             {actionFeedback && (
@@ -2884,6 +3045,18 @@ export function HeysHealthPanel() {
                   </span>
                 ))}
               </div>
+              {recommendedBundleChoice?.reasons.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {recommendedBundleChoice.reasons.map((reason) => (
+                    <span
+                      key={reason}
+                      className="rounded-full border border-sky-500/15 bg-sky-500/8 px-2 py-1 text-[10px] text-sky-100"
+                    >
+                      {reason}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className="max-w-sm space-y-2">
@@ -2899,6 +3072,13 @@ export function HeysHealthPanel() {
                   ? `Связка уже дала ${recommendedBundleLearning.improved} улучшений из ${recommendedBundleLearning.resolved} закрытых циклов — ${getConfidenceLabel(recommendedBundleLearning.confidence)}.`
                   : "Пока это новый compound move: после первых прогонов панель начнёт оценивать его как отдельный рычаг."}
               </p>
+              {recommendedBundleAlternatives.length > 0 && (
+                <p className="text-[11px] leading-5 text-zinc-500">
+                  Альтернативы: {recommendedBundleAlternatives
+                    .map((choice) => choice.bundle.label.toLowerCase())
+                    .join(" · ")}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -3166,6 +3346,9 @@ export function HeysHealthPanel() {
                   Связка для этой метрики: «{selectedBundle.label}». {selectedBundleLearning
                     ? `${selectedBundleLearning.improved}/${selectedBundleLearning.resolved} прогонов уже дали улучшение.`
                     : "Пока без истории, но можно начать копить сигнал уже сейчас."}
+                  {selectedBundleChoice?.reasons.length
+                    ? ` Контекст: ${selectedBundleChoice.reasons.join(" · ")}.`
+                    : ""}
                 </p>
               )}
 
