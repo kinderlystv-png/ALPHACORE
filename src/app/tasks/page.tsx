@@ -44,6 +44,18 @@ const STATUS_CLS: Record<string, string> = {
   done: "border-zinc-700 bg-zinc-800/50 text-zinc-500",
 };
 
+const PRIORITY_SWITCH_LABEL: Record<Task["priority"], string> = {
+  p1: "P1",
+  p2: "P2",
+  p3: "P3",
+};
+
+const PRIORITY_SWITCH_HINT: Record<Task["priority"], string> = {
+  p1: "Супер срочно",
+  p2: "Важно",
+  p3: "Можно позже",
+};
+
 const PROJECT_BADGE_CLS: Record<ProjectAccent, string> = {
   sky: "border-sky-500/30 bg-sky-500/10 text-sky-300",
   orange: "border-orange-500/30 bg-orange-500/10 text-orange-300",
@@ -318,6 +330,14 @@ export default function TasksPage() {
         projectId: project?.id,
         project: project?.name,
       });
+      reload();
+    },
+    [reload],
+  );
+
+  const handleSetPriority = useCallback(
+    (id: string, priority: Task["priority"]) => {
+      updateTask(id, { priority });
       reload();
     },
     [reload],
@@ -682,6 +702,31 @@ export default function TasksPage() {
                               suggestedAccent="violet"
                               size="sm"
                             />
+                            <div className="flex min-h-8 items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 px-1 py-1">
+                              {(["p1", "p2", "p3"] as const).map((priority) => {
+                                const isActive = task.priority === priority;
+
+                                return (
+                                  <button
+                                    key={priority}
+                                    type="button"
+                                    onClick={() => handleSetPriority(task.id, priority)}
+                                    title={PRIORITY_SWITCH_HINT[priority]}
+                                    aria-pressed={isActive}
+                                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition ${
+                                      isActive
+                                        ? PRIO_CLS[priority]
+                                        : "border-zinc-800 bg-zinc-900/70 text-zinc-500 hover:border-zinc-700 hover:text-zinc-200"
+                                    }`}
+                                  >
+                                    {PRIORITY_SWITCH_LABEL[priority]}
+                                  </button>
+                                );
+                              })}
+                              <span className="hidden pl-1 text-[10px] text-zinc-500 sm:inline">
+                                {task.priority === "p1" ? "Супер срочно" : "priority"}
+                              </span>
+                            </div>
                           </div>
                         )}
                       </div>
