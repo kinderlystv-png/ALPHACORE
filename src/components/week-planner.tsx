@@ -22,9 +22,9 @@ import {
 } from "@/lib/tasks";
 
 const TASK_PRIO_CLS: Record<Task["priority"], string> = {
-  p1: "border-rose-500/30 bg-rose-500/10 text-rose-300",
-  p2: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  p3: "border-zinc-700 bg-zinc-800/60 text-zinc-400",
+  p1: "border-zinc-600/80 bg-zinc-800/80 text-zinc-100",
+  p2: "border-zinc-700/80 bg-zinc-800/70 text-zinc-300",
+  p3: "border-zinc-800 bg-zinc-900/60 text-zinc-500",
 };
 
 function formatCompletionLabel(completedAt?: string | null): string | null {
@@ -88,7 +88,7 @@ function taskDueMeta(task: Task, todayKey: string): { label: string; cls: string
   if (!task.dueDate) {
     return {
       label: "active без даты",
-      cls: "border-sky-500/20 bg-sky-500/10 text-sky-300",
+      cls: "border-zinc-700/80 bg-zinc-900/65 text-zinc-300",
     };
   }
 
@@ -97,27 +97,27 @@ function taskDueMeta(task: Task, todayKey: string): { label: string; cls: string
   if (diff < 0) {
     return {
       label: `хвост ${Math.abs(diff)} д.`,
-      cls: "border-rose-500/30 bg-rose-500/10 text-rose-300",
+      cls: "border-zinc-700/80 bg-zinc-900/65 text-zinc-300",
     };
   }
 
   if (diff === 0) {
     return {
       label: "сегодня",
-      cls: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+      cls: "border-zinc-600/80 bg-zinc-800/75 text-zinc-200",
     };
   }
 
   if (diff === 1) {
     return {
       label: "завтра",
-      cls: "border-amber-500/20 bg-amber-500/5 text-amber-300",
+      cls: "border-zinc-700/80 bg-zinc-900/65 text-zinc-300",
     };
   }
 
   return {
     label: `${diff} д.`,
-    cls: "border-zinc-700 bg-zinc-800/60 text-zinc-400",
+    cls: "border-zinc-700/80 bg-zinc-900/60 text-zinc-400",
   };
 }
 
@@ -337,16 +337,29 @@ export function WeekPlanner({
                         const approvalState = getScheduleSlotApprovalState(slot);
                         const requiresApproval = approvalState.requiresApproval;
                         const isCompleted = approvalState.isCompleted;
+                        const isPendingSlot = requiresApproval && !isCompleted;
                         const completionLabel = formatCompletionLabel(approvalState.completedAt);
+                        const shellCls = isPendingSlot
+                          ? "border-rose-500/60 bg-linear-to-br from-rose-500/30 via-red-500/22 to-rose-950/42 text-rose-50 shadow-[0_10px_24px_rgba(127,29,29,0.28)]"
+                          : isCompleted
+                            ? "border-zinc-700/80 bg-zinc-900/72 text-zinc-300"
+                            : `${SCHEDULE_TONE_CLS[slot.tone]} opacity-60`;
+                        const timeCls = isPendingSlot ? "text-rose-100/85" : "text-zinc-500";
+                        const titleCls = isPendingSlot
+                          ? "text-rose-50"
+                          : isCompleted
+                            ? "text-zinc-400 line-through decoration-zinc-500/40 opacity-85"
+                            : "text-zinc-300";
+                        const subtitleCls = isPendingSlot ? "text-rose-100/75" : "text-zinc-500";
 
                         return (
                           <div
                             key={slot.id}
-                            className={`rounded-xl border px-3 py-2 ${isCompleted ? "border-emerald-400/50 bg-linear-to-br from-emerald-400/28 via-emerald-500/18 to-emerald-950/38 text-emerald-50" : SCHEDULE_TONE_CLS[slot.tone]}`}
+                            className={`rounded-xl border px-3 py-2 ${shellCls}`}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="flex items-center gap-2">
-                                <p className={`font-mono text-[10px] ${isCompleted ? "text-emerald-100/85" : "opacity-70"}`}>
+                                <p className={`font-mono text-[10px] ${timeCls}`}>
                                   {formatScheduleTimeRange(slot.start, slot.end)}
                                 </p>
                                 {requiresApproval && (
@@ -358,8 +371,8 @@ export function WeekPlanner({
                                     }}
                                     className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
                                       isCompleted
-                                        ? "border-emerald-200/70 bg-emerald-50/16 text-emerald-50 hover:border-emerald-100/80 hover:bg-emerald-50/22"
-                                        : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                                        ? "border-zinc-600/80 bg-zinc-900/85 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                                        : "border-rose-200/40 bg-black/20 text-rose-50 hover:border-rose-100/70 hover:bg-black/30"
                                     }`}
                                     aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
                                     title={isCompleted ? "Снять подтверждение" : "Подтвердить выполнение"}
@@ -368,7 +381,7 @@ export function WeekPlanner({
                                   </button>
                                 )}
                               </div>
-                              <div className="flex items-center gap-1.5">
+                              <div className={`flex items-center gap-1.5 ${isPendingSlot ? "" : "opacity-70"}`}>
                                 {heysBadgeLabel && (
                                   <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-orange-200">
                                     {heysBadgeLabel}
@@ -376,14 +389,14 @@ export function WeekPlanner({
                                 )}
                               </div>
                             </div>
-                            <p className={`mt-1 text-xs font-medium leading-snug ${isCompleted ? "text-emerald-50 line-through decoration-emerald-100/45 opacity-90" : ""}`}>{slot.title}</p>
+                            <p className={`mt-1 text-xs font-medium leading-snug ${titleCls}`}>{slot.title}</p>
                             {completionLabel && (
-                              <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-emerald-100/85">
+                              <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-zinc-500">
                                 {completionLabel}
                               </p>
                             )}
                             {slot.subtitle && (
-                              <p className="mt-1 line-clamp-2 text-[10px] opacity-70">
+                              <p className={`mt-1 line-clamp-2 text-[10px] ${subtitleCls}`}>
                                 {slot.subtitle}
                               </p>
                             )}

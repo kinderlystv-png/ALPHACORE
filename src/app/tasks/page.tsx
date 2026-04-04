@@ -109,6 +109,13 @@ type PrioritySwitchProps = {
   size?: "sm" | "md";
 };
 
+type QuickProjectFilterBarProps = {
+  value: string;
+  projects: Project[];
+  quickProjects: Project[];
+  onChange: (value: string) => void;
+};
+
 function pluralizeTasks(count: number): string {
   const mod10 = count % 10;
   const mod100 = count % 100;
@@ -238,6 +245,127 @@ function PrioritySwitch({ value, onChange, size = "sm" }: PrioritySwitchProps) {
   );
 }
 
+function QuickProjectFilterBar({
+  value,
+  projects,
+  quickProjects,
+  onChange,
+}: QuickProjectFilterBarProps) {
+  const [showAll, setShowAll] = useState(false);
+
+  const visibleQuickProjects = useMemo(() => {
+    const seen = new Set<string>();
+    const shortlist = quickProjects.filter((project) => {
+      if (seen.has(project.id)) return false;
+      seen.add(project.id);
+      return true;
+    });
+
+    const selectedProject = projects.find((project) => project.id === value);
+    if (selectedProject && !seen.has(selectedProject.id)) {
+      shortlist.push(selectedProject);
+    }
+
+    return shortlist;
+  }, [projects, quickProjects, value]);
+
+  const hasExtraProjects = projects.length > visibleQuickProjects.length;
+  const baseBtnCls =
+    "rounded-xl border px-3 py-2 text-xs transition";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onChange("all")}
+          aria-pressed={value === "all"}
+          className={`${baseBtnCls} ${
+            value === "all"
+              ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+              : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+          }`}
+        >
+          Все проекты
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onChange("none")}
+          aria-pressed={value === "none"}
+          className={`${baseBtnCls} ${
+            value === "none"
+              ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+              : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+          }`}
+        >
+          Без проекта
+        </button>
+
+        {visibleQuickProjects.map((project) => {
+          const isActive = value === project.id;
+
+          return (
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => onChange(project.id)}
+              aria-pressed={isActive}
+              className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
+                isActive
+                  ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+                  : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+              }`}
+            >
+              <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
+              <span className="truncate">{project.name}</span>
+            </button>
+          );
+        })}
+
+        {hasExtraProjects && (
+          <button
+            type="button"
+            onClick={() => setShowAll((current) => !current)}
+            aria-expanded={showAll}
+            className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
+          >
+            {showAll ? "Скрыть список" : "Показать все"}
+          </button>
+        )}
+      </div>
+
+      {hasExtraProjects && showAll && (
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-zinc-800/70 bg-zinc-950/30 p-2.5">
+          {projects.map((project) => {
+            const isActive = value === project.id;
+
+            return (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => {
+                  onChange(project.id);
+                  setShowAll(false);
+                }}
+                aria-pressed={isActive}
+                className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
+                  isActive
+                    ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+                    : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+                }`}
+              >
+                <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
+                <span className="truncate">{project.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function dueBadge(due?: string): { cls: string; label: string } | null {
   if (!due) return null;
   const now = new Date();
@@ -332,7 +460,7 @@ export default function TasksPage() {
     [projects],
   );
 
-  const composerQuickProjects = useMemo(() => {
+  const popularProjects = useMemo(() => {
     const usage = new Map<string, { total: number; open: number; priorityLoad: number }>();
 
     for (const project of projects) {
@@ -582,58 +710,68 @@ export default function TasksPage() {
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="space-y-2">
           <input
             ref={inputRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => event.key === "Enter" && handleAdd()}
             placeholder="Новая задача…"
-            className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
+            className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
           />
-          <div className="min-w-0 flex-[1.2_1_24rem]">
-            <ProjectSelectManager
-              value={newTaskProjectId}
-              projects={projects}
-              quickProjects={composerQuickProjects}
-              onChange={setNewTaskProjectId}
-              onProjectsMutate={(projectId) => {
-                reload();
-                setNewTaskProjectId(projectId);
-              }}
-              creationContextLabel="выбора проекта в задаче"
-              suggestedAccent="violet"
-              size="md"
+
+          <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_auto_minmax(11rem,12rem)_auto] xl:items-start">
+            <div className="min-w-0">
+              <ProjectSelectManager
+                value={newTaskProjectId}
+                projects={projects}
+                quickProjects={popularProjects}
+                onChange={setNewTaskProjectId}
+                onProjectsMutate={(projectId) => {
+                  reload();
+                  setNewTaskProjectId(projectId);
+                }}
+                creationContextLabel="выбора проекта в задаче"
+                suggestedAccent="violet"
+                size="md"
+              />
+            </div>
+
+            <div className="justify-self-start">
+              <PrioritySwitch value={prio} onChange={(priority) => setPrio(priority)} size="md" />
+            </div>
+
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(event) => setDueDate(event.target.value)}
+              className="scheme-dark min-h-10 w-full rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none"
             />
+
+            <div className="flex flex-wrap items-stretch gap-2 xl:justify-self-end">
+              <button
+                type="button"
+                onClick={() => handleAdd()}
+                className="rounded-xl bg-zinc-50 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
+                title="Добавить задачу в список"
+                aria-label="Добавить задачу в список"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAdd("done")}
+                className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200 transition hover:border-amber-400/40 hover:bg-amber-500/15"
+                title="Зафиксировать как завершённый слот на текущее время — дата не учитывается"
+                aria-label="Добавить сразу в выполненные"
+              >
+                +⚡
+              </button>
+            </div>
           </div>
-          <PrioritySwitch value={prio} onChange={(priority) => setPrio(priority)} size="md" />
-          <input
-            type="date"
-            value={dueDate}
-            onChange={(event) => setDueDate(event.target.value)}
-            className="scheme-dark rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => handleAdd()}
-            className="rounded-xl bg-zinc-50 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
-            title="Добавить задачу в список"
-            aria-label="Добавить задачу в список"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={() => handleAdd("done")}
-            className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200 transition hover:border-amber-400/40 hover:bg-amber-500/15"
-            title="Зафиксировать как завершённый слот на текущее время — дата не учитывается"
-            aria-label="Добавить сразу в выполненные"
-          >
-            +⚡
-          </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-2">
           <div className="flex gap-1.5 overflow-x-auto">
             {FILTERS.map((item) => (
               <button
@@ -652,19 +790,12 @@ export default function TasksPage() {
             ))}
           </div>
 
-          <select
+          <QuickProjectFilterBar
             value={projectFilter}
-            onChange={(event) => setProjectFilter(event.target.value)}
-            className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-xs text-zinc-300 outline-none"
-          >
-            <option value="all">Все проекты</option>
-            <option value="none">Без проекта</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
+            projects={projects}
+            quickProjects={popularProjects}
+            onChange={setProjectFilter}
+          />
         </div>
 
         <div className="space-y-3">
