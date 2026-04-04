@@ -46,7 +46,10 @@ const HOUR_START = 5; // 05:00
 const HOUR_END = 24; // 00:00 next day
 const TOTAL_HOURS = HOUR_END - HOUR_START; // 19
 const ROW_H = 56; // px per hour row
-const HEADER_H = 66; // compact column header height
+const HEADER_BASE_H = 66; // day/date header height without day tasks
+const HEADER_TASK_ROW_H = 24;
+const HEADER_TASK_GAP = 4;
+const HEADER_TASK_MARGIN_TOP = 6;
 const STEP_MIN = 30;
 const MIN_SLOT_MIN = 30;
 const DEFAULT_CUSTOM_DURATION_MIN = 60;
@@ -583,21 +586,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     [projects],
   );
 
-  // center current-time line on first render / when returning to today
-  useEffect(() => {
-    if (!shouldCenterNow) return;
-
-    const hasTodayColumn = days.some((day) => dateStr(day) === today);
-    if (!hasTodayColumn) return;
-
-    const frame = requestAnimationFrame(() => {
-      centerNowLine(gridRef.current);
-      setShouldCenterNow(false);
-    });
-
-    return () => cancelAnimationFrame(frame);
-  }, [days, shouldCenterNow, today]);
-
   const columns = useMemo<DayColumn[]>(() => {
     const tasks = getActionableTasks(today);
 
@@ -658,6 +646,32 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     overlayGridRef.current?.getBoundingClientRect().width ??
     Math.max(visibleGridWidth - 56, visibleColumns.length * 120);
   const overlayColumnWidth = visibleColumns.length > 0 ? overlayWidth / visibleColumns.length : 120;
+  const maxHeaderTaskCount = useMemo(
+    () => visibleColumns.reduce((max, column) => Math.max(max, column.tasks.length), 0),
+    [visibleColumns],
+  );
+  const headerHeight =
+    HEADER_BASE_H +
+    (maxHeaderTaskCount > 0
+      ? HEADER_TASK_MARGIN_TOP +
+        maxHeaderTaskCount * HEADER_TASK_ROW_H +
+        Math.max(0, maxHeaderTaskCount - 1) * HEADER_TASK_GAP
+      : 0);
+
+  // center current-time line on first render / when returning to today
+  useEffect(() => {
+    if (!shouldCenterNow) return;
+
+    const hasTodayColumn = days.some((day) => dateStr(day) === today);
+    if (!hasTodayColumn) return;
+
+    const frame = requestAnimationFrame(() => {
+      centerNowLine(gridRef.current, headerHeight);
+      setShouldCenterNow(false);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [days, headerHeight, shouldCenterNow, today]);
 
   const visibleWindowLabel = useMemo(() => {
     if (visibleColumns.length === 0) return "";
@@ -1608,7 +1622,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           {/* ── Column headers ── */}
           <div
             className="sticky top-0 z-30 border-b border-r border-zinc-800/50 bg-zinc-950"
-            style={{ height: HEADER_H }}
+            style={{ height: headerHeight }}
           />
           {visibleColumns.map((col) => (
             <div
@@ -1624,7 +1638,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               } ${
                 col.isToday ? "border-r-sky-400/35" : "border-r-zinc-700/70"
               }`}
-              style={{ height: HEADER_H }}
+              style={{ height: headerHeight }}
               onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
               onDragLeave={!col.isPast ? onDragLeave : undefined}
               onDrop={(e) => !col.isPast && onDropToDayHeader(e, col.key)}
@@ -1658,8 +1672,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
               {/* All-day tasks */}
               {col.tasks.length > 0 && (
-                <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden" style={{ maxHeight: 22 }}>
-                  {col.tasks.slice(0, 2).map((t) => {
+                <div className="mt-1.5 flex flex-col gap-1">
+                  {col.tasks.map((t) => {
                     const c = taskColor(t);
                     return (
                       <span
@@ -1672,7 +1686,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           onDragStartTask(t.id, col.key);
                         }}
                         onDragEnd={onDragEnd}
-                        className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-[9px] font-medium ${
+                        className={`block w-full truncate rounded-md border px-2 py-1 text-left text-[10px] font-medium leading-tight ${
                           col.isPast
                             ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
                             : `cursor-grab ${c.border} ${c.bg} ${c.text}`
@@ -1682,9 +1696,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       </span>
                     );
                   })}
-                  {col.tasks.length > 2 && (
-                    <span className="text-[9px] text-zinc-600">+{col.tasks.length - 2}</span>
-                  )}
                 </div>
               )}
 
@@ -1746,7 +1757,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           ref={overlayGridRef}
           className="pointer-events-none absolute z-10 overflow-hidden"
           style={{
-            top: HEADER_H,
+            top: headerHeight,
             left: 56,
             width: "calc(100% - 56px)",
             height: TOTAL_HOURS * ROW_H,
@@ -2453,7 +2464,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               </div>
             </div>
 
-            <div className="pointer-events-none absolute inset-0 z-20" style={{ top: HEADER_H, left: 56, width: "calc(100% - 56px)", height: TOTAL_HOURS * ROW_H }}>
+            <div className="pointer-events-none absolute inset-0 z-20" style={{ top: headerHeight, left: 56, width: "calc(100% - 56px)", height: TOTAL_HOURS * ROW_H }}>
               {[{ top: startTop, label: activeEdit.draft.start }, { top: endTop, label: activeEdit.draft.end }].map((guide) => (
                 <div key={`${guide.label}-${guide.top}`} className="absolute left-0 right-0" style={{ top: guide.top }}>
                   <div className={`border-t border-dashed ${guideColor}`} />
@@ -2501,10 +2512,10 @@ function calcNowTop(): number {
   return ((mins - HOUR_START * 60) / 60) * ROW_H;
 }
 
-function centerNowLine(container: HTMLDivElement | null) {
+function centerNowLine(container: HTMLDivElement | null, headerHeight: number) {
   if (!container) return;
 
-  const rowViewportHeight = Math.max(container.clientHeight - HEADER_H, 0);
+  const rowViewportHeight = Math.max(container.clientHeight - headerHeight, 0);
   const rawTarget = calcNowTop() - rowViewportHeight / 2;
   const maxScroll = Math.max(container.scrollHeight - container.clientHeight, 0);
   const nextScrollTop = Math.min(Math.max(rawTarget, 0), maxScroll);
