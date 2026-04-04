@@ -1,4 +1,4 @@
-import { lsGet, lsSet } from "./storage";
+import { lsGet, lsSet, uid } from "./storage";
 import {
   addTask,
   deleteTask,
@@ -713,6 +713,9 @@ export type CustomEvent = {
 
 const CUSTOM_KEY = "alphacore_schedule_custom";
 const OVERRIDE_KEY = "alphacore_schedule_overrides";
+const CUSTOM_EVENT_ID_PREFIX = "custom-";
+
+let customEventNormalizationScheduled = false;
 
 function loadOverrides(): ScheduleOverride[] {
   return lsGet<ScheduleOverride[]>(OVERRIDE_KEY, []);
@@ -777,7 +780,14 @@ function upsertOverride(
 }
 
 function loadCustomEvents(): CustomEvent[] {
-  return lsGet<CustomEvent[]>(CUSTOM_KEY, []);
+  const events = lsGet<CustomEvent[]>(CUSTOM_KEY, []);
+  const normalized = normalizeCustomEvents(events);
+
+  if (normalized.changed) {
+    scheduleCustomEventNormalization();
+  }
+
+  return normalized.events;
 }
 
 function saveCustomEvents(events: CustomEvent[]): void {
@@ -786,6 +796,108 @@ function saveCustomEvents(events: CustomEvent[]): void {
 
 function isTaskLikeCustomEvent(event: Pick<CustomEvent, "kind">): boolean {
   return event.kind !== "event";
+}
+
+function createCustomEventId(): string {
+  return `${CUSTOM_EVENT_ID_PREFIX}${uid()}`;
+}
+
+function sanitizeCustomIdChunk(value: string | null | undefined, fallback: string): string {
+  const normalized = (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .slice(0, 18);
+
+  return normalized || fallback;
+}
+
+function createDeterministicLegacyCustomEventId(
+  event: CustomEvent,
+  duplicateIndex: number,
+): string {
+  const base = sanitizeCustomIdChunk(
+    event.id?.startsWith(CUSTOM_EVENT_ID_PREFIX)
+      ? event.id.slice(CUSTOM_EVENT_ID_PREFIX.length)
+      : event.id,
+    "legacy",
+  );
+  const date = sanitizeCustomIdChunk(event.date, "date");
+  const start = sanitizeCustomIdChunk(event.start, "0000");
+  const end = sanitizeCustomIdChunk(event.end, "0000");
+  const title = sanitizeCustomIdChunk(event.title, "slot");
+
+  return `${CUSTOM_EVENT_ID_PREFIX}${base}${date}${start}${end}${title}${duplicateIndex.toString(36)}`;
+}
+
+function normalizeCustomEvents(events: CustomEvent[]): {
+  events: CustomEvent[];
+  changed: boolean;
+} {
+  const seenEventIds = new Set<string>();
+  const seenTaskIds = new Set<string>();
+  const duplicateCounts = new Map<string, number>();
+  let changed = false;
+
+  const normalizedEvents = events.map((event) => {
+    const originalId = event.id?.trim() ?? "";
+    const occurrence = duplicateCounts.get(originalId) ?? 0;
+    duplicateCounts.set(originalId, occurrence + 1);
+
+    let nextId = originalId;
+    let dedupeIndex = occurrence;
+
+    if (!nextId || seenEventIds.has(nextId)) {
+      do {
+        nextId = createDeterministicLegacyCustomEventId(event, dedupeIndex);
+        dedupeIndex += 1;
+      } while (seenEventIds.has(nextId));
+
+      changed = true;
+    }
+
+    const nextEvent: CustomEvent = nextId === event.id ? event : { ...event, id: nextId };
+    seenEventIds.add(nextEvent.id);
+
+    if (!isTaskLikeCustomEvent(nextEvent)) {
+      return nextEvent;
+    }
+
+    const originalTaskId = nextEvent.taskId?.trim() ?? "";
+    const taskIdShouldTrackEventId = !originalTaskId || originalTaskId === originalId;
+    let nextTaskId = taskIdShouldTrackEventId ? nextEvent.id : originalTaskId;
+
+    if (!nextTaskId || seenTaskIds.has(nextTaskId)) {
+      nextTaskId = nextEvent.id;
+    }
+
+    if (nextTaskId !== (nextEvent.taskId ?? "")) {
+      changed = true;
+      nextEvent.taskId = nextTaskId;
+    }
+
+    seenTaskIds.add(nextTaskId);
+    return nextEvent;
+  });
+
+  return {
+    events: normalizedEvents,
+    changed,
+  };
+}
+
+function scheduleCustomEventNormalization(): void {
+  if (typeof window === "undefined" || customEventNormalizationScheduled) return;
+
+  customEventNormalizationScheduled = true;
+  window.setTimeout(() => {
+    customEventNormalizationScheduled = false;
+
+    const latest = lsGet<CustomEvent[]>(CUSTOM_KEY, []);
+    const normalized = normalizeCustomEvents(latest);
+    if (!normalized.changed) return;
+
+    saveCustomEvents(normalized.events.map((event) => syncCustomEventTask(event)));
+  }, 0);
 }
 
 function defaultCustomEventTaskPriority(_event: Pick<CustomEvent, "tone">): TaskPriority {
@@ -848,7 +960,7 @@ export function getScheduledTaskIds(dateKey?: string): string[] {
 
 export function addCustomEvent(event: Omit<CustomEvent, "id">): CustomEvent {
   const events = loadCustomEvents();
-  const id = `custom-${Date.now().toString(36)}`;
+  const id = createCustomEventId();
   const full = syncCustomEventTask({
     id,
     createdAt: new Date().toISOString(),
