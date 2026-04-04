@@ -30,6 +30,7 @@ import {
   type AttentionArea,
   type AttentionLevel,
 } from "@/lib/agent-control";
+import { getMetricLabel } from "@/lib/heys-day-mode";
 import { activeHabits, getChecks, streak, todayStr } from "@/lib/habits";
 import { getJournalEntries } from "@/lib/journal";
 import { getEntries as getMedicalEntries } from "@/lib/medical";
@@ -55,6 +56,15 @@ const LEVEL_PILL_CLS: Record<AttentionLevel, string> = {
   watch: "border-amber-500/20 bg-amber-500/10 text-amber-300",
   critical: "border-rose-500/20 bg-rose-500/10 text-rose-300",
 };
+
+type DayModeTone = NonNullable<AgentControlSnapshot["heysDayMode"]>["tone"];
+
+function getDayModePillCls(tone: DayModeTone): string {
+  if (tone === "good") return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+  if (tone === "warn") return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  if (tone === "bad") return "border-rose-500/20 bg-rose-500/10 text-rose-300";
+  return "border-zinc-800 bg-zinc-900/60 text-zinc-300";
+}
 
 const STATUS_LABEL: Record<RecommendationStatus, string> = {
   new: "новое",
@@ -938,6 +948,24 @@ export function AgentControlPanel({
         <div className="max-w-3xl">
           <h2 className="text-lg font-semibold text-zinc-50">🧭 Agent cockpit</h2>
           <p className="mt-1 text-sm text-zinc-400">{snapshot.modeStatement}</p>
+          {snapshot.heysDayMode && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className={`rounded-full border px-2.5 py-1 text-[10px] ${getDayModePillCls(snapshot.heysDayMode.tone)}`}>
+                {snapshot.heysDayMode.label}
+              </span>
+              <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
+                фокус: {getMetricLabel(snapshot.heysDayMode.focusMetricKey).toLowerCase()}
+              </span>
+              {snapshot.heysDayMode.reasons.slice(0, 2).map((reason) => (
+                <span
+                  key={reason}
+                  className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400"
+                >
+                  {reason}
+                </span>
+              ))}
+            </div>
+          )}
           <p className="mt-3 text-sm text-zinc-300">{snapshot.narrative}</p>
 
           {inlineFlash && (

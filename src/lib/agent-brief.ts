@@ -6,6 +6,7 @@
  */
 
 import type { AgentControlSnapshot } from "./agent-control";
+import { getMetricLabel } from "./heys-day-mode";
 
 function todayLabel(): string {
   const d = new Date();
@@ -41,6 +42,23 @@ function getHeysSectionLines(
   return [...head, ...heysEvidence].slice(0, mode === "brief" ? 3 : 4);
 }
 
+function getDayModeLines(snapshot: AgentControlSnapshot): string[] {
+  if (!snapshot.heysDayMode) return [];
+
+  const mode = snapshot.heysDayMode;
+  const lines = [
+    `${mode.label} → фокус на ${getMetricLabel(mode.focusMetricKey).toLowerCase()}`,
+    mode.summary,
+  ];
+
+  if (mode.reasons.length > 0) {
+    lines.push(`Почему: ${mode.reasons.join(" · ")}`);
+  }
+
+  lines.push(`Как вести день: ${mode.calendarStrategy}`);
+  return lines;
+}
+
 export function generateMorningBrief(snapshot: AgentControlSnapshot): string {
   const lines: string[] = [];
 
@@ -49,6 +67,15 @@ export function generateMorningBrief(snapshot: AgentControlSnapshot): string {
   lines.push("");
   lines.push(snapshot.modeStatement);
   lines.push("");
+
+  const dayModeLines = getDayModeLines(snapshot);
+  if (dayModeLines.length > 0) {
+    lines.push("🧭 Режим дня:");
+    for (const line of dayModeLines) {
+      lines.push(`  • ${line}`);
+    }
+    lines.push("");
+  }
 
   // Critical / watch areas
   const critical = snapshot.areas.filter((a) => a.level === "critical");
@@ -101,6 +128,15 @@ export function generateEveningReview(snapshot: AgentControlSnapshot): string {
   lines.push(`🌙 Вечерний review — ${todayLabel()}`);
   lines.push(`Баланс: ${snapshot.balanceScore}/100`);
   lines.push("");
+
+  const dayModeLines = getDayModeLines(snapshot);
+  if (dayModeLines.length > 0) {
+    lines.push("🧭 В каком режиме прошёл день:");
+    for (const line of dayModeLines) {
+      lines.push(`  • ${line}`);
+    }
+    lines.push("");
+  }
 
   // All areas with scores
   lines.push("Состояние зон:");

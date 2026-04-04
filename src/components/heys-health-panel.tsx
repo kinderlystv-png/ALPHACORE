@@ -19,21 +19,19 @@ import {
 } from "@/lib/tasks";
 import { useHeysSync } from "@/lib/use-heys-sync";
 import type { HeysDayRecord, HeysHealthSignals } from "@/lib/heys-bridge";
+import {
+  buildBundleContextProfile,
+  getDefaultMetricKey,
+  getHeysDayMode,
+  type BundleContextProfile,
+  type DayMode,
+  type HeysMetricKey as MetricKey,
+} from "@/lib/heys-day-mode";
 
 /* ── Sparkline ── */
 
 type SparkPoint = { value: number; date: string };
 type MetricStatus = "good" | "warn" | "bad";
-type MetricKey =
-  | "sleep"
-  | "bedtime"
-  | "steps"
-  | "training"
-  | "weight"
-  | "mood"
-  | "wellbeing"
-  | "water"
-  | "stress";
 
 type DrilldownStat = {
   label: string;
@@ -185,37 +183,6 @@ type ActionCreateResult = {
   status: "created" | "existing";
   title: string;
   dateLabel?: string;
-};
-
-type BundleContextProfile = {
-  dateKey: string;
-  dayLoad: number;
-  parties: number;
-  cleanup: number;
-  family: number;
-  tomorrowLoad: number;
-  tomorrowParties: number;
-  isMorning: boolean;
-  isDaytime: boolean;
-  isEvening: boolean;
-  isLateEvening: boolean;
-  isWeekend: boolean;
-};
-
-type DayModeId = "execution" | "recovery" | "damage-control" | "light-rhythm";
-
-type DayMode = {
-  id: DayModeId;
-  label: string;
-  tone: MetricStatus | "neutral";
-  summary: string;
-  detail: string;
-  focusMetricKey: MetricKey;
-  reasons: string[];
-  calendarStrategy: string;
-  forceActionKind: "task" | "slot" | null;
-  preferBundle: boolean;
-  bundleBiasIds: string[];
 };
 
 type CompoundBundleChoice = {
@@ -799,206 +766,6 @@ function getCompoundActionBundles(): CompoundActionBundle[] {
 
 function getRecommendedCompoundAction(metricKey: MetricKey): CompoundActionBundle | null {
   return getCompoundActionBundles().find((bundle) => bundle.appliesTo.includes(metricKey)) ?? null;
-}
-
-function pushUniqueReason(reasons: string[], text: string | null): void {
-  if (!text || reasons.includes(text)) return;
-  reasons.push(text);
-}
-
-function getDayModeFocusMetricKey(
-  modeId: DayModeId,
-  h: HeysHealthSignals,
-  fallbackMetricKey: MetricKey,
-  sleepGoal: number | null | undefined,
-): MetricKey {
-  const weightGap =
-    h.weightCurrent != null && h.weightGoal != null
-      ? h.weightCurrent - h.weightGoal
-      : null;
-  const sleepGap =
-    h.sleepHoursAvg != null
-      ? Math.max(0, (sleepGoal ?? 8) - h.sleepHoursAvg)
-      : 0;
-
-  switch (modeId) {
-    case "damage-control":
-      if ((h.stressAvg ?? 0) > 5) return "stress";
-      if ((h.wellbeingAvg ?? 10) < 6) return "wellbeing";
-      if ((h.lateBedtimeRatio ?? 0) > 0.7) return "bedtime";
-      if ((h.waterAvg ?? 0) < 1500) return "water";
-      return fallbackMetricKey;
-    case "recovery":
-      if ((h.lateBedtimeRatio ?? 0) > 0.65) return "bedtime";
-      if (sleepGap > 0.6) return "sleep";
-      if ((h.waterAvg ?? 0) < 1600) return "water";
-      if ((h.wellbeingAvg ?? 10) < 6.6) return "wellbeing";
-      return fallbackMetricKey;
-    case "execution":
-      if (h.trainingDaysWeek < 3) return "training";
-      if (weightGap != null && weightGap > 4) return "weight";
-      if ((h.stepsGoalRatio ?? 1) < 0.9) return "steps";
-      if (fallbackMetricKey === "sleep" || fallbackMetricKey === "bedtime") {
-        return "training";
-      }
-      return fallbackMetricKey;
-    case "light-rhythm":
-      if ((h.stepsGoalRatio ?? 1) < 0.85) return "steps";
-      if ((h.waterAvg ?? 0) < 1800) return "water";
-      if ((h.stressAvg ?? 0) > 4) return "stress";
-      return fallbackMetricKey;
-    default:
-      return fallbackMetricKey;
-  }
-}
-
-function getHeysDayMode(
-  h: HeysHealthSignals,
-  context: BundleContextProfile,
-  fallbackMetricKey: MetricKey,
-  sleepGoal: number | null | undefined,
-): DayMode {
-  const lateRatio = h.lateBedtimeRatio ?? 0;
-  const sleepHours = h.sleepHoursAvg ?? sleepGoal ?? 7.5;
-  const sleepGap = Math.max(0, (sleepGoal ?? 8) - sleepHours);
-  const wellbeing = h.wellbeingAvg ?? 7;
-  const stress = h.stressAvg ?? 3;
-  const sleepQuality = h.sleepQualityAvg ?? 6;
-  const water = h.waterAvg ?? 1800;
-  const stepsRatio = h.stepsGoalRatio ?? 1;
-  const overloadedDay = context.dayLoad >= 10 || context.parties > 0 || context.cleanup > 0;
-  const reasons: string[] = [];
-
-  pushUniqueReason(reasons, lateRatio > 0.7 ? `${Math.round(lateRatio * 100)}% поздних отходов` : null);
-  pushUniqueReason(reasons, sleepGap > 0.6 ? `сон ниже цели на ${fmtNum(sleepGap)}ч` : null);
-  pushUniqueReason(reasons, wellbeing < 6.6 ? `самочувствие ${fmtNum(wellbeing)}/10` : null);
-  pushUniqueReason(reasons, stress > 4.5 ? `стресс ${fmtNum(stress)}/10` : null);
-  pushUniqueReason(reasons, water < 1600 ? `${fmtNum(water, 0)} мл воды` : null);
-  pushUniqueReason(reasons, context.dayLoad >= 9 ? "день уже плотный" : null);
-  pushUniqueReason(reasons, context.parties > 0 ? "есть party-нагрузка" : null);
-  pushUniqueReason(reasons, context.cleanup > 0 ? "есть cleanup-слоты" : null);
-
-  if (!h.hasRecentData) {
-    return {
-      id: "light-rhythm",
-      label: "Light rhythm",
-      tone: "neutral",
-      summary: "HEYS ещё собирает базу, поэтому день лучше вести мягко, без ложной уверенности.",
-      detail: "Пока сигнал сырой, автопилот удерживает лёгкий ритм и не разгоняет лишние commitments на пустом месте.",
-      focusMetricKey: fallbackMetricKey,
-      reasons: ["мало свежих check-in", "лучше не разгонять план вслепую"],
-      calendarStrategy: "Ставить только мягкие якоря ритма и дождаться более плотного HEYS-сигнала.",
-      forceActionKind: "slot",
-      preferBundle: false,
-      bundleBiasIds: ["movement-recovery-pair"],
-    };
-  }
-
-  if (
-    ((wellbeing < 5.8 || stress > 5.5 || sleepQuality < 4.5) && overloadedDay) ||
-    ((lateRatio > 0.82 || sleepGap > 1) && stress > 5) ||
-    (wellbeing < 5.4 && sleepQuality < 5)
-  ) {
-    return {
-      id: "damage-control",
-      label: "Damage control",
-      tone: "bad",
-      summary: "Сегодня не hero mode: сначала нужно снять шум и удержать базу, иначе день начнёт разваливаться сам.",
-      detail: "Автопилот будет тянуть в защитные окна и короткие reset-связки, а не в ещё одну тяжёлую задачу поверх перегруза.",
-      focusMetricKey: getDayModeFocusMetricKey("damage-control", h, fallbackMetricKey, sleepGoal),
-      reasons: reasons.slice(0, 3),
-      calendarStrategy: "Срезать лишний шум, защитить recovery-окно и only then решать, что из execution вообще нужно спасать.",
-      forceActionKind: "slot",
-      preferBundle: true,
-      bundleBiasIds: ["sleep-hydration-reset", "review-shutdown-pair"],
-    };
-  }
-
-  if (
-    lateRatio > 0.65 ||
-    sleepGap > 0.6 ||
-    wellbeing < 6.6 ||
-    water < 1600 ||
-    stress > 4.5
-  ) {
-    return {
-      id: "recovery",
-      label: "Recovery mode",
-      tone: "warn",
-      summary: "База держится тонко: день лучше строить вокруг восстановления, а не вокруг силы воли.",
-      detail: "Автопилот будет предпочитать защищённые окна и compound-мувы, которые мягко выправляют ритм без лишнего давления.",
-      focusMetricKey: getDayModeFocusMetricKey("recovery", h, fallbackMetricKey, sleepGoal),
-      reasons: reasons.slice(0, 3),
-      calendarStrategy: "Защищать сон, воду, прогулку и recovery, а тяжёлые обещания переносить только после стабилизации фона.",
-      forceActionKind: "slot",
-      preferBundle: true,
-      bundleBiasIds: ["sleep-hydration-reset", "movement-recovery-pair"],
-    };
-  }
-
-  if (
-    wellbeing >= 7 &&
-    stress <= 3.5 &&
-    sleepQuality >= 6 &&
-    lateRatio < 0.45 &&
-    stepsRatio >= 0.75
-  ) {
-    const executionReasons: string[] = [];
-    pushUniqueReason(executionReasons, `самочувствие ${fmtNum(wellbeing)}/10`);
-    pushUniqueReason(executionReasons, `стресс ${fmtNum(stress)}/10`);
-    pushUniqueReason(executionReasons, `${Math.round(stepsRatio * 100)}% шаговой базы`);
-
-    return {
-      id: "execution",
-      label: "Execution mode",
-      tone: "good",
-      summary: "Тело держит базу, поэтому сегодня можно давать нормальный execution без лишней цены для recovery.",
-      detail: "Автопилот не выключает ритм, но уже может работать на прогресс: training, steps и долгие контуры вместо аварийных reset-действий.",
-      focusMetricKey: getDayModeFocusMetricKey("execution", h, fallbackMetricKey, sleepGoal),
-      reasons: executionReasons.slice(0, 3),
-      calendarStrategy: "Можно брать полезные execution-шаги, пока хотя бы один якорь сна и recovery остаётся защищённым.",
-      forceActionKind: null,
-      preferBundle: false,
-      bundleBiasIds: ["movement-recovery-pair", "weight-rhythm-pair"],
-    };
-  }
-
-  return {
-    id: "light-rhythm",
-    label: "Light rhythm",
-    tone: "neutral",
-    summary: "День не аварийный, но и не тот случай, где стоит резко разгонять систему.",
-    detail: "Автопилот держит мягкий ритм: короткие окна, умеренная нагрузка и без лишнего hero mode там, где ещё нет запаса.",
-    focusMetricKey: getDayModeFocusMetricKey("light-rhythm", h, fallbackMetricKey, sleepGoal),
-    reasons: reasons.slice(0, 3),
-    calendarStrategy: "Держать день лёгким, распределять действия по неделе и не превращать средний фон в лишний стресс.",
-    forceActionKind: "slot",
-    preferBundle: false,
-    bundleBiasIds: ["movement-recovery-pair", "weight-rhythm-pair"],
-  };
-}
-
-function buildBundleContextProfile(): BundleContextProfile {
-  const dateKey = todayDateKey();
-  const todayLoad = getDayLoad(dateKey);
-  const tomorrowLoad = getDayLoad(todayDateKey(1));
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
-
-  return {
-    dateKey,
-    dayLoad: todayLoad.score,
-    parties: todayLoad.parties,
-    cleanup: todayLoad.cleanup,
-    family: todayLoad.family,
-    tomorrowLoad: tomorrowLoad.score,
-    tomorrowParties: tomorrowLoad.parties,
-    isMorning: minutes < 12 * 60,
-    isDaytime: minutes >= 12 * 60 && minutes < 17 * 60,
-    isEvening: minutes >= 17 * 60 && minutes < 21 * 60,
-    isLateEvening: minutes >= 21 * 60,
-    isWeekend: [0, 6].includes(now.getDay()),
-  };
 }
 
 function scoreCompoundActionBundle(
@@ -2002,14 +1769,6 @@ function getConfidenceLabel(confidence: LearnedActionStat["confidence"]): string
   if (confidence === "high") return "уверенно";
   if (confidence === "medium") return "уже видно";
   return "пока тонко";
-}
-
-function getDefaultMetricKey(h: HeysHealthSignals): MetricKey {
-  if (h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7) return "bedtime";
-  if (h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7) return "steps";
-  if ((h.wellbeingAvg ?? 10) < 6.5) return "wellbeing";
-  if ((h.waterAvg ?? 0) < 1500) return "water";
-  return "sleep";
 }
 
 function getMetricActionPlan(metricKey: MetricKey): MetricActionPlan {

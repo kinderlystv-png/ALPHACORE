@@ -14,6 +14,14 @@ import type { ScheduleSlot } from "./schedule";
 import { getScheduleForDate } from "./schedule";
 import type { StorageKey } from "./app-data-keys";
 import type { HeysHealthSignals } from "./heys-bridge";
+import {
+  buildBundleContextProfile,
+  getDayModePriorityHint,
+  getDayModeStatement,
+  getDefaultMetricKey,
+  getHeysDayMode,
+  getMetricLabel,
+} from "./heys-day-mode";
 
 // Re-export types from client module for convenience
 export type {
@@ -283,6 +291,10 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
 
   const upcomingSlots = collectUpcomingSchedule(7);
   const upcoming = getUpcomingStats(upcomingSlots);
+  const h = heys?.hasRecentData ? heys : null;
+  const heysDayMode = h
+    ? getHeysDayMode(h, buildBundleContextProfile(), getDefaultMetricKey(h), 8)
+    : null;
 
   const todayChecks: Record<string, boolean> = {};
   for (const h of DEFAULT_HABITS) {
@@ -329,7 +341,6 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
   // ── Scores ──
 
   // HEYS-enriched scoring: use real biometric data when available
-  const h = heys?.hasRecentData ? heys : null;
 
   const workScore = clamp(
     56 +
@@ -495,6 +506,11 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
       evidence: [
         ...(h
           ? [
+              ...(heysDayMode
+                ? [
+                    `HEYS: режим дня ${heysDayMode.label} → фокус ${getMetricLabel(heysDayMode.focusMetricKey).toLowerCase()}`,
+                  ]
+                : []),
               `HEYS: вес ${h.weightCurrent ?? "?"}кг (цель ${h.weightGoal ?? "?"}кг, Δ30д: ${h.weightDelta30d != null ? `${h.weightDelta30d > 0 ? "+" : ""}${h.weightDelta30d}кг` : "?"})`,
               `HEYS: настроение ${h.moodAvg ?? "?"}/10, самочувствие ${h.wellbeingAvg ?? "?"}/10, стресс ${h.stressAvg ?? "?"}/10`,
             ]
@@ -582,6 +598,11 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
       evidence: [
         ...(h
           ? [
+              ...(heysDayMode
+                ? [
+                    `HEYS: стратегия дня — ${heysDayMode.calendarStrategy}`,
+                  ]
+                : []),
               `HEYS: сон ${h.sleepHoursAvg ?? "?"}ч, качество ${h.sleepQualityAvg ?? "?"}/10`,
               `HEYS: поздний отход ко сну ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% дней`,
               `HEYS: вода ${h.waterAvg ?? "?"}мл/день`,
@@ -625,6 +646,13 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
           level: attentionProject.status === "red" ? "critical" : "watch",
           weight: attentionProject.status === "red" ? 96 : 86,
         }
+      : null,
+  );
+
+  pushPriority(
+    candidates,
+    heysDayMode
+      ? getDayModePriorityHint(heysDayMode)
       : null,
   );
 
@@ -739,12 +767,15 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
   return {
     balanceScore,
     modeStatement:
-      "Главный интерфейс — диалог с агентами в Copilot/Codex. Рассказываешь, что происходит, а агенты собирают панель и защищают приоритеты.",
+      heysDayMode
+        ? `${getDayModeStatement(heysDayMode)} Главный интерфейс — диалог с агентами: рассказываешь, что происходит, а они собирают панель и защищают приоритеты.`
+        : "Главный интерфейс — диалог с агентами в Copilot/Codex. Рассказываешь, что происходит, а агенты собирают панель и защищают приоритеты.",
     narrative:
       criticalAreas.length > 0
-        ? `Радар слепых зон: прежде всего выровнять ${criticalLabels}.`
-        : `Самые тонкие зоны — ${weakestLabels}; агенту стоит держать их в поле зрения.`,
+        ? `Радар слепых зон: прежде всего выровнять ${criticalLabels}.${heysDayMode ? ` HEYS при этом ставит день в ${heysDayMode.label} и тянет фокус к ${getMetricLabel(heysDayMode.focusMetricKey).toLowerCase()}.` : ""}`
+        : `Самые тонкие зоны — ${weakestLabels}; агенту стоит держать их в поле зрения.${heysDayMode ? ` HEYS ведёт день как ${heysDayMode.label}: ${heysDayMode.summary}` : ""}`,
     areas,
     priorities,
+    heysDayMode,
   };
 }

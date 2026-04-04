@@ -8,6 +8,15 @@ import { dateStr } from "./storage";
 import { getTasks } from "./tasks";
 import { getHeysSignals } from "./use-heys-sync";
 import type { HeysHealthSignals } from "./heys-bridge";
+import {
+  buildBundleContextProfile,
+  getDayModePriorityHint,
+  getDayModeStatement,
+  getDefaultMetricKey,
+  getHeysDayMode,
+  getMetricLabel,
+  type DayMode,
+} from "./heys-day-mode";
 
 export type AttentionAreaKey =
   | "work"
@@ -46,6 +55,7 @@ export type AgentControlSnapshot = {
   modeStatement: string;
   areas: AttentionArea[];
   priorities: AgentPriority[];
+  heysDayMode: DayMode | null;
 };
 
 type UpcomingScheduleStats = {
@@ -171,6 +181,9 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
   const h: HeysHealthSignals | null = getHeysSignals();
   const upcomingSlots = collectUpcomingSchedule(7);
   const upcoming = getUpcomingScheduleStats(upcomingSlots);
+  const heysDayMode = h
+    ? getHeysDayMode(h, buildBundleContextProfile(), getDefaultMetricKey(h), 8)
+    : null;
   const todayCleanupSlots = todaySlots.filter((slot) => slot.tone === "cleanup");
   const todayChecks = getChecks(today);
   const activeHabitsToday = DEFAULT_HABITS.filter((habit) =>
@@ -351,6 +364,11 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       evidence: [
         ...(h
           ? [
+              ...(heysDayMode
+                ? [
+                    `HEYS: режим дня ${heysDayMode.label} → фокус ${getMetricLabel(heysDayMode.focusMetricKey).toLowerCase()}`,
+                  ]
+                : []),
               `HEYS: вес ${h.weightCurrent ?? "?"}кг (цель ${h.weightGoal ?? "?"}кг, Δ30д: ${h.weightDelta30d != null ? `${h.weightDelta30d > 0 ? "+" : ""}${h.weightDelta30d}кг` : "?"})`,
               `HEYS: настроение ${h.moodAvg ?? "?"}/10, самочувствие ${h.wellbeingAvg ?? "?"}/10, стресс ${h.stressAvg ?? "?"}/10`,
             ]
@@ -452,6 +470,11 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       evidence: [
         ...(h
           ? [
+              ...(heysDayMode
+                ? [
+                    `HEYS: стратегия дня — ${heysDayMode.calendarStrategy}`,
+                  ]
+                : []),
               `HEYS: сон ${h.sleepHoursAvg ?? "?"}ч, качество ${h.sleepQualityAvg ?? "?"}/10`,
               `HEYS: поздний отход ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% дней`,
               `HEYS: вода ${h.waterAvg ?? "?"}мл/день`,
@@ -492,6 +515,13 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
           level: attentionProject.status === "red" ? "critical" : "watch",
           weight: attentionProject.status === "red" ? 96 : 86,
         }
+      : null,
+  );
+
+  pushPriority(
+    priorityCandidates,
+    heysDayMode
+      ? getDayModePriorityHint(heysDayMode)
       : null,
   );
 
@@ -608,12 +638,15 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
   return {
     balanceScore,
     modeStatement:
-      "Главный интерфейс — диалог с агентами в Copilot/Codex. Ты не ведёшь базу вручную: рассказываешь, что происходит, а агенты собирают из этого наглядную панель и защищают приоритеты.",
+      heysDayMode
+        ? `${getDayModeStatement(heysDayMode)} Главный интерфейс — диалог с агентами: ты не ведёшь базу вручную, а рассказываешь, что происходит.`
+        : "Главный интерфейс — диалог с агентами в Copilot/Codex. Ты не ведёшь базу вручную: рассказываешь, что происходит, а агенты собирают из этого наглядную панель и защищают приоритеты.",
     narrative:
       criticalAreas.length > 0
-        ? `Сейчас это не трекер, а радар слепых зон: агенту прежде всего нужно выровнять ${criticalLabels}, а уже потом наращивать скорость.`
-        : `Панель выглядит живой, когда помогает выбирать, а не заполнять. Сейчас самые тонкие зоны — ${weakestLabels}; агенту стоит держать их в поле зрения первым делом.`,
+        ? `Сейчас это не трекер, а радар слепых зон: агенту прежде всего нужно выровнять ${criticalLabels}, а уже потом наращивать скорость.${heysDayMode ? ` HEYS при этом ставит день в ${heysDayMode.label} и тянет фокус к ${getMetricLabel(heysDayMode.focusMetricKey).toLowerCase()}.` : ""}`
+        : `Панель выглядит живой, когда помогает выбирать, а не заполнять. Сейчас самые тонкие зоны — ${weakestLabels}; агенту стоит держать их в поле зрения первым делом.${heysDayMode ? ` HEYS ведёт день как ${heysDayMode.label}: ${heysDayMode.summary}` : ""}`,
     areas,
     priorities,
+    heysDayMode,
   };
 }
