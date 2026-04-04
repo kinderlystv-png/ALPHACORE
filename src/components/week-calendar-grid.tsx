@@ -6,6 +6,10 @@ import { ProjectSelectManager } from "@/components/project-select-manager";
 import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
 import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import {
+  getSlotCarryoverActions,
+  getSlotCarryoverDecision,
+} from "@/lib/calendar-slot-carryover";
+import {
   formatCompletionLabel,
   getSlotAttentionState,
   getYesterdayKey,
@@ -73,6 +77,9 @@ const QUICK_MENU_ESTIMATED_HEIGHT = 560;
 const SUPPORT_LANE_RATIO = 0.36;
 const SLOT_SIDE_INSET_PX = 4;
 const SLOT_LANE_GAP_PX = 6;
+const DESKTOP_SLOT_HINT_DELAY_MS = 3000;
+const DESKTOP_SLOT_HINT_WIDTH = 296;
+const DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT = 168;
 
 const QUICK_TONE_OPTIONS: Array<{ value: ScheduleTone; label: string }> = [
   { value: "work", label: "💼 Работа" },
@@ -421,6 +428,139 @@ function formatDurationDelta(minutes: number): string {
   return `${sign}${abs}м`;
 }
 
+type DesktopSlotHintTone = "rose" | "amber" | "sky" | "zinc";
+
+type DesktopSlotHintContent = {
+  eyebrow: string;
+  title: string;
+  summary: string;
+  detail?: string;
+  tone: DesktopSlotHintTone;
+};
+
+type DesktopSlotHintState = DesktopSlotHintContent & {
+  slotKey: string;
+  left: number;
+  top: number;
+};
+
+function getExplainabilityDesktopHint(
+  slot: Pick<ScheduleSlot, "source" | "tags">,
+  explainability: ReturnType<typeof getScheduleSlotExplainability>,
+): DesktopSlotHintContent | null {
+  if (!explainability.showBadges) {
+    return null;
+  }
+
+  const badgeLabel = [explainability.primaryBadge, explainability.secondaryBadge]
+    .filter((value): value is string => Boolean(value))
+    .join(" · ");
+
+  if (slot.source === "studio") {
+    return {
+      eyebrow: badgeLabel || "почему слот здесь",
+      title: "Фиксированное окно из schedule.xlsx",
+      summary:
+        "Это реальное событие студии. Вокруг него календарь уже достраивает семейные буферы, логистику и уборку.",
+      detail: "Якорь дня · не требует ручного подтверждения",
+      tone: "sky",
+    };
+  }
+
+  if (slot.tags.includes("between-parties")) {
+    return {
+      eyebrow: badgeLabel || "авто",
+      title: "Окно вставлено между двумя праздниками",
+      summary:
+        "Календарь увидел два события в один день и добавил операционный слот, чтобы не потерять быструю уборку между ними.",
+      detail: "Автологика по шаблону студии",
+      tone: "amber",
+    };
+  }
+
+  if (slot.tags.includes("childcare-window")) {
+    return {
+      eyebrow: badgeLabel || "авто",
+      title: "Это семейный буфер вокруг события",
+      summary:
+        "Слот появился как защитное окно под Даню и бытовую логистику, пока студия занята праздником.",
+      detail: slot.tags.includes("grandma") || slot.tags.includes("rehearsal")
+        ? "Среда · бабушка/репетиция"
+        : "Семейное покрытие вокруг студии",
+      tone: "sky",
+    };
+  }
+
+  if (slot.tags.includes("cleanup") && slot.tags.includes("studio")) {
+    return {
+      eyebrow: badgeLabel || "авто",
+      title: "Уборка поставлена правилом после праздника",
+      summary:
+        "Это не ручной ввод: cleanup-окно возникло из студийного расписания и его можно вручную сдвинуть, если жизнь уехала иначе.",
+      detail: "Derived slot · под реальный послепраздничный хвост",
+      tone: "amber",
+    };
+  }
+
+  if (slot.source === "template") {
+    return {
+      eyebrow: badgeLabel || "ритм недели",
+      title: "Это мягкий weekly-слот",
+      summary:
+        "Он задаёт базовый ритм дня и подтверждается вручную — это ориентир, а не автоматически случившийся факт.",
+      detail: "Можно двигать под реальный день",
+      tone: "zinc",
+    };
+  }
+
+  if (slot.source === "derived") {
+    return {
+      eyebrow: badgeLabel || "авто",
+      title: "Слот сгенерирован правилами календаря",
+      summary:
+        "Он появился не из ручного ввода, а из событий недели и встроенных правил, чтобы день не разваливался на скрытые хвосты.",
+      detail: "Авто-слот · можно скорректировать вручную",
+      tone: "zinc",
+    };
+  }
+
+  return null;
+}
+
+function getDesktopSlotHintContent(params: {
+  slot: Pick<ScheduleSlot, "id" | "date" | "start" | "end" | "title" | "tags" | "taskId" | "tone" | "source" | "origin">;
+  todayKey: string;
+  requiresApproval: boolean;
+  isCompleted: boolean;
+  explainability: ReturnType<typeof getScheduleSlotExplainability>;
+}): DesktopSlotHintContent | null {
+  const carryoverDecision = getSlotCarryoverDecision({
+    slot: params.slot,
+    todayKey: params.todayKey,
+    requiresApproval: params.requiresApproval,
+    isCompleted: params.isCompleted,
+  });
+
+  if (carryoverDecision) {
+    const primaryAction = getSlotCarryoverActions({
+      slot: params.slot,
+      todayKey: params.todayKey,
+      requiresApproval: params.requiresApproval,
+      isCompleted: params.isCompleted,
+    })[0];
+
+    return {
+      eyebrow: carryoverDecision.badge,
+      title: carryoverDecision.title,
+      summary: primaryAction?.hint ?? carryoverDecision.summary,
+      detail: primaryAction ? `Лучший ход: ${primaryAction.buttonLabel}` : undefined,
+      tone: carryoverDecision.tone,
+    };
+  }
+
+  return getExplainabilityDesktopHint(params.slot, params.explainability);
+}
+
 /* ── Types ── */
 
 type DayColumn = {
@@ -541,6 +681,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [edgeCue, setEdgeCue] = useState<EdgeCueState>({ top: 0, bottom: 0, left: 0, right: 0 });
   const [reboundPreview, setReboundPreview] = useState<ReboundPreview | null>(null);
   const [hoveredSlotKey, setHoveredSlotKey] = useState<string | null>(null);
+  const [desktopSlotHint, setDesktopSlotHint] = useState<DesktopSlotHintState | null>(null);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
   const [compactStart, setCompactStart] = useState(0);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
@@ -556,6 +697,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const autoScrollFrameRef = useRef<number | null>(null);
   const reboundTimerRef = useRef<number | null>(null);
   const reboundFrameRef = useRef<number | null>(null);
+  const desktopSlotHintTimerRef = useRef<number | null>(null);
+  const desktopSlotHintPendingKeyRef = useRef<string | null>(null);
   const today = todayKey();
   const yesterdayKey = getYesterdayKey(today);
 
@@ -703,6 +846,19 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const showCompactControls = viewMode === "compact" && columns.length > compactCount;
 
+  const clearDesktopSlotHintTimer = useCallback(() => {
+    if (desktopSlotHintTimerRef.current != null) {
+      window.clearTimeout(desktopSlotHintTimerRef.current);
+      desktopSlotHintTimerRef.current = null;
+    }
+    desktopSlotHintPendingKeyRef.current = null;
+  }, []);
+
+  const hideDesktopSlotHint = useCallback(() => {
+    clearDesktopSlotHintTimer();
+    setDesktopSlotHint(null);
+  }, [clearDesktopSlotHintTimer]);
+
   const cancelPendingPointerEdit = useCallback(() => {
     if (!pendingEditRef.current) return;
     window.clearTimeout(pendingEditRef.current.timerId);
@@ -710,8 +866,53 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   }, []);
 
   const closeQuickMenu = useCallback(() => {
+    hideDesktopSlotHint();
     setQuickMenu(null);
-  }, []);
+  }, [hideDesktopSlotHint]);
+
+  const scheduleDesktopSlotHint = useCallback((
+    element: HTMLElement,
+    slotKey: string,
+    content: DesktopSlotHintContent | null,
+  ) => {
+    if (!content) {
+      hideDesktopSlotHint();
+      return;
+    }
+
+    if (desktopSlotHint?.slotKey === slotKey || desktopSlotHintPendingKeyRef.current === slotKey) {
+      return;
+    }
+
+    clearDesktopSlotHintTimer();
+    setDesktopSlotHint(null);
+
+    const rect = element.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    const left = clamp(
+      rect.right + 14,
+      12,
+      Math.max(12, viewportW - DESKTOP_SLOT_HINT_WIDTH - 12),
+    );
+    const top = clamp(
+      rect.top + Math.min(rect.height * 0.25, 24),
+      12,
+      Math.max(12, viewportH - DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT - 12),
+    );
+
+    desktopSlotHintPendingKeyRef.current = slotKey;
+    desktopSlotHintTimerRef.current = window.setTimeout(() => {
+      desktopSlotHintTimerRef.current = null;
+      desktopSlotHintPendingKeyRef.current = null;
+      setDesktopSlotHint({
+        slotKey,
+        left,
+        top,
+        ...content,
+      });
+    }, DESKTOP_SLOT_HINT_DELAY_MS);
+  }, [clearDesktopSlotHintTimer, desktopSlotHint?.slotKey, hideDesktopSlotHint]);
 
   const resetEdgeCue = useCallback(() => {
     setEdgeCue((current) => (sameEdgeCue(current, { top: 0, bottom: 0, left: 0, right: 0 }) ? current : { top: 0, bottom: 0, left: 0, right: 0 }));
@@ -1163,8 +1364,23 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       if (reboundFrameRef.current != null) {
         window.cancelAnimationFrame(reboundFrameRef.current);
       }
+      clearDesktopSlotHintTimer();
     };
-  }, []);
+  }, [clearDesktopSlotHintTimer]);
+
+  useEffect(() => {
+    const container = gridRef.current;
+    if (!container) return;
+
+    const handleScroll = () => hideDesktopSlotHint();
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [hideDesktopSlotHint]);
+
+  useEffect(() => {
+    hideDesktopSlotHint();
+  }, [hideDesktopSlotHint, version, viewMode, compactStart]);
 
   const queuePointerEdit = useCallback(
     (
@@ -1177,6 +1393,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       if (slot && !isEditableScheduleSlot(slot)) return;
       if (!slot && dayKey < today) return;
 
+      hideDesktopSlotHint();
       setQuickMenu(null);
       cancelPendingPointerEdit();
 
@@ -1198,7 +1415,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
       pendingEditRef.current = { data, timerId };
     },
-    [activatePendingPointerEdit, cancelPendingPointerEdit, today],
+    [activatePendingPointerEdit, cancelPendingPointerEdit, hideDesktopSlotHint, today],
   );
 
   const openQuickMenu = useCallback((element: HTMLElement, slot: ScheduleSlot) => {
@@ -1209,6 +1426,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
 
     setHoveredSlotKey(null);
+    hideDesktopSlotHint();
     setQuickMenu({
       slot,
       top: clamp(rect.top + Math.min(rect.height, 28) + 10, 12, maxTop),
@@ -1219,7 +1437,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       draftKind: slot.kind === "event" ? "event" : "task",
       draftProjectId: getSlotProjectId(slot, linkedTask, projects),
     });
-  }, [linkedTasksById, projects]);
+  }, [hideDesktopSlotHint, linkedTasksById, projects]);
 
   const updateQuickMenuDraft = useCallback((patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone" | "draftKind" | "draftProjectId">>) => {
     setQuickMenu((current) => (current ? { ...current, ...patch } : current));
@@ -1880,6 +2098,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const isHeysSynced = isHeysSyncedScheduleSlot(slot);
                   const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
                   const explainability = getScheduleSlotExplainability(slot);
+                  const desktopHintContent = getDesktopSlotHintContent({
+                    slot,
+                    todayKey: today,
+                    requiresApproval,
+                    isCompleted: isCompletedSlot,
+                    explainability,
+                  });
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
                   const isBlockingSlot =
@@ -1984,15 +2209,22 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         e.stopPropagation();
                         queuePointerEdit("move", e, col.key, slot);
                       }}
-                      onPointerMove={() => {
-                        if (isMobileGripMode) return;
+                      onPointerEnter={(e) => {
+                        if (isMobileGripMode || e.pointerType !== "mouse") return;
                         if (hoveredSlotKey !== slotInstanceKey) {
                           setHoveredSlotKey(slotInstanceKey);
                         }
+                        scheduleDesktopSlotHint(e.currentTarget, slotInstanceKey, desktopHintContent);
                       }}
                       onPointerLeave={() => {
                         if (hoveredSlotKey === slotInstanceKey) {
                           setHoveredSlotKey(null);
+                        }
+                        if (
+                          desktopSlotHint?.slotKey === slotInstanceKey ||
+                          desktopSlotHintPendingKeyRef.current === slotInstanceKey
+                        ) {
+                          hideDesktopSlotHint();
                         }
                       }}
                       onClick={(e) => {
@@ -2609,6 +2841,59 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               ))}
             </div>
           </>
+        );
+      })()}
+
+      {desktopSlotHint && (() => {
+        const toneClass = desktopSlotHint.tone === "rose"
+          ? "border-rose-400/45 bg-rose-950/94 text-rose-50"
+          : desktopSlotHint.tone === "amber"
+            ? "border-amber-400/45 bg-amber-950/94 text-amber-50"
+            : desktopSlotHint.tone === "sky"
+              ? "border-sky-400/40 bg-zinc-950/94 text-zinc-50"
+              : "border-zinc-700/80 bg-zinc-950/94 text-zinc-50";
+        const eyebrowClass = desktopSlotHint.tone === "rose"
+          ? "text-rose-200/90"
+          : desktopSlotHint.tone === "amber"
+            ? "text-amber-200/90"
+            : desktopSlotHint.tone === "sky"
+              ? "text-sky-300/90"
+              : "text-zinc-400";
+        const summaryClass = desktopSlotHint.tone === "rose"
+          ? "text-rose-100/78"
+          : desktopSlotHint.tone === "amber"
+            ? "text-amber-100/78"
+            : "text-zinc-200/80";
+        const detailClass = desktopSlotHint.tone === "rose"
+          ? "text-rose-200/78"
+          : desktopSlotHint.tone === "amber"
+            ? "text-amber-200/78"
+            : desktopSlotHint.tone === "sky"
+              ? "text-sky-200/78"
+              : "text-zinc-400";
+
+        return (
+          <div
+            className="pointer-events-none fixed z-40"
+            style={{ left: desktopSlotHint.left, top: desktopSlotHint.top, width: DESKTOP_SLOT_HINT_WIDTH }}
+          >
+            <div className={`rounded-2xl border px-3 py-3 shadow-[0_18px_40px_rgba(0,0,0,0.35)] backdrop-blur ${toneClass}`}>
+              <p className={`text-[10px] font-medium uppercase tracking-[0.16em] ${eyebrowClass}`}>
+                {desktopSlotHint.eyebrow}
+              </p>
+              <p className="mt-1 text-[13px] font-semibold leading-5">
+                {desktopSlotHint.title}
+              </p>
+              <p className={`mt-1 text-[11px] leading-5 ${summaryClass}`}>
+                {desktopSlotHint.summary}
+              </p>
+              {desktopSlotHint.detail && (
+                <p className={`mt-2 text-[10px] leading-4 ${detailClass}`}>
+                  {desktopSlotHint.detail}
+                </p>
+              )}
+            </div>
+          </div>
         );
       })()}
     </section>
