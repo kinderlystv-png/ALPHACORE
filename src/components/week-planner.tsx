@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import {
   formatCompletionLabel,
   getSlotAttentionState,
@@ -369,6 +370,7 @@ export function WeekPlanner({
                           : isYesterdayMutedSlot
                             ? "text-zinc-500"
                             : "opacity-70";
+                        const shouldShowQuickReschedule = !isCompleted && slot.date <= todayKey;
 
                         return (
                           <div
@@ -431,6 +433,16 @@ export function WeekPlanner({
                               <p className={`mt-1 line-clamp-2 text-[10px] ${subtitleCls}`}>
                                 {slot.subtitle}
                               </p>
+                            )}
+                            {shouldShowQuickReschedule && (
+                              <SlotQuickRescheduleActions
+                                slot={slot}
+                                todayKey={todayKey}
+                                compact
+                                muted={isYesterdayMutedSlot}
+                                className="mt-2"
+                                onApplied={() => setVersion((current) => current + 1)}
+                              />
                             )}
                           </div>
                         );

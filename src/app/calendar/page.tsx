@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import { WeekPlanner } from "@/components/week-planner";
 import {
   formatCompletionLabel,
@@ -172,6 +173,7 @@ export default function CalendarPage() {
                 : isYesterdayMutedSlot
                   ? "text-zinc-500"
                   : "opacity-70";
+              const shouldShowQuickReschedule = !isCompleted && selectedDate <= today;
 
               return (
                 <div
@@ -229,6 +231,15 @@ export default function CalendarPage() {
                             </span>
                           ))}
                         </div>
+                      )}
+                      {shouldShowQuickReschedule && (
+                        <SlotQuickRescheduleActions
+                          slot={slot}
+                          todayKey={today}
+                          muted={isYesterdayMutedSlot}
+                          className="mt-3"
+                          onApplied={() => setVersion((current) => current + 1)}
+                        />
                       )}
                     </div>
                     <div className={`flex shrink-0 flex-wrap items-center gap-2 ${isYesterdayMutedSlot ? "opacity-70" : ""}`}>

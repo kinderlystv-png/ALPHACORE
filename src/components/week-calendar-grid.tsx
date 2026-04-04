@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProjectSelectManager } from "@/components/project-select-manager";
+import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
 import {
   formatCompletionLabel,
   getSlotAttentionState,
@@ -2398,6 +2399,18 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     Любой плановый слот подтверждается вручную. Фиксированные окна без чека живут отдельно и не требуют одобрения.
                   </p>
                 </div>
+              )}
+
+              {!isCompletedSlot && (
+                <SlotQuickRescheduleActions
+                  slot={slot}
+                  todayKey={today}
+                  className="mb-3"
+                  onApplied={() => {
+                    setVersion((value) => value + 1);
+                    setQuickMenu(null);
+                  }}
+                />
               )}
 
               <div className="grid grid-cols-2 gap-2">
