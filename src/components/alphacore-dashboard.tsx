@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentControlPanel } from "@/components/agent-control-panel";
 import { HabitTracker } from "@/components/habit-tracker";
+import { HeysHealthPanel } from "@/components/heys-health-panel";
 import { Pomodoro } from "@/components/pomodoro";
 import { WeekCalendarGrid } from "@/components/week-calendar-grid";
 import {
@@ -804,6 +805,9 @@ export function AlphacoreDashboard() {
       {/* ── Calendar hero + widgets grid ── */}
       <div className="space-y-5">
         <WeekCalendarGrid stats={stats} />
+
+        {/* HEYS live health panel */}
+        <HeysHealthPanel />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-12">
           {/* Quick input */}
