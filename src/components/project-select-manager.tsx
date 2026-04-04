@@ -13,6 +13,7 @@ import {
 type ProjectSelectManagerProps = {
   value: string;
   projects: Project[];
+  quickProjects?: Project[];
   onChange: (projectId: string) => void;
   onProjectsMutate?: (projectId: string) => void;
   noneLabel?: string;
@@ -25,6 +26,14 @@ type ProjectSelectManagerProps = {
 
 type ManagerMode = "create" | "rename" | null;
 
+const PROJECT_DOT_CLS: Record<ProjectAccent, string> = {
+  sky: "bg-sky-400",
+  orange: "bg-orange-400",
+  violet: "bg-violet-400",
+  teal: "bg-teal-400",
+  rose: "bg-rose-400",
+};
+
 function normalizeName(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -32,6 +41,7 @@ function normalizeName(value: string): string {
 export function ProjectSelectManager({
   value,
   projects,
+  quickProjects,
   onChange,
   onProjectsMutate,
   noneLabel = "Без проекта",
@@ -42,6 +52,7 @@ export function ProjectSelectManager({
   align = "left",
 }: ProjectSelectManagerProps) {
   const [mode, setMode] = useState<ManagerMode>(null);
+  const [showAllProjects, setShowAllProjects] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -51,6 +62,24 @@ export function ProjectSelectManager({
     () => projects.find((project) => project.id === value) ?? null,
     [projects, value],
   );
+  const visibleQuickProjects = useMemo(() => {
+    if (!quickProjects?.length || size !== "md") return [];
+
+    const seen = new Set<string>();
+    const shortlist = quickProjects.filter((project) => {
+      if (seen.has(project.id)) return false;
+      seen.add(project.id);
+      return true;
+    });
+
+    if (selectedProject && !seen.has(selectedProject.id)) {
+      shortlist.push(selectedProject);
+    }
+
+    return shortlist;
+  }, [quickProjects, selectedProject, size]);
+  const usesQuickProjects = visibleQuickProjects.length > 0;
+  const isOverlayOpen = mode !== null || showAllProjects;
 
   useEffect(() => {
     if (!mode) return;
@@ -64,17 +93,19 @@ export function ProjectSelectManager({
   }, [mode]);
 
   useEffect(() => {
-    if (!mode) return;
+    if (!isOverlayOpen) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && rootRef.current?.contains(target)) return;
+      setShowAllProjects(false);
       setMode(null);
       setError(null);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      setShowAllProjects(false);
       setMode(null);
       setError(null);
     };
@@ -86,7 +117,7 @@ export function ProjectSelectManager({
       window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [mode]);
+  }, [isOverlayOpen]);
 
   const duplicateProject = useMemo(() => {
     const normalized = normalizeName(draftName).toLowerCase();
@@ -109,8 +140,17 @@ export function ProjectSelectManager({
       ? "rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
       : "rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
   const panelAlignCls = align === "right" ? "right-0" : "left-0";
+  const quickProjectBtnCls =
+    "flex min-w-0 items-center gap-2 rounded-xl border px-3 py-3 text-xs transition";
+
+  function closeOverlays(): void {
+    setShowAllProjects(false);
+    setMode(null);
+    setError(null);
+  }
 
   function openCreate(): void {
+    setShowAllProjects(false);
     setDraftName("");
     setError(null);
     setMode("create");
@@ -118,14 +158,14 @@ export function ProjectSelectManager({
 
   function openRename(): void {
     if (!selectedProject) return;
+    setShowAllProjects(false);
     setDraftName(selectedProject.name);
     setError(null);
     setMode("rename");
   }
 
   function closeManager(): void {
-    setMode(null);
-    setError(null);
+    closeOverlays();
   }
 
   function handleSave(): void {
@@ -168,39 +208,131 @@ export function ProjectSelectManager({
   }
 
   return (
-    <div ref={rootRef} className="relative flex min-w-0 items-center gap-1.5">
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className={`flex-1 ${selectCls}`}
-      >
-        <option value="">{noneLabel}</option>
-        {projects.map((project) => (
-          <option key={project.id} value={project.id}>
-            {project.name}
-          </option>
-        ))}
-      </select>
+    <div ref={rootRef} className="relative w-full min-w-0">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {usesQuickProjects ? (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {visibleQuickProjects.map((project) => {
+              const isActive = value === project.id;
 
-      <button
-        type="button"
-        onClick={openCreate}
-        className={iconBtnCls}
-        title="Создать новый проект"
-        aria-label="Создать новый проект"
-      >
-        ＋
-      </button>
-      <button
-        type="button"
-        onClick={openRename}
-        disabled={!selectedProject}
-        className={`${iconBtnCls} disabled:cursor-not-allowed disabled:opacity-35`}
-        title={selectedProject ? `Переименовать ${selectedProject.name}` : "Сначала выбери проект"}
-        aria-label="Переименовать выбранный проект"
-      >
-        ✎
-      </button>
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => onChange(isActive ? "" : project.id)}
+                  aria-pressed={isActive}
+                  title={isActive ? `Снять проект ${project.name}` : `Выбрать проект ${project.name}`}
+                  className={`${quickProjectBtnCls} ${
+                    isActive
+                      ? "border-zinc-100 bg-zinc-100 text-zinc-950 shadow-[0_8px_24px_rgba(255,255,255,0.08)]"
+                      : "border-zinc-800 bg-zinc-900/50 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
+                  }`}
+                >
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
+                  <span className="min-w-0 truncate">{project.name}</span>
+                </button>
+              );
+            })}
+
+            <button
+              type="button"
+              onClick={() => {
+                setMode(null);
+                setError(null);
+                setShowAllProjects((current) => !current);
+              }}
+              aria-expanded={showAllProjects}
+              className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
+            >
+              {showAllProjects ? "Скрыть список" : "Показать все"}
+            </button>
+          </div>
+        ) : (
+          <select
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            className={`flex-1 ${selectCls}`}
+          >
+            <option value="">{noneLabel}</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <button
+          type="button"
+          onClick={openCreate}
+          className={iconBtnCls}
+          title="Создать новый проект"
+          aria-label="Создать новый проект"
+        >
+          ＋
+        </button>
+        <button
+          type="button"
+          onClick={openRename}
+          disabled={!selectedProject}
+          className={`${iconBtnCls} disabled:cursor-not-allowed disabled:opacity-35`}
+          title={selectedProject ? `Переименовать ${selectedProject.name}` : "Сначала выбери проект"}
+          aria-label="Переименовать выбранный проект"
+        >
+          ✎
+        </button>
+      </div>
+
+      {usesQuickProjects && showAllProjects && (
+        <div className={`absolute ${panelAlignCls} top-full z-30 mt-2 w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_14px_48px_rgba(0,0,0,0.38)] backdrop-blur`}>
+          <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Все проекты</p>
+          <p className="mt-1 text-sm font-medium text-zinc-100">
+            Если нужного нет среди быстрых кнопок — он ждёт здесь.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                onChange("");
+                setShowAllProjects(false);
+              }}
+              aria-pressed={value === ""}
+              className={`rounded-xl border px-3 py-2 text-xs transition ${
+                value === ""
+                  ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+                  : "border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
+              }`}
+            >
+              {noneLabel}
+            </button>
+
+            {projects.map((project) => {
+              const isActive = value === project.id;
+
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(project.id);
+                    setShowAllProjects(false);
+                  }}
+                  aria-pressed={isActive}
+                  className={`flex min-w-0 max-w-full items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
+                    isActive
+                      ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+                      : "border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
+                  }`}
+                >
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
+                  <span className="truncate">{project.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {mode && (
         <div className={`absolute ${panelAlignCls} top-full z-30 mt-2 w-72 rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_14px_48px_rgba(0,0,0,0.38)] backdrop-blur`}>

@@ -332,6 +332,44 @@ export default function TasksPage() {
     [projects],
   );
 
+  const composerQuickProjects = useMemo(() => {
+    const usage = new Map<string, { total: number; open: number; priorityLoad: number }>();
+
+    for (const project of projects) {
+      usage.set(project.id, { total: 0, open: 0, priorityLoad: 0 });
+    }
+
+    for (const task of tasks) {
+      const projectId = getTaskProjectId(task);
+      if (!projectId) continue;
+
+      const stats = usage.get(projectId);
+      if (!stats) continue;
+
+      stats.total += 1;
+      stats.priorityLoad += PRIORITY_LOAD_WEIGHT[task.priority];
+
+      if (task.status === "inbox" || task.status === "active") {
+        stats.open += 1;
+      }
+    }
+
+    return [...projects]
+      .sort((left, right) => {
+        const leftUsage = usage.get(left.id) ?? { total: 0, open: 0, priorityLoad: 0 };
+        const rightUsage = usage.get(right.id) ?? { total: 0, open: 0, priorityLoad: 0 };
+
+        return (
+          rightUsage.open - leftUsage.open ||
+          rightUsage.total - leftUsage.total ||
+          rightUsage.priorityLoad - leftUsage.priorityLoad ||
+          left.order - right.order ||
+          left.name.localeCompare(right.name, "ru")
+        );
+      })
+      .slice(0, 4);
+  }, [getTaskProjectId, projects, tasks]);
+
   const matchesProjectFilter = useCallback(
     (task: Task) => {
       const label = getTaskProjectLabel(task);
@@ -553,18 +591,21 @@ export default function TasksPage() {
             placeholder="Новая задача…"
             className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
           />
-          <ProjectSelectManager
-            value={newTaskProjectId}
-            projects={projects}
-            onChange={setNewTaskProjectId}
-            onProjectsMutate={(projectId) => {
-              reload();
-              setNewTaskProjectId(projectId);
-            }}
-            creationContextLabel="выбора проекта в задаче"
-            suggestedAccent="violet"
-            size="md"
-          />
+          <div className="min-w-0 flex-[1.2_1_24rem]">
+            <ProjectSelectManager
+              value={newTaskProjectId}
+              projects={projects}
+              quickProjects={composerQuickProjects}
+              onChange={setNewTaskProjectId}
+              onProjectsMutate={(projectId) => {
+                reload();
+                setNewTaskProjectId(projectId);
+              }}
+              creationContextLabel="выбора проекта в задаче"
+              suggestedAccent="violet"
+              size="md"
+            />
+          </div>
           <PrioritySwitch value={prio} onChange={(priority) => setPrio(priority)} size="md" />
           <input
             type="date"
