@@ -130,11 +130,19 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
   return isToday && task.dueDate < today;
 }
 
+function isOverdueUndoneTask(
+  task: Pick<Task, "dueDate" | "status">,
+  today: string,
+): boolean {
+  const dueDate = task.dueDate;
+  return task.status !== "done" && typeof dueDate === "string" && dueDate < today;
+}
+
 function isYesterdayUndoneTask(
   task: Pick<Task, "dueDate" | "status">,
   today: string,
 ): boolean {
-  return task.status !== "done" && task.dueDate === shiftDateKey(today, -1);
+  return isOverdueUndoneTask(task, today) && task.dueDate === shiftDateKey(today, -1);
 }
 
 function formatHour(hour: number): string {
@@ -1696,9 +1704,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   {col.tasks.map((t) => {
                     const c = taskColor(t);
                     const isYesterdayCarryover = isYesterdayUndoneTask(t, today);
+                    const isOverdueCarryover = isOverdueUndoneTask(t, today);
                     const chipTone = isYesterdayCarryover
                       ? "border-rose-400/55 bg-linear-to-br from-rose-500/24 via-red-500/18 to-rose-950/34 text-rose-50 shadow-[0_8px_18px_rgba(127,29,29,0.24)]"
-                      : col.isPast
+                      : isOverdueCarryover
+                        ? "border-amber-400/55 bg-linear-to-br from-amber-500/24 via-orange-500/16 to-amber-950/34 text-amber-50 shadow-[0_8px_18px_rgba(120,53,15,0.22)]"
+                        : col.isPast
                         ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
                         : `${c.border} ${c.bg} ${c.text}`;
 
@@ -1792,15 +1803,19 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
             {visibleColumns.map((col) => {
-              const isYesterdayColumn = col.key === shiftDateKey(today, -1);
+              const hasOverdueTaskSlot = col.slots.some((slot) => {
+                const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
+                if (!linkedTask || !isOverdueUndoneTask(linkedTask, today)) return false;
+                return !getScheduleSlotApprovalState(slot).isCompleted;
+              });
 
               return (
                 <div
                   key={`overlay-${col.key}`}
                   className={`relative ${
                     col.isPast
-                      ? isYesterdayColumn
-                        ? "opacity-70"
+                      ? hasOverdueTaskSlot
+                        ? "opacity-80"
                         : "opacity-30 grayscale"
                       : ""
                   }`}
@@ -1853,6 +1868,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const approvalState = getScheduleSlotApprovalState(slot);
                   const requiresApproval = approvalState.requiresApproval;
                   const isCompletedSlot = approvalState.isCompleted;
+                  const isOverdueCarryoverTask = Boolean(
+                    linkedTask && isOverdueUndoneTask(linkedTask, today) && !isCompletedSlot,
+                  );
                   const isYesterdayCarryoverTask = Boolean(
                     linkedTask && isYesterdayUndoneTask(linkedTask, today) && !isCompletedSlot,
                   );
@@ -1910,11 +1928,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     ? "text-emerald-50"
                     : isYesterdayCarryoverTask
                       ? "text-rose-50"
+                      : isOverdueCarryoverTask
+                        ? "text-amber-50"
                       : c.text;
                   const secondaryTextClass = isCompletedSlot
                     ? "text-emerald-100/80"
                     : isYesterdayCarryoverTask
                       ? "text-rose-100/80"
+                      : isOverdueCarryoverTask
+                        ? "text-amber-100/80"
                       : "text-zinc-500";
                   const shellTone = isChildcareBackground
                     ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
@@ -1922,6 +1944,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       ? "border-emerald-400/55 bg-linear-to-br from-emerald-400/32 via-emerald-500/22 to-emerald-950/42"
                       : isYesterdayCarryoverTask
                         ? "border-rose-500/50 bg-linear-to-br from-rose-500/22 via-red-500/16 to-rose-950/34"
+                        : isOverdueCarryoverTask
+                          ? "border-amber-500/50 bg-linear-to-br from-amber-500/20 via-orange-500/14 to-amber-950/32"
                       : `${c.border} ${c.bg}`;
                   const shellDepth = isChildcareBackground
                     ? "shadow-none"
