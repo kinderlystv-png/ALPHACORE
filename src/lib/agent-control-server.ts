@@ -13,6 +13,7 @@ import { DEFAULT_HABITS, isActiveOn, type Habit } from "./habits";
 import type { ScheduleSlot } from "./schedule";
 import { getScheduleForDate } from "./schedule";
 import type { StorageKey } from "./app-data-keys";
+import type { HeysHealthSignals } from "./heys-bridge";
 
 // Re-export types from client module for convenience
 export type {
@@ -272,7 +273,7 @@ function pushPriority(
   if (c) list.push(c);
 }
 
-export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
+export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null): AgentControlSnapshot {
   const today = ds(new Date());
   const { tasks, projects, journal: journalEntries, medical: medEntries, habits } = raw;
 
@@ -327,6 +328,9 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
 
   // ── Scores ──
 
+  // HEYS-enriched scoring: use real biometric data when available
+  const h = heys?.hasRecentData ? heys : null;
+
   const workScore = clamp(
     56 +
       Math.min(totalFocusMinutes, 180) / 6 +
@@ -335,13 +339,29 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
       focusSnapshot.overdueCount * 8 -
       (attentionProject ? 10 : 0),
   );
+
+  // Health: blend ALPHACORE habits with real HEYS biometrics
+  const heysHealthBonus = h
+    ? (
+        // Sleep quality factor (0-10 scale → 0-10 pts)
+        Math.min((h.sleepQualityAvg ?? 5) * 1, 10) +
+        // Steps ratio (0-12 pts)
+        Math.min((h.stepsGoalRatio ?? 0.5) * 12, 12) +
+        // Training days this week (0-8 pts)
+        Math.min(h.trainingDaysWeek, 4) * 2 -
+        // Late bedtime penalty (up to -8 pts)
+        (h.lateBedtimeRatio != null ? h.lateBedtimeRatio * 8 : 0)
+      )
+    : 0;
   const healthScore = clamp(
-    44 +
-      habitRatio * 32 +
+    (h ? 30 : 44) + // lower base when HEYS provides real data
+      habitRatio * (h ? 20 : 32) + // reduce habit weight when real data available
+      heysHealthBonus +
       Math.min(upcoming.health, 3) * 8 +
       (latestMedicalDate && daysSince(latestMedicalDate) <= 60 ? 8 : 0) -
       flaggedMedicalParams * 10,
   );
+
   const familyScore = clamp(
     50 +
       Math.min(upcoming.family, 4) * 10 +
@@ -361,10 +381,27 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
       Math.min(upcoming.review, 2) * 16 +
       Math.min(reflectionSignals, 2) * 8,
   );
+
+  // Recovery: use real sleep + wellbeing data from HEYS
+  const heysRecoveryBonus = h
+    ? (
+        // Sleep hours relative to goal (0-15 pts)
+        Math.min(((h.sleepHoursAvg ?? 7) / 8) * 15, 15) +
+        // Sleep quality (0-8 pts)
+        Math.min((h.sleepQualityAvg ?? 5) * 0.8, 8) +
+        // Wellbeing factor (0-8 pts)
+        Math.min((h.wellbeingAvg ?? 6) * 0.8, 8) -
+        // Late bedtime penalty (up to -12 pts — main blind spot)
+        (h.lateBedtimeRatio != null ? h.lateBedtimeRatio * 12 : 0) -
+        // Low mood penalty (0-6 pts)
+        (h.moodAvg != null && h.moodAvg < 6 ? (6 - h.moodAvg) * 2 : 0)
+      )
+    : 0;
   const recoveryScore = clamp(
-    40 +
-      Math.min(upcoming.personal, 3) * 12 +
-      (sleepChecked ? 22 : 0) +
+    (h ? 28 : 40) + // lower base when HEYS provides real data
+      heysRecoveryBonus +
+      Math.min(upcoming.personal, 3) * (h ? 8 : 12) +
+      (sleepChecked ? (h ? 10 : 22) : 0) +
       Math.min(upcoming.health, 2) * 5 -
       Math.max(0, upcoming.studio - upcoming.personal - upcoming.family) * 4,
   );
@@ -379,9 +416,9 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
         : levelFromScore(workScore);
 
   const healthLevel: AttentionLevel =
-    habitRatio < 0.34 || flaggedMedicalParams >= 2
+    habitRatio < 0.34 || flaggedMedicalParams >= 2 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.5 && h.trainingDaysWeek <= 1)
       ? "critical"
-      : habitRatio < 0.67 || flaggedMedicalParams > 0
+      : habitRatio < 0.67 || flaggedMedicalParams > 0 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7)
         ? "watch"
         : levelFromScore(healthScore);
 
@@ -409,9 +446,9 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
         : levelFromScore(reflectionScore);
 
   const recoveryLevel: AttentionLevel =
-    !sleepChecked && upcoming.personal === 0
+    (!sleepChecked && upcoming.personal === 0) || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8 && (h.sleepQualityAvg ?? 10) < 5)
       ? "critical"
-      : upcoming.personal < 2
+      : upcoming.personal < 2 || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.5)
         ? "watch"
         : levelFromScore(recoveryScore);
 
@@ -441,14 +478,27 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
       ...AREA_META.health,
       score: healthScore,
       level: healthLevel,
-      summary: `${stats.habitsToday.done}/${stats.habitsToday.total} привычек · ${flaggedMedicalParams} флагов`,
-      insight:
-        flaggedMedicalParams > 0
+      summary: h
+        ? `Сон ${h.sleepHoursAvg ?? "?"}ч (${h.sleepQualityAvg ?? "?"}/10) · шаги ${h.stepsAvg ?? "?"} · ${h.trainingDaysWeek} тренировок · ${stats.habitsToday.done}/${stats.habitsToday.total} привычек`
+        : `${stats.habitsToday.done}/${stats.habitsToday.total} привычек · ${flaggedMedicalParams} флагов`,
+      insight: h
+        ? h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7
+          ? `Ложишься после часа ночи ${Math.round(h.lateBedtimeRatio * 100)}% дней — это #1 рычаг для здоровья и самочувствия.`
+          : h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7
+            ? `Шаги ${h.stepsAvg ?? "?"} при цели ${h.stepsGoalRatio != null ? Math.round((h.stepsAvg ?? 0) / (h.stepsGoalRatio || 1)) : "?"} — NEAT-активность проседает.`
+            : "HEYS показывает, что health-база держится — важно не дать ей исчезнуть."
+        : flaggedMedicalParams > 0
           ? "Сначала понять красные медицинские сигналы."
           : habitRatio < 0.67
             ? "Минимальный health floor: сон, растяжка, один телесный блок."
             : "Health-база держится.",
       evidence: [
+        ...(h
+          ? [
+              `HEYS: вес ${h.weightCurrent ?? "?"}кг (цель ${h.weightGoal ?? "?"}кг, Δ30д: ${h.weightDelta30d != null ? `${h.weightDelta30d > 0 ? "+" : ""}${h.weightDelta30d}кг` : "?"})`,
+              `HEYS: настроение ${h.moodAvg ?? "?"}/10, самочувствие ${h.wellbeingAvg ?? "?"}/10, стресс ${h.stressAvg ?? "?"}/10`,
+            ]
+          : []),
         latestMedicalDate
           ? `Последний медсигнал: ${latestMedicalDate}`
           : "Медицинских записей нет",
@@ -513,14 +563,30 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
       ...AREA_META.recovery,
       score: recoveryScore,
       level: recoveryLevel,
-      summary: `${upcoming.personal} личных окон · сон ${sleepChecked ? "✓" : "✗"}`,
-      insight:
-        !sleepChecked && upcoming.personal === 0
+      summary: h
+        ? `Сон ${h.sleepHoursAvg ?? "?"}ч · качество ${h.sleepQualityAvg ?? "?"}/10 · поздний отход ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% · ${upcoming.personal} личных окон`
+        : `${upcoming.personal} личных окон · сон ${sleepChecked ? "✓" : "✗"}`,
+      insight: h
+        ? h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8
+          ? `100% дней ложишься после 01:00 — это главная слепая зона recovery. Без сдвига засыпания всё остальное работает на половину.`
+          : (h.sleepQualityAvg ?? 10) < 5
+            ? `Качество сна ${h.sleepQualityAvg}/10 — recovery под давлением даже при достаточной длительности.`
+            : (h.wellbeingAvg ?? 10) < 6.5
+              ? `Самочувствие ${h.wellbeingAvg}/10 при низком стрессе ${h.stressAvg}/10 — скорее всего, недосып и низкая активность.`
+              : "Recovery выглядит стабильно по данным HEYS."
+        : !sleepChecked && upcoming.personal === 0
           ? "Восстановление не защищено."
           : upcoming.personal < 2
             ? "Восстановление хрупкое — стоит усилить."
             : "Ритм восстановления заметен.",
       evidence: [
+        ...(h
+          ? [
+              `HEYS: сон ${h.sleepHoursAvg ?? "?"}ч, качество ${h.sleepQualityAvg ?? "?"}/10`,
+              `HEYS: поздний отход ко сну ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% дней`,
+              `HEYS: вода ${h.waterAvg ?? "?"}мл/день`,
+            ]
+          : []),
         `${upcoming.personal} personal + ${upcoming.health} health слотов`,
         sleepChecked ? "Сон отмечен" : "Сон не отмечен",
       ],
@@ -568,8 +634,9 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
       ? {
           id: "health-floor",
           title: "Не отдавать здоровье на потом",
-          reason:
-            flaggedMedicalParams > 0
+          reason: h
+            ? `HEYS: шаги ${h.stepsAvg ?? "?"}/${h.stepsGoalRatio != null ? Math.round((h.stepsAvg ?? 0) / (h.stepsGoalRatio || 1)) : "?"}, тренировок ${h.trainingDaysWeek}/нед, вес ${h.weightCurrent ?? "?"}→${h.weightGoal ?? "?"}кг.`
+            : flaggedMedicalParams > 0
               ? `${flaggedMedicalParams} медицинских флага.`
               : "Health-база проседает.",
           action:
@@ -577,6 +644,22 @@ export function getServerSnapshot(raw: RawData): AgentControlSnapshot {
           href: "/medical",
           level: healthLevel,
           weight: healthLevel === "critical" ? 94 : 72,
+        }
+      : null,
+  );
+
+  // HEYS-specific: late bedtime blind spot priority
+  pushPriority(
+    candidates,
+    h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7
+      ? {
+          id: "heys-sleep-blindspot",
+          title: "Сдвинуть засыпание раньше",
+          reason: `HEYS показывает: ${Math.round(h.lateBedtimeRatio * 100)}% дней ложишься после 01:00, качество сна ${h.sleepQualityAvg ?? "?"}/10. Это подрывает всё остальное.`,
+          action: "Установить alarm «готовиться ко сну» на 00:00. Начать с 15-минутного сдвига каждые 3 дня.",
+          href: "/routines",
+          level: h.lateBedtimeRatio > 0.9 ? "critical" : "watch",
+          weight: h.lateBedtimeRatio > 0.9 ? 92 : 78,
         }
       : null,
   );

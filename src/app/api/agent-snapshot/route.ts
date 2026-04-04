@@ -9,6 +9,7 @@ import {
   generateMorningBrief,
   generateEveningReview,
 } from "@/lib/agent-brief";
+import { syncFromHeys, extractHealthSignals } from "@/lib/heys-bridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,17 +29,27 @@ export async function GET(request: NextRequest) {
     const mode = request.nextUrl.searchParams.get("mode");
     const cloudSnapshot = await getCloudSnapshot();
     const raw = extractRawData(cloudSnapshot.items);
-    const snapshot = getServerSnapshot(raw);
+
+    // Fetch HEYS health signals (best-effort — don't block snapshot on failure)
+    let heysSignals = null;
+    try {
+      const heysSnapshot = await syncFromHeys();
+      heysSignals = extractHealthSignals(heysSnapshot);
+    } catch {
+      // HEYS unavailable — continue with ALPHACORE-only data
+    }
+
+    const snapshot = getServerSnapshot(raw, heysSignals);
 
     if (mode === "brief") {
-      return noStoreJson({ ...snapshot, brief: generateMorningBrief(snapshot) });
+      return noStoreJson({ ...snapshot, brief: generateMorningBrief(snapshot), heysSignals });
     }
 
     if (mode === "review") {
-      return noStoreJson({ ...snapshot, review: generateEveningReview(snapshot) });
+      return noStoreJson({ ...snapshot, review: generateEveningReview(snapshot), heysSignals });
     }
 
-    return noStoreJson(snapshot);
+    return noStoreJson({ ...snapshot, heysSignals });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown snapshot error";

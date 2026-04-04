@@ -6,6 +6,8 @@ import { getProjects } from "./projects";
 import { getScheduleForDate, type ScheduleSlot } from "./schedule";
 import { dateStr } from "./storage";
 import { getTasks } from "./tasks";
+import { getHeysSignals } from "./use-heys-sync";
+import type { HeysHealthSignals } from "./heys-bridge";
 
 export type AttentionAreaKey =
   | "work"
@@ -166,6 +168,7 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
   const weeklyReport = getWeeklyFocusReport();
   const journalEntries = getJournalEntries();
   const medEntries = getEntries();
+  const h: HeysHealthSignals | null = getHeysSignals();
   const upcomingSlots = collectUpcomingSchedule(7);
   const upcoming = getUpcomingScheduleStats(upcomingSlots);
   const todayCleanupSlots = todaySlots.filter((slot) => slot.tone === "cleanup");
@@ -208,9 +211,19 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       focusSnapshot.overdueCount * 8 -
       (attentionProject ? 10 : 0),
   );
+  // Health: blend ALPHACORE habits with real HEYS biometrics
+  const heysHealthBonus = h
+    ? (
+        Math.min((h.sleepQualityAvg ?? 5) * 1, 10) +
+        Math.min((h.stepsGoalRatio ?? 0.5) * 12, 12) +
+        Math.min(h.trainingDaysWeek, 4) * 2 -
+        (h.lateBedtimeRatio != null ? h.lateBedtimeRatio * 8 : 0)
+      )
+    : 0;
   const healthScore = clamp(
-    44 +
-      habitRatio * 32 +
+    (h ? 30 : 44) +
+      habitRatio * (h ? 20 : 32) +
+      heysHealthBonus +
       Math.min(upcoming.health, 3) * 8 +
       (latestMedicalDate && daysSince(latestMedicalDate) <= 60 ? 8 : 0) -
       flaggedMedicalParams * 10,
@@ -234,10 +247,21 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       Math.min(upcoming.review, 2) * 16 +
       Math.min(reflectionSignals, 2) * 8,
   );
+  // Recovery: use real sleep + wellbeing data from HEYS
+  const heysRecoveryBonus = h
+    ? (
+        Math.min(((h.sleepHoursAvg ?? 7) / 8) * 15, 15) +
+        Math.min((h.sleepQualityAvg ?? 5) * 0.8, 8) +
+        Math.min((h.wellbeingAvg ?? 6) * 0.8, 8) -
+        (h.lateBedtimeRatio != null ? h.lateBedtimeRatio * 12 : 0) -
+        (h.moodAvg != null && h.moodAvg < 6 ? (6 - h.moodAvg) * 2 : 0)
+      )
+    : 0;
   const recoveryScore = clamp(
-    40 +
-      Math.min(upcoming.personal, 3) * 12 +
-      (sleepChecked ? 22 : 0) +
+    (h ? 28 : 40) +
+      heysRecoveryBonus +
+      Math.min(upcoming.personal, 3) * (h ? 8 : 12) +
+      (sleepChecked ? (h ? 10 : 22) : 0) +
       Math.min(upcoming.health, 2) * 5 -
       Math.min(upcoming.cleanup, 2) * 6 -
       Math.max(0, upcoming.studio - upcoming.personal - upcoming.family) * 4,
@@ -250,9 +274,9 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
         ? "watch"
         : levelFromScore(workScore);
   const healthLevel: AttentionLevel =
-    habitRatio < 0.34 || flaggedMedicalParams >= 2
+    habitRatio < 0.34 || flaggedMedicalParams >= 2 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.5 && h.trainingDaysWeek <= 1)
       ? "critical"
-      : habitRatio < 0.67 || flaggedMedicalParams > 0
+      : habitRatio < 0.67 || flaggedMedicalParams > 0 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7)
         ? "watch"
         : levelFromScore(healthScore);
   const familyLevel: AttentionLevel =
@@ -274,9 +298,9 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
         ? "watch"
         : levelFromScore(reflectionScore);
   const recoveryLevel: AttentionLevel =
-    !sleepChecked && upcoming.personal === 0
+    (!sleepChecked && upcoming.personal === 0) || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8 && (h.sleepQualityAvg ?? 10) < 5)
       ? "critical"
-      : upcoming.personal < 2
+      : upcoming.personal < 2 || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.5)
         ? "watch"
         : levelFromScore(recoveryScore);
 
@@ -308,9 +332,16 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       href: AREA_META.health.href,
       score: healthScore,
       level: healthLevel,
-      summary: `${stats.habitsToday.done}/${stats.habitsToday.total} привычек сегодня · ${flaggedMedicalParams} флагов`,
-      insight:
-        flaggedMedicalParams > 0
+      summary: h
+        ? `Сон ${h.sleepHoursAvg ?? "?"}ч (${h.sleepQualityAvg ?? "?"}/10) · шаги ${h.stepsAvg ?? "?"} · ${h.trainingDaysWeek} тренировок · ${stats.habitsToday.done}/${stats.habitsToday.total} привычек`
+        : `${stats.habitsToday.done}/${stats.habitsToday.total} привычек сегодня · ${flaggedMedicalParams} флагов`,
+      insight: h
+        ? h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7
+          ? `Ложишься после часа ночи ${Math.round(h.lateBedtimeRatio * 100)}% дней — это #1 рычаг для здоровья.`
+          : h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7
+            ? `Шаги ${h.stepsAvg ?? "?"} — NEAT-активность проседает.`
+            : "HEYS показывает, что health-база держится."
+        : flaggedMedicalParams > 0
           ? "Здоровье нельзя оставлять фоном: сначала понять красные сигналы, потом усиливать нагрузку."
           : todayCleanupSlots.length > 0
             ? "Сегодня уже есть cleanup-нагрузка — не нужно автоматически дублировать её отдельным cardio; важнее щадящий floor и восстановление."
@@ -318,6 +349,12 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
             ? "Минимальный health floor на день: сон, растяжка и один телесный блок."
             : "База держится — агенту важно лишь не дать здоровью снова исчезнуть из поля зрения.",
       evidence: [
+        ...(h
+          ? [
+              `HEYS: вес ${h.weightCurrent ?? "?"}кг (цель ${h.weightGoal ?? "?"}кг, Δ30д: ${h.weightDelta30d != null ? `${h.weightDelta30d > 0 ? "+" : ""}${h.weightDelta30d}кг` : "?"})`,
+              `HEYS: настроение ${h.moodAvg ?? "?"}/10, самочувствие ${h.wellbeingAvg ?? "?"}/10, стресс ${h.stressAvg ?? "?"}/10`,
+            ]
+          : []),
         latestMedicalDate
           ? `Последний медсигнал: ${latestMedicalDate}`
           : "Медицинских записей пока нет",
@@ -392,9 +429,18 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       href: AREA_META.recovery.href,
       score: recoveryScore,
       level: recoveryLevel,
-      summary: `${upcoming.personal} личных окон · сон ${sleepChecked ? "отмечен" : "не отмечен"}`,
-      insight:
-        !sleepChecked && upcoming.personal === 0
+      summary: h
+        ? `Сон ${h.sleepHoursAvg ?? "?"}ч · качество ${h.sleepQualityAvg ?? "?"}/10 · поздний отход ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% · ${upcoming.personal} личных окон`
+        : `${upcoming.personal} личных окон · сон ${sleepChecked ? "отмечен" : "не отмечен"}`,
+      insight: h
+        ? h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8
+          ? `${Math.round(h.lateBedtimeRatio * 100)}% дней ложишься после 01:00 — главная слепая зона recovery.`
+          : (h.sleepQualityAvg ?? 10) < 5
+            ? `Качество сна ${h.sleepQualityAvg}/10 — recovery под давлением даже при достаточной длительности.`
+            : (h.wellbeingAvg ?? 10) < 6.5
+              ? `Самочувствие ${h.wellbeingAvg}/10 при низком стрессе ${h.stressAvg}/10 — недосып и низкая активность.`
+              : "Recovery стабильно по данным HEYS."
+        : !sleepChecked && upcoming.personal === 0
           ? todayCleanupSlots.length > 0
             ? "Сегодня уже есть cleanup-нагрузка, а recovery не защищено — не дублируй день cardio и добавь окно восстановления."
             : "Если восстановление не защищено, система скатывается в героическую, но тупиковую гонку."
@@ -404,6 +450,13 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
             ? "Восстановление есть, но пока слишком хрупкое — агенту стоит сделать его невыбиваемым."
             : "Ритм восстановления уже заметен. Важно не разменять его на случайные срочности.",
       evidence: [
+        ...(h
+          ? [
+              `HEYS: сон ${h.sleepHoursAvg ?? "?"}ч, качество ${h.sleepQualityAvg ?? "?"}/10`,
+              `HEYS: поздний отход ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% дней`,
+              `HEYS: вода ${h.waterAvg ?? "?"}мл/день`,
+            ]
+          : []),
         `${upcoming.personal} personal-слотов, ${upcoming.health} телесных и ${upcoming.cleanup} cleanup-слотов на 7 дней`,
         sleepChecked ? "Сон отмечен сегодня" : "Сегодня сон пока не закрыт",
       ],
@@ -448,14 +501,31 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       ? {
           id: "health-floor",
           title: "Не отдавать здоровье на потом",
-          reason:
-            flaggedMedicalParams > 0
+          reason: h
+            ? `HEYS: шаги ${h.stepsAvg ?? "?"}, тренировок ${h.trainingDaysWeek}/нед, вес ${h.weightCurrent ?? "?"}→${h.weightGoal ?? "?"}кг.`
+            : flaggedMedicalParams > 0
               ? `Есть ${flaggedMedicalParams} медицинских флага — их нельзя маскировать продуктивностью.`
               : "Сегодняшняя health-база проседает и быстро делает всё остальное дороже по энергии.",
           action: "Попроси агента зафиксировать минимальный health floor на день: сон, растяжка, бег/прогулка и нужный follow-up по анализам.",
           href: "/medical",
           level: healthLevel,
           weight: healthLevel === "critical" ? 94 : 72,
+        }
+      : null,
+  );
+
+  // HEYS-specific: late bedtime blind spot priority
+  pushPriority(
+    priorityCandidates,
+    h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.7
+      ? {
+          id: "heys-sleep-blindspot",
+          title: "Сдвинуть засыпание раньше",
+          reason: `HEYS: ${Math.round(h.lateBedtimeRatio * 100)}% дней ложишься после 01:00, качество сна ${h.sleepQualityAvg ?? "?"}/10. Это подрывает всё остальное.`,
+          action: "Установить alarm «готовиться ко сну» на 00:00. Начать с 15-минутного сдвига каждые 3 дня.",
+          href: "/routines",
+          level: h.lateBedtimeRatio > 0.8 ? "critical" : "watch",
+          weight: h.lateBedtimeRatio > 0.8 ? 92 : 78,
         }
       : null,
   );
