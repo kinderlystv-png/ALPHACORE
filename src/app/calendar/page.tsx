@@ -6,6 +6,7 @@ import { AppShell } from "@/components/app-shell";
 import { WeekPlanner } from "@/components/week-planner";
 import {
   getHeysSyncedSlotBadgeLabel,
+  getScheduleSlotApprovalState,
   SCHEDULE_RULES,
   SCHEDULE_TONE_CLS,
   getMonthDates,
@@ -13,8 +14,18 @@ import {
   getScheduleForDate,
   getScheduleSummary,
   isHeysSyncedScheduleSlot,
+  toggleScheduleSlotApproval,
 } from "@/lib/schedule";
 import { subscribeAppDataChange } from "@/lib/storage";
+
+function formatCompletionLabel(completedAt?: string | null): string | null {
+  if (!completedAt) return null;
+
+  const value = new Date(completedAt);
+  if (Number.isNaN(value.getTime())) return null;
+
+  return `done · ${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+}
 
 export default function CalendarPage() {
   const [version, setVersion] = useState(0);
@@ -26,7 +37,7 @@ export default function CalendarPage() {
     return subscribeAppDataChange((keys) => {
       if (
         keys.some((key) =>
-          ["alphacore_schedule_custom", "alphacore_schedule_overrides"].includes(key),
+          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides", "alphacore_schedule_approvals"].includes(key),
         )
       ) {
         setVersion((current) => current + 1);
@@ -71,7 +82,7 @@ export default function CalendarPage() {
         <WeekPlanner
           anchorDate={selectedDate}
           title="🗓 Week view / 7-дневный горизонт"
-          description="Due-задачи живут внутри дня, а не отдельно от расписания. Ниже остаётся детальный разбор выбранной даты."
+          description="Плановые слоты живут внутри дня, а не отдельно от расписания. Всё кроме фиксированных фактов подтверждается вручную."
         />
 
         <section className="grid grid-cols-3 gap-2">
@@ -94,7 +105,7 @@ export default function CalendarPage() {
             <div>
               <h2 className="text-lg font-semibold text-zinc-50">План на {selected?.label}</h2>
               <p className="mt-1 text-sm text-zinc-500">
-                Чем плотнее день — тем полезнее, что это теперь считается автоматически, а не держится в голове на честном слове.
+                Чем плотнее день — тем полезнее видеть контекст и вручную подтверждать, что реально произошло, а что осталось только планом.
               </p>
             </div>
             <span className="rounded-full border border-zinc-800 px-3 py-1 text-[10px] uppercase tracking-widest text-zinc-500">
@@ -106,6 +117,11 @@ export default function CalendarPage() {
             {slots.map((slot) => {
               const isHeysSynced = isHeysSyncedScheduleSlot(slot);
               const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
+              const approvalState = getScheduleSlotApprovalState(slot);
+              const requiresApproval = approvalState.requiresApproval;
+              const isCompleted = approvalState.isCompleted;
+              const completionLabel = formatCompletionLabel(approvalState.completedAt);
+              const statusLabel = requiresApproval ? (isCompleted ? "done" : "plan") : null;
               const sourceLabel =
                 slot.source === "studio"
                   ? "schedule.xlsx"
@@ -116,14 +132,41 @@ export default function CalendarPage() {
               return (
                 <div
                   key={slot.id}
-                  className={`rounded-xl border px-4 py-3 ${SCHEDULE_TONE_CLS[slot.tone]}`}
+                  className={`rounded-xl border px-4 py-3 ${SCHEDULE_TONE_CLS[slot.tone]} ${isCompleted ? "saturate-[0.82]" : ""}`}
                 >
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <p className="font-mono text-xs opacity-70">
                         {slot.start}–{slot.end}
                       </p>
-                      <p className="mt-1 text-sm font-medium">{slot.title}</p>
+                      <div className="mt-1 flex items-start justify-between gap-2">
+                        <p className={`min-w-0 text-sm font-medium ${isCompleted ? "line-through opacity-70" : ""}`}>
+                          {slot.title}
+                        </p>
+                        {requiresApproval && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              toggleScheduleSlotApproval(slot);
+                              setVersion((current) => current + 1);
+                            }}
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold leading-none transition ${
+                              isCompleted
+                                ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
+                                : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                            }`}
+                            aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
+                            title={isCompleted ? "Вернуть в plan" : "Подтвердить как done"}
+                          >
+                            {isCompleted ? "✓" : "○"}
+                          </button>
+                        )}
+                      </div>
+                      {completionLabel && (
+                        <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-emerald-200/85">
+                          {completionLabel}
+                        </p>
+                      )}
                       {slot.subtitle && (
                         <p className="mt-1 text-xs opacity-70">{slot.subtitle}</p>
                       )}
@@ -144,6 +187,15 @@ export default function CalendarPage() {
                       {heysBadgeLabel && (
                         <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-orange-200">
                           {heysBadgeLabel}
+                        </span>
+                      )}
+                      {statusLabel && (
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${
+                          isCompleted
+                            ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-100"
+                            : "border-white/10 text-white/70"
+                        }`}>
+                          {statusLabel}
                         </span>
                       )}
                       <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white/70">

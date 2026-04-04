@@ -13,11 +13,13 @@ import {
 } from "@/lib/life-areas";
 import {
   addCustomEvent,
+  getScheduleSlotApprovalState,
   getHeysSyncedSlotBadgeLabel,
   getScheduledTaskIds,
   isHeysSyncedScheduleSlot,
   isEditableScheduleSlot,
   removeEditableScheduleSlot,
+  toggleScheduleSlotApproval,
   upsertTaskSlot,
   unscheduleCustomTaskEvent,
   type ScheduleSlot,
@@ -35,7 +37,6 @@ import {
   type Task,
   compareTasksByAttention,
   getActionableTasks,
-  toggleDone,
   updateTask,
 } from "@/lib/tasks";
 
@@ -559,8 +560,10 @@ function buildCompletionMarkers(tasks: Task[]): CompletionMarker[] {
     });
 }
 
-function formatTaskCompletionLabel(task: Pick<Task, "completedAt">): string | null {
-  const completion = getTaskCompletionDetails(task);
+function formatCompletionLabel(completedAt?: string | null): string | null {
+  if (!completedAt) return null;
+
+  const completion = getTaskCompletionDetails({ completedAt });
   if (!completion) return null;
   return `done · ${completion.timeLabel}`;
 }
@@ -621,7 +624,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return subscribeAppDataChange((keys) => {
       if (
         keys.some((k) =>
-          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides", "alphacore_projects"].includes(k),
+          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides", "alphacore_schedule_approvals", "alphacore_projects"].includes(k),
         )
       ) {
         setVersion((v) => v + 1);
@@ -1339,8 +1342,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setQuickMenu(null);
   }, []);
 
-  const toggleQuickSlotTask = useCallback((taskId: string) => {
-    toggleDone(taskId);
+  const toggleQuickSlotApproval = useCallback((slot: ScheduleSlot) => {
+    toggleScheduleSlotApproval(slot);
     setVersion((value) => value + 1);
   }, []);
 
@@ -1403,8 +1406,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return true;
   }, [linkedTasksById]);
 
-  const toggleTaskCompletion = useCallback((taskId: string) => {
-    toggleDone(taskId);
+  const toggleSlotApproval = useCallback((slot: ScheduleSlot) => {
+    toggleScheduleSlotApproval(slot);
     setVersion((value) => value + 1);
   }, []);
 
@@ -1866,15 +1869,17 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       );
                   const c = toneColor(slot.tone);
                   const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
-                  const isTaskBackedSlot = Boolean(linkedTask) && slot.kind !== "event";
-                  const isDoneTaskSlot = linkedTask?.status === "done";
+                  const approvalState = getScheduleSlotApprovalState(slot);
+                  const requiresApproval = approvalState.requiresApproval;
+                  const isCompletedSlot = approvalState.isCompleted;
+                  const completionLabel = formatCompletionLabel(approvalState.completedAt);
                   const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
                   const isHeysSynced = isHeysSyncedScheduleSlot(slot);
                   const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
                   const isCustomSlot = slot.id.startsWith("custom-");
-                  const slotKindLabel = isDoneTaskSlot ? "done" : slot.kind === "event" ? "event" : "task";
+                  const slotStateLabel = requiresApproval ? (isCompletedSlot ? "done" : "plan") : null;
                   const isBlockingSlot =
                     activeEdit?.blocked &&
                     activeEdit.blockingSlot?.id === slot.id &&
@@ -1921,7 +1926,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
                   const shellTone = isChildcareBackground
                     ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
-                    : isDoneTaskSlot
+                    : isCompletedSlot
                       ? `${c.border} ${c.bg} saturate-[0.78]`
                       : `${c.border} ${c.bg}`;
                   const shellDepth = isChildcareBackground
@@ -1997,46 +2002,45 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           )}
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <p className={`text-[10px] font-medium leading-tight ${c.text} ${isDoneTaskSlot ? "opacity-80" : ""}`}>
+                              <p className={`text-[10px] font-medium leading-tight ${c.text} ${isCompletedSlot ? "opacity-80" : ""}`}>
                                 {slot.start}–{slot.end}
                               </p>
-                              <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isDoneTaskSlot ? "line-through decoration-white/30 opacity-70" : ""}`}>
+                              <p className={`mt-0.5 font-medium leading-snug ${c.text} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? "line-through decoration-white/30 opacity-70" : ""}`}>
                                 {slot.title}
                               </p>
                             </div>
 
-                            {(isCustomSlot || isTaskBackedSlot) && (
+                            {(slotStateLabel || requiresApproval) && (
                               <div className="mt-0.5 flex shrink-0 items-center gap-1 self-start">
-                                {isCustomSlot && (
+                                {slotStateLabel && (
                                   <span className={`pointer-events-none rounded-full border px-1 py-0.5 text-[8px] font-medium uppercase leading-none tracking-widest ${
-                                    isDoneTaskSlot
+                                    isCompletedSlot
                                       ? "border-emerald-400/25 bg-emerald-500/14 text-emerald-100"
                                       : "border-white/12 bg-zinc-950/70 text-zinc-200"
                                   }`}>
-                                    {slotKindLabel}
+                                    {slotStateLabel}
                                   </span>
                                 )}
 
-                                {isTaskBackedSlot && (
+                                {requiresApproval && (
                                   <button
                                     type="button"
-                                    aria-label={isDoneTaskSlot ? "Вернуть задачу в активные" : "Отметить задачу как выполненную"}
-                                    title={isDoneTaskSlot ? "Вернуть в active" : "Отметить как done"}
+                                    aria-label={isCompletedSlot ? "Снять подтверждение слота" : "Подтвердить слот"}
+                                    title={isCompletedSlot ? "Вернуть в plan" : "Подтвердить как done"}
                                     className={`relative z-10 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
-                                      isDoneTaskSlot
+                                      isCompletedSlot
                                         ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
                                         : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
                                     }`}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      if (!linkedTask) return;
-                                      toggleTaskCompletion(linkedTask.id);
+                                      toggleSlotApproval(slot);
                                     }}
                                     onPointerDown={(e) => {
                                       e.stopPropagation();
                                     }}
                                   >
-                                    {isDoneTaskSlot ? "✓" : "○"}
+                                    {isCompletedSlot ? "✓" : "○"}
                                   </button>
                                 )}
                               </div>
@@ -2045,6 +2049,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                           {projectLabel && !isSupportSlot && height > 46 && (
                             <p className="mt-1 inline-flex max-w-full truncate rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-200">
                               {projectLabel}
+                            </p>
+                          )}
+                          {completionLabel && !isSupportSlot && height > 44 && (
+                            <p className={`mt-1 text-[9px] uppercase tracking-[0.14em] ${isCompletedSlot ? "text-emerald-200/85" : "text-zinc-500"}`}>
+                              {completionLabel}
                             </p>
                           )}
                           {!isSupportSlot && height > 40 && slot.subtitle && (
@@ -2225,9 +2234,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           ? projectNameById.get(quickMenu.draftProjectId) ?? projectLabel
           : null;
         const isCustomSlot = slot.id.startsWith("custom-");
-        const isTaskBackedSlot = isCustomSlot && slot.kind !== "event";
-        const isDoneTaskSlot = linkedTask?.status === "done";
-        const completionLabel = linkedTask ? formatTaskCompletionLabel(linkedTask) : null;
+        const approvalState = getScheduleSlotApprovalState(slot);
+        const requiresApproval = approvalState.requiresApproval;
+        const isCompletedSlot = approvalState.isCompleted;
+        const completionLabel = formatCompletionLabel(approvalState.completedAt);
         const startMin = timeToMinutes(slot.start);
         const endMin = timeToMinutes(slot.end);
         const durationMin = endMin - startMin;
@@ -2264,17 +2274,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   {draftProjectLabel && (
                     <p className="mt-1 inline-flex rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-200">
                       {draftProjectLabel}
-                    </p>
-                  )}
-                  {isCustomSlot && (
-                    <p className="mt-1 text-[11px] text-zinc-500">
-                      Тип: <span className="text-zinc-300">{slot.kind === "event" ? "event" : "task"}</span>
-                      {slot.taskId ? (
-                        <>
-                          {" "}· linked task: <span className="text-zinc-300">{slot.taskId}</span>
-                          {linkedTask ? <span className="text-zinc-400"> ({linkedTask.status})</span> : null}
-                        </>
-                      ) : null}
                     </p>
                   )}
                 </div>
@@ -2335,37 +2334,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
               {isCustomSlot && (
                 <div className="mb-3 space-y-2">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Тип</p>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { value: "task", label: "Это задача" },
-                      { value: "event", label: "Это событие" },
-                    ].map((option) => {
-                      const active = quickMenu.draftKind === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => updateQuickMenuDraft({ draftKind: option.value as "task" | "event" })}
-                          className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
-                            active
-                              ? "border-sky-500/20 bg-sky-500/10 text-sky-100"
-                              : "border-zinc-800 bg-zinc-900/60 text-zinc-500 hover:border-zinc-600 hover:text-zinc-200"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="text-[11px] text-zinc-500">
-                    Задача живёт и в task-контуре; событие остаётся только календарным слотом.
-                  </p>
-                </div>
-              )}
-
-              {isCustomSlot && (
-                <div className="mb-3 space-y-2">
                   <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Проект</p>
                   <ProjectSelectManager
                     value={quickMenu.draftProjectId}
@@ -2393,29 +2361,29 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 </div>
               )}
 
-              {isTaskBackedSlot && linkedTask && (
+              {requiresApproval && (
                 <div className="mb-3 rounded-2xl border border-zinc-800 bg-zinc-900/55 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Статус задачи</p>
-                      <p className={`mt-1 text-sm font-semibold ${isDoneTaskSlot ? "text-emerald-100" : "text-zinc-100"}`}>
-                        {isDoneTaskSlot ? (completionLabel ?? "done") : "active"}
+                      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Подтверждение</p>
+                      <p className={`mt-1 text-sm font-semibold ${isCompletedSlot ? "text-emerald-100" : "text-zinc-100"}`}>
+                        {isCompletedSlot ? (completionLabel ?? "done") : "ожидает подтверждения"}
                       </p>
                     </div>
                     <button
                       type="button"
-                      onClick={() => toggleQuickSlotTask(linkedTask.id)}
+                      onClick={() => toggleQuickSlotApproval(slot)}
                       className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
-                        isDoneTaskSlot
+                        isCompletedSlot
                           ? "border-emerald-500/30 bg-emerald-950/30 text-emerald-100 hover:border-emerald-400/50 hover:bg-emerald-950/45"
                           : "border-sky-500/30 bg-sky-950/30 text-sky-100 hover:border-sky-400/50 hover:bg-sky-950/45"
                       }`}
                     >
-                      {isDoneTaskSlot ? "Вернуть в active" : "Отметить done"}
+                      {isCompletedSlot ? "Вернуть в plan" : "Подтвердить"}
                     </button>
                   </div>
                   <p className="mt-2 text-[11px] text-zinc-500">
-                    Слот показывает запланированное окно, а выполнение подтверждается вручную.
+                    Любой плановый слот подтверждается вручную. Фиксированные окна без чека живут отдельно и не требуют одобрения.
                   </p>
                 </div>
               )}
@@ -2517,7 +2485,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 Удалить
               </button>
 
-              {isTaskBackedSlot && slot.taskId && (
+              {slot.taskId && (
                 <button
                   type="button"
                   onClick={() => unscheduleQuickSlot(slot)}

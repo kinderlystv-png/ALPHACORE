@@ -5,11 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   getHeysSyncedSlotBadgeLabel,
+  getScheduleSlotApprovalState,
   getScheduledTaskIds,
   isHeysSyncedScheduleSlot,
   type ScheduleSlot,
   SCHEDULE_TONE_CLS,
   getScheduleForDate,
+  toggleScheduleSlotApproval,
 } from "@/lib/schedule";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
 import {
@@ -23,6 +25,15 @@ const TASK_PRIO_CLS: Record<Task["priority"], string> = {
   p2: "border-amber-500/30 bg-amber-500/10 text-amber-300",
   p3: "border-zinc-700 bg-zinc-800/60 text-zinc-400",
 };
+
+function formatCompletionLabel(completedAt?: string | null): string | null {
+  if (!completedAt) return null;
+
+  const value = new Date(completedAt);
+  if (Number.isNaN(value.getTime())) return null;
+
+  return `done · ${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+}
 
 type WeekPlannerProps = {
   anchorDate?: Date | string;
@@ -140,7 +151,7 @@ export function WeekPlanner({
     return subscribeAppDataChange((keys) => {
       if (
         keys.some((key) =>
-          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides"].includes(key),
+          ["alphacore_tasks", "alphacore_schedule_custom", "alphacore_schedule_overrides", "alphacore_schedule_approvals"].includes(key),
         )
       ) {
         setVersion((current) => current + 1);
@@ -296,23 +307,62 @@ export function WeekPlanner({
                       {day.slots.map((slot) => {
                         const isHeysSynced = isHeysSyncedScheduleSlot(slot);
                         const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
+                        const approvalState = getScheduleSlotApprovalState(slot);
+                        const requiresApproval = approvalState.requiresApproval;
+                        const isCompleted = approvalState.isCompleted;
+                        const completionLabel = formatCompletionLabel(approvalState.completedAt);
+                        const statusLabel = requiresApproval ? (isCompleted ? "done" : "plan") : null;
 
                         return (
                           <div
                             key={slot.id}
-                            className={`rounded-xl border px-3 py-2 ${SCHEDULE_TONE_CLS[slot.tone]}`}
+                            className={`rounded-xl border px-3 py-2 ${SCHEDULE_TONE_CLS[slot.tone]} ${isCompleted ? "saturate-[0.82]" : ""}`}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <p className="font-mono text-[10px] opacity-70">
                                 {slot.start}–{slot.end}
                               </p>
-                              {heysBadgeLabel && (
-                                <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-orange-200">
-                                  {heysBadgeLabel}
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1.5">
+                                {statusLabel && (
+                                  <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-widest ${
+                                    isCompleted
+                                      ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-100"
+                                      : "border-white/10 text-white/70"
+                                  }`}>
+                                    {statusLabel}
+                                  </span>
+                                )}
+                                {requiresApproval && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      toggleScheduleSlotApproval(slot);
+                                      setVersion((current) => current + 1);
+                                    }}
+                                    className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold leading-none transition ${
+                                      isCompleted
+                                        ? "border-emerald-400/45 bg-emerald-500/18 text-emerald-100 hover:border-emerald-300/60 hover:bg-emerald-500/24"
+                                        : "border-white/14 bg-zinc-950/76 text-zinc-400 hover:border-sky-400/40 hover:text-sky-100"
+                                    }`}
+                                    aria-label={isCompleted ? "Снять подтверждение слота" : "Подтвердить слот"}
+                                    title={isCompleted ? "Вернуть в plan" : "Подтвердить как done"}
+                                  >
+                                    {isCompleted ? "✓" : "○"}
+                                  </button>
+                                )}
+                                {heysBadgeLabel && (
+                                  <span className="rounded-full border border-orange-400/25 bg-orange-500/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-orange-200">
+                                    {heysBadgeLabel}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <p className="mt-1 text-xs font-medium leading-snug">{slot.title}</p>
+                            <p className={`mt-1 text-xs font-medium leading-snug ${isCompleted ? "line-through opacity-70" : ""}`}>{slot.title}</p>
+                            {completionLabel && (
+                              <p className="mt-1 text-[9px] uppercase tracking-[0.14em] text-emerald-200/85">
+                                {completionLabel}
+                              </p>
+                            )}
                             {slot.subtitle && (
                               <p className="mt-1 line-clamp-2 text-[10px] opacity-70">
                                 {slot.subtitle}

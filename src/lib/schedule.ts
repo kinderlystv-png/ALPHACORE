@@ -3,6 +3,7 @@ import {
   addTask,
   deleteTask,
   getTasks,
+  toggleDone,
   updateTask,
   type AutomationOrigin,
   type TaskPriority,
@@ -85,6 +86,17 @@ export const SCHEDULE_TONE_CLS: Record<ScheduleTone, string> = {
   review: "border-amber-500/25 bg-amber-950/20 text-amber-300",
 };
 
+export type ScheduleSlotApprovalState = {
+  requiresApproval: boolean;
+  isCompleted: boolean;
+  completedAt: string | null;
+  source: "fixed" | "task" | "slot";
+};
+
+type ScheduleApprovalStore = Record<string, string>;
+
+const APPROVAL_KEY = "alphacore_schedule_approvals";
+
 export function isHeysSyncedOrigin(origin: AutomationOrigin | null | undefined): boolean {
   return origin?.source === "heys" && origin.bundleLabel === "heys-activity-sync";
 }
@@ -101,6 +113,130 @@ export function getHeysSyncedSlotBadgeLabel(
   if (slot.tags.includes("household")) return "HEYS · быт";
   if (slot.tags.includes("training")) return "HEYS · трен";
   return "HEYS · факт";
+}
+
+function loadScheduleApprovalStore(): ScheduleApprovalStore {
+  return lsGet<ScheduleApprovalStore>(APPROVAL_KEY, {});
+}
+
+function saveScheduleApprovalStore(store: ScheduleApprovalStore): void {
+  lsSet(APPROVAL_KEY, store);
+}
+
+function getScheduleApprovalKey(slot: Pick<ScheduleSlot, "id">): string {
+  return slot.id;
+}
+
+function isChildcareFixedSlot(slot: Pick<ScheduleSlot, "tags">): boolean {
+  return (
+    slot.tags.includes("childcare-window") ||
+    (slot.tags.includes("admin") && slot.tags.includes("danya"))
+  );
+}
+
+function getStoredScheduleApprovalAt(slot: Pick<ScheduleSlot, "id">): string | null {
+  return loadScheduleApprovalStore()[getScheduleApprovalKey(slot)] ?? null;
+}
+
+function setStoredScheduleApprovalAt(
+  slot: Pick<ScheduleSlot, "id">,
+  completedAt: string,
+): void {
+  const store = loadScheduleApprovalStore();
+  store[getScheduleApprovalKey(slot)] = completedAt;
+  saveScheduleApprovalStore(store);
+}
+
+function clearStoredScheduleApproval(slot: Pick<ScheduleSlot, "id">): void {
+  const store = loadScheduleApprovalStore();
+  const key = getScheduleApprovalKey(slot);
+  if (!(key in store)) return;
+  delete store[key];
+  saveScheduleApprovalStore(store);
+}
+
+export function isFixedScheduleSlot(
+  slot: Pick<ScheduleSlot, "source" | "tags" | "origin">,
+): boolean {
+  if (slot.source === "studio") return true;
+  if (isChildcareFixedSlot(slot)) return true;
+  if (isHeysSyncedScheduleSlot(slot)) return true;
+  return false;
+}
+
+export function getScheduleSlotApprovalState(
+  slot: Pick<ScheduleSlot, "id" | "taskId" | "source" | "tags" | "origin">,
+): ScheduleSlotApprovalState {
+  if (isFixedScheduleSlot(slot)) {
+    return {
+      requiresApproval: false,
+      isCompleted: false,
+      completedAt: null,
+      source: "fixed",
+    };
+  }
+
+  if (slot.taskId) {
+    const linkedTask = getTasks().find((task) => task.id === slot.taskId) ?? null;
+
+    return {
+      requiresApproval: true,
+      isCompleted: linkedTask?.status === "done",
+      completedAt: linkedTask?.completedAt ?? null,
+      source: "task",
+    };
+  }
+
+  const completedAt = getStoredScheduleApprovalAt(slot);
+
+  return {
+    requiresApproval: true,
+    isCompleted: Boolean(completedAt),
+    completedAt,
+    source: "slot",
+  };
+}
+
+export function toggleScheduleSlotApproval(
+  slot: Pick<ScheduleSlot, "id" | "taskId" | "source" | "tags" | "origin">,
+): ScheduleSlotApprovalState | null {
+  const current = getScheduleSlotApprovalState(slot);
+
+  if (!current.requiresApproval) {
+    return current;
+  }
+
+  if (slot.taskId) {
+    const updated = toggleDone(slot.taskId);
+    if (!updated) return null;
+
+    return {
+      requiresApproval: true,
+      isCompleted: updated.status === "done",
+      completedAt: updated.completedAt ?? null,
+      source: "task",
+    };
+  }
+
+  if (current.isCompleted) {
+    clearStoredScheduleApproval(slot);
+    return {
+      requiresApproval: true,
+      isCompleted: false,
+      completedAt: null,
+      source: "slot",
+    };
+  }
+
+  const now = new Date().toISOString();
+  setStoredScheduleApprovalAt(slot, now);
+
+  return {
+    requiresApproval: true,
+    isCompleted: true,
+    completedAt: now,
+    source: "slot",
+  };
 }
 
 export const SCHEDULE_RULES = [
@@ -939,29 +1075,36 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
 
   const nextTaskId = event.taskId ?? event.id;
   const linkedTask = getTasks().find((task) => task.id === nextTaskId);
+  const storedApprovalAt = getStoredScheduleApprovalAt(event);
 
   if (!linkedTask) {
     addTask(event.title, {
       id: nextTaskId,
       priority: defaultCustomEventTaskPriority(event),
       dueDate: event.date,
-      status: "active",
+      status: storedApprovalAt ? "done" : "active",
+      completedAt: storedApprovalAt ?? undefined,
       project: event.project,
       projectId: event.projectId,
       origin: event.origin,
     });
   } else {
-    const preserveDoneState = linkedTask.status === "done";
+    const preserveDoneState = linkedTask.status === "done" || Boolean(storedApprovalAt);
+    const completedAt = linkedTask.completedAt ?? storedApprovalAt ?? undefined;
 
     updateTask(linkedTask.id, {
       title: event.title,
       dueDate: event.date,
       status: preserveDoneState ? "done" : "active",
-      completedAt: preserveDoneState ? linkedTask.completedAt : undefined,
+      completedAt: preserveDoneState ? completedAt : undefined,
       project: event.project,
       projectId: event.projectId,
       origin: linkedTask.origin ?? event.origin,
     });
+  }
+
+  if (storedApprovalAt) {
+    clearStoredScheduleApproval(event);
   }
 
   return {
@@ -1067,6 +1210,7 @@ export function removeCustomEvent(id: string): boolean {
   if (idx === -1) return false;
   const [removed] = events.splice(idx, 1);
   saveCustomEvents(events);
+  clearStoredScheduleApproval({ id });
 
   if (removed && isTaskLikeCustomEvent(removed) && removed.taskId) {
     deleteTask(removed.taskId);
@@ -1082,12 +1226,16 @@ export function unscheduleCustomTaskEvent(id: string): boolean {
 
   const [removed] = events.splice(idx, 1);
   saveCustomEvents(events);
+  clearStoredScheduleApproval({ id });
 
   if (removed?.taskId) {
+    const linkedTask = getTasks().find((task) => task.id === removed.taskId) ?? null;
+
     updateTask(removed.taskId, {
       title: removed.title,
       dueDate: removed.date,
-      status: "active",
+      status: linkedTask?.status === "done" ? "done" : "active",
+      completedAt: linkedTask?.status === "done" ? linkedTask.completedAt : undefined,
     });
   }
 
@@ -1105,6 +1253,14 @@ export function updateCustomEvent(
   const next = syncCustomEventTask({ ...previous, ...patch });
 
   if (!isTaskLikeCustomEvent(next) && previous.taskId) {
+    const linkedTask = getTasks().find((task) => task.id === previous.taskId) ?? null;
+
+    if (linkedTask?.status === "done") {
+      setStoredScheduleApprovalAt(next, linkedTask.completedAt ?? new Date().toISOString());
+    } else {
+      clearStoredScheduleApproval(next);
+    }
+
     deleteTask(previous.taskId);
   }
 
