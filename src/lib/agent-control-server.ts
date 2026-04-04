@@ -13,7 +13,7 @@ import { DEFAULT_HABITS, isActiveOn, type Habit } from "./habits";
 import type { ScheduleSlot } from "./schedule";
 import { getScheduleForDate } from "./schedule";
 import type { StorageKey } from "./app-data-keys";
-import type { HeysHealthSignals } from "./heys-bridge";
+import type { HeysHealthSignals, HeysIntradaySignal } from "./heys-bridge";
 import {
   buildBundleContextProfile,
   getDayModePriorityHint,
@@ -833,5 +833,6 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
     areas,
     priorities,
     heysDayMode,
+    heysIntradaySignal: intraday as HeysIntradaySignal | null,
   };
 }

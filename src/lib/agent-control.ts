@@ -7,7 +7,7 @@ import { getScheduleForDate, type ScheduleSlot } from "./schedule";
 import { dateStr } from "./storage";
 import { getTasks } from "./tasks";
 import { getHeysSignals } from "./use-heys-sync";
-import type { HeysHealthSignals } from "./heys-bridge";
+import type { HeysHealthSignals, HeysIntradaySignal } from "./heys-bridge";
 import {
   buildBundleContextProfile,
   getDayModePriorityHint,
@@ -56,6 +56,7 @@ export type AgentControlSnapshot = {
   areas: AttentionArea[];
   priorities: AgentPriority[];
   heysDayMode: DayMode | null;
+  heysIntradaySignal: HeysIntradaySignal | null;
 };
 
 type UpcomingScheduleStats = {
@@ -705,5 +706,6 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
     areas,
     priorities,
     heysDayMode,
+    heysIntradaySignal: intraday,
   };
 }

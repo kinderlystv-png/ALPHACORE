@@ -110,6 +110,13 @@ type CorrelationInsight = {
   tone: MetricStatus | "neutral";
 };
 
+type IntradayRescheduleHint = {
+  id: string;
+  title: string;
+  detail: string;
+  tone: MetricStatus | "neutral";
+};
+
 type TraceItem = {
   id: string;
   kind: "task" | "slot";
@@ -671,6 +678,72 @@ function buildIntradaySub(
 ): string | undefined {
   if (shift?.delta == null) return undefined;
   return `с утра ${fmtSigned(shift.delta, 1)}${signal?.lastCheckInAt ? ` · ${signal.lastCheckInAt}` : ""}`;
+}
+
+function shortenLabel(text: string, maxLength = 52): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function buildIntradayRescheduleHints(input: {
+  signal: HeysIntradaySignal | null | undefined;
+  topMetricKey: MetricKey;
+  slotOptions: WeeklySlotOption[];
+  tasks: Task[];
+}): IntradayRescheduleHint[] {
+  const { signal, topMetricKey, slotOptions, tasks } = input;
+
+  if (
+    !signal ||
+    (signal.status !== "critical" && signal.status !== "watch") ||
+    (signal.momentum !== "worsening" && signal.momentum !== "mixed")
+  ) {
+    return [];
+  }
+
+  const today = todayDateKey();
+  const focusLabel = signal.focusMetricKey ? getMetricLabel(signal.focusMetricKey).toLowerCase() : getMetricLabel(topMetricKey).toLowerCase();
+  const hints: IntradayRescheduleHint[] = [];
+  const nextSlot = slotOptions[0] ?? null;
+
+  if (nextSlot) {
+    hints.push({
+      id: `slot-${nextSlot.date}-${nextSlot.start}`,
+      title: "Сжать ближайший слот",
+      detail:
+        nextSlot.date === today
+          ? `${nextSlot.start}–${nextSlot.end} оставить только под один 25–30 мин sprint, а остаток дня не раздувать на фоне просадки ${focusLabel}.`
+          : `Следующее окно ${nextSlot.date} ${nextSlot.start}–${nextSlot.end} лучше заранее держать коротким и не забивать хвостами, если ${focusLabel} продолжит ехать.`,
+      tone: signal.status === "critical" ? "bad" : "warn",
+    });
+  }
+
+  const deferrableTask =
+    tasks.find((task) => task.dueDate === today && task.priority !== "p1" && task.status === "active") ??
+    tasks.find((task) => task.dueDate === today && task.status === "inbox") ??
+    null;
+
+  if (deferrableTask) {
+    hints.push({
+      id: `task-${deferrableTask.id}`,
+      title: "Вынести один хвост из сегодня",
+      detail: `${shortenLabel(deferrableTask.title)} лучше не держать в остатке дня: перенеси или преврати в soft task, чтобы не усиливать drift по ${focusLabel}.`,
+      tone: signal.status === "critical" ? "bad" : "warn",
+    });
+  }
+
+  if (signal.trainingCountToday > 0 || signal.mealCountToday > 1) {
+    hints.push({
+      id: "recovery-buffer",
+      title: "Оставить тихий recovery-буфер",
+      detail:
+        signal.trainingCountToday > 0
+          ? `После тренировки не добавляй вторую рабочую волну: лучше оставить quiet buffer на воду, шаги и нормализацию ${focusLabel}.`
+          : `После плотных приёмов пищи лучше оставить короткий quiet buffer, а не добивать день новыми переключениями, пока едет ${focusLabel}.`,
+      tone: "warn",
+    });
+  }
+
+  return hints.slice(0, 3);
 }
 
 function createHeysOrigin(
@@ -2705,6 +2778,12 @@ export function HeysHealthPanel() {
     effectiveTopRecommendation === "slot"
       ? getAutopilotSlotOptions(topMetric.key, topActionPlan).slice(0, 3)
       : [];
+  const intradayRescheduleHints = buildIntradayRescheduleHints({
+    signal: intradaySignal,
+    topMetricKey: topMetric.key,
+    slotOptions: weeklySlotOptions,
+    tasks,
+  });
   const correlationInsights = buildCorrelationInsights(
     days,
     snapshot.profile?.stepsGoal,
@@ -3168,6 +3247,25 @@ export function HeysHealthPanel() {
               <p className="text-[11px] leading-5 text-zinc-500">
                 Этот live-сигнал уже влияет на day mode, автопилот и выбор между слотами, recovery и задачами.
               </p>
+
+              {intradayRescheduleHints.length > 0 && (
+                <div className="rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Reschedule now</p>
+                  <div className="mt-2 space-y-2">
+                    {intradayRescheduleHints.map((hint) => (
+                      <div key={hint.id} className="rounded-2xl border border-zinc-800/70 bg-zinc-950/40 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-medium text-zinc-100">{hint.title}</p>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${toneBadgeClass(hint.tone)}`}>
+                            {hint.tone === "bad" ? "now" : hint.tone === "warn" ? "watch" : "hint"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[12px] leading-5 text-zinc-400">{hint.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

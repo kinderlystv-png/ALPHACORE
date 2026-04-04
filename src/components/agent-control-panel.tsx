@@ -131,6 +131,7 @@ function loadRuntimeContext(snapshot: AgentControlSnapshot): RecommendationRunti
     todaySchedule: getScheduleForDate(today),
     upcomingSchedule: collectUpcomingSchedule(today, 7),
     heysDayMode: snapshot.heysDayMode,
+    heysIntradaySignal: snapshot.heysIntradaySignal,
   });
 }
 
@@ -187,6 +188,9 @@ function buildBundleOrchestrationPrompt(
       : null,
     practicalPlan?.weeklyNudges.length
       ? `Weekly nudges: ${practicalPlan.weeklyNudges.map((nudge) => `${nudge.title} — ${nudge.detail}`).join(" | ")}`
+      : null,
+    practicalPlan?.intradayReschedule.length
+      ? `Intraday rescue moves: ${practicalPlan.intradayReschedule.map((move) => `${move.title} — ${move.detail}`).join(" | ")}`
       : null,
     "",
     "Что мне нужно:",
@@ -265,6 +269,13 @@ function buildPracticalPlanSection(plan: AgentPracticalPlan): string {
       ? [
           "Weekly nudges",
           ...plan.weeklyNudges.map((nudge) => `- [${nudge.kind}] ${nudge.title} — ${nudge.detail}`),
+          "",
+        ]
+      : []),
+    ...(plan.intradayReschedule.length > 0
+      ? [
+          "Reschedule now",
+          ...plan.intradayReschedule.map((move) => `- [${move.kind}] ${move.title} — ${move.detail}`),
           "",
         ]
       : []),
@@ -702,6 +713,7 @@ function RecommendationCard({
 }
 
 type PracticalPlanNudge = AgentPracticalPlan["weeklyNudges"][number];
+type PracticalPlanRescheduleMove = AgentPracticalPlan["intradayReschedule"][number];
 
 function getPlanNudgeIcon(kind: PracticalPlanNudge["kind"]): string {
   switch (kind) {
@@ -726,6 +738,36 @@ function getPlanNudgeLabel(kind: PracticalPlanNudge["kind"]): string {
       return "avoid";
     case "rebalance":
       return "rebalance";
+  }
+}
+
+function getPlanRescheduleIcon(kind: PracticalPlanRescheduleMove["kind"]): string {
+  switch (kind) {
+    case "compress-slot":
+      return "✂️";
+    case "protect-recovery":
+      return "🛟";
+    case "convert-slot":
+      return "🌙";
+    case "move-task":
+      return "↪️";
+    case "unslot":
+      return "🗓️";
+  }
+}
+
+function getPlanRescheduleLabel(kind: PracticalPlanRescheduleMove["kind"]): string {
+  switch (kind) {
+    case "compress-slot":
+      return "compress";
+    case "protect-recovery":
+      return "protect";
+    case "convert-slot":
+      return "convert";
+    case "move-task":
+      return "move";
+    case "unslot":
+      return "unslot";
   }
 }
 
@@ -827,6 +869,29 @@ function PracticalPlanCard({ plan }: { plan: AgentPracticalPlan }) {
               </div>
             </div>
           )}
+
+          {plan.intradayReschedule.length > 0 && (
+      <div>
+        <p className="text-[10px] uppercase tracking-widest text-zinc-500">Reschedule now</p>
+        <div className="mt-2 grid gap-2 lg:grid-cols-2">
+          {plan.intradayReschedule.map((move) => (
+            <div
+              key={move.id}
+              className="rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm">{getPlanRescheduleIcon(move.kind)}</span>
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${LEVEL_PILL_CLS[move.tone]}`}>
+                  {getPlanRescheduleLabel(move.kind)}
+                </span>
+              </div>
+              <p className="mt-2 text-sm font-medium text-zinc-100">{move.title}</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-400">{move.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
 
           {plan.planningContourSummary && (
             <div>

@@ -5,6 +5,7 @@ import type {
 	AttentionAreaKey,
 	AttentionLevel,
 } from "./agent-control";
+import type { HeysIntradaySignal } from "./heys-bridge";
 import type { Habit } from "./habits";
 import type { JournalEntry } from "./journal";
 import { paramStatus, type MedEntry, type MedParam } from "./medical";
@@ -129,6 +130,7 @@ export type RecommendationRuntimeInput = {
 	todaySchedule: ScheduleSlot[];
 	upcomingSchedule: ScheduleSlot[];
 	heysDayMode?: DayMode | null;
+	heysIntradaySignal?: HeysIntradaySignal | null;
 };
 
 export type RecommendationDayModeContext = {
@@ -138,6 +140,13 @@ export type RecommendationDayModeContext = {
 	summary: string | null;
 	tactics: string[];
 	noGo: string[];
+	intradaySignal: HeysIntradaySignal | null;
+	intradaySummary: string | null;
+	intradayFocusMetricLabel: string | null;
+	intradayWorsening: boolean;
+	intradayCritical: boolean;
+	intradayImproving: boolean;
+	intradayLastCheckInAt: string | null;
 };
 
 export type RecommendationRuntimeContext = {
@@ -298,6 +307,7 @@ export type AgentPracticalPlan = {
 	dayModeTactics: string[];
 	dayModeNoGo: string[];
 	weeklyNudges: AgentPracticalPlanNudge[];
+	intradayReschedule: AgentPracticalPlanRescheduleMove[];
 	mainDecision: string;
 	backupMoves: string[];
 	doneCriterion: string;
@@ -314,6 +324,14 @@ export type AgentPracticalPlan = {
 export type AgentPracticalPlanNudge = {
 	id: string;
 	kind: "protect" | "focus" | "avoid" | "rebalance";
+	tone: AttentionLevel;
+	title: string;
+	detail: string;
+};
+
+export type AgentPracticalPlanRescheduleMove = {
+	id: string;
+	kind: "compress-slot" | "protect-recovery" | "convert-slot" | "move-task" | "unslot";
 	tone: AttentionLevel;
 	title: string;
 	detail: string;
@@ -398,7 +416,19 @@ function buildDayModeNoGo(dayMode: DayMode): string[] {
 
 function buildRecommendationDayModeContext(
 	dayMode: DayMode | null | undefined,
+	intradaySignal: HeysIntradaySignal | null | undefined,
 ): RecommendationDayModeContext {
+	const intradayWorsening =
+		intradaySignal != null &&
+		(intradaySignal.momentum === "worsening" || intradaySignal.momentum === "mixed") &&
+		(intradaySignal.status === "watch" || intradaySignal.status === "critical");
+	const intradayCritical = intradaySignal?.status === "critical";
+	const intradayImproving =
+		intradaySignal?.momentum === "improving" && intradaySignal.status === "good";
+	const intradayFocusMetricLabel = intradaySignal?.focusMetricKey
+		? getMetricLabel(intradaySignal.focusMetricKey)
+		: null;
+
 	if (!dayMode) {
 		return {
 			dayMode: null,
@@ -407,6 +437,13 @@ function buildRecommendationDayModeContext(
 			summary: null,
 			tactics: [],
 			noGo: [],
+			intradaySignal: intradaySignal ?? null,
+			intradaySummary: intradaySignal?.summary ?? null,
+			intradayFocusMetricLabel,
+			intradayWorsening,
+			intradayCritical,
+			intradayImproving,
+			intradayLastCheckInAt: intradaySignal?.lastCheckInAt ?? null,
 		};
 	}
 
@@ -417,6 +454,13 @@ function buildRecommendationDayModeContext(
 		summary: `${dayMode.label} → ${dayMode.summary}`,
 		tactics: buildDayModeTactics(dayMode),
 		noGo: buildDayModeNoGo(dayMode),
+		intradaySignal: intradaySignal ?? null,
+		intradaySummary: intradaySignal?.summary ?? null,
+		intradayFocusMetricLabel,
+		intradayWorsening,
+		intradayCritical,
+		intradayImproving,
+		intradayLastCheckInAt: intradaySignal?.lastCheckInAt ?? null,
 	};
 }
 
@@ -1840,7 +1884,10 @@ export function buildClarificationLearningProfile(
 export function buildRecommendationRuntimeContext(
 	input: RecommendationRuntimeInput,
 ): RecommendationRuntimeContext {
-	const heysContext = buildRecommendationDayModeContext(input.heysDayMode ?? null);
+	const heysContext = buildRecommendationDayModeContext(
+		input.heysDayMode ?? null,
+		input.heysIntradaySignal ?? null,
+	);
 	const actionable = input.tasks
 		.filter((task) => task.status === "inbox" || task.status === "active")
 		.sort((left, right) => compareTasksByAttention(left, right, input.today));
@@ -2904,6 +2951,143 @@ function buildWeeklyNudges(input: {
 	return nudges.slice(0, 4);
 }
 
+function isUpcomingTodaySlot(
+	slot: Pick<ScheduleSlot, "date" | "end">,
+	today: string,
+	nowMinutes: number,
+): boolean {
+	return slot.date === today && timeToMinutes(slot.end) > nowMinutes + 5;
+}
+
+function buildIntradayRescheduleMoves(input: {
+	context: RecommendationRuntimeContext;
+	planningSlot: ScheduleSlot | null;
+	recoveryAnchor: RecoveryAnchor | null;
+	projectTarget: string;
+	leadTask: Task | null;
+	strictProtectiveMode: boolean;
+	protectiveMode: boolean;
+}): AgentPracticalPlanRescheduleMove[] {
+	const {
+		context,
+		planningSlot,
+		recoveryAnchor,
+		projectTarget,
+		leadTask,
+		strictProtectiveMode,
+		protectiveMode,
+	} = input;
+	const intraday = context.heys.intradaySignal;
+	const needsReschedule =
+		intraday != null && (context.heys.intradayWorsening || context.heys.intradayCritical);
+
+	if (!needsReschedule) {
+		return [];
+	}
+
+	const now = new Date();
+	const nowMinutes = now.getHours() * 60 + now.getMinutes();
+	const upcomingTodaySlots = context.schedule.today.filter((slot) =>
+		isUpcomingTodaySlot(slot, context.today, nowMinutes),
+	);
+	const focusMetric =
+		context.heys.intradayFocusMetricLabel?.toLowerCase() ??
+		context.heys.focusMetricLabel?.toLowerCase() ??
+		"энергии";
+	const moves: AgentPracticalPlanRescheduleMove[] = [];
+
+	const livePlanningSlot =
+		(planningSlot && isUpcomingTodaySlot(planningSlot, context.today, nowMinutes)
+			? planningSlot
+			: null) ??
+		upcomingTodaySlots.find(
+			(slot) => isPlanningSlot(slot) && !isTrueRecoverySlot(slot),
+		) ??
+		null;
+
+	if (livePlanningSlot) {
+		moves.push({
+			id: `intraday-compress-${livePlanningSlot.date}-${livePlanningSlot.start}`,
+			kind: "compress-slot",
+			tone: strictProtectiveMode || context.heys.intradayCritical ? "critical" : "watch",
+			title:
+				strictProtectiveMode || context.heys.intradayCritical
+					? "Сжать ближайший work-slot до decision sprint"
+					: "Облегчить ближайший work-slot прямо сегодня",
+			detail: `${formatSlotBrief(livePlanningSlot)} → оставить только ${projectTarget} на 25–30 минут, а остаток превратить в буфер под ${focusMetric}.`,
+		});
+	}
+
+	const liveRecoveryAnchor =
+		recoveryAnchor && isUpcomingTodaySlot(recoveryAnchor, context.today, nowMinutes)
+			? recoveryAnchor
+			: null;
+
+	if (liveRecoveryAnchor) {
+		moves.push({
+			id: `intraday-protect-${liveRecoveryAnchor.date}-${liveRecoveryAnchor.start}`,
+			kind: "protect-recovery",
+			tone: context.heys.intradayCritical ? "critical" : "watch",
+			title: "Не отдавать recovery-окно под хвосты",
+			detail: `${formatRecoveryAnchorBrief(liveRecoveryAnchor)} должно остаться пустым от переписки, мелких задач и новых обязательств, пока внутри дня едет ${focusMetric}.`,
+		});
+	} else {
+		const convertibleSlot =
+			upcomingTodaySlots.find(
+				(slot) =>
+					!isTrueRecoverySlot(slot) &&
+					(slot.tone === "review" || slot.tone === "personal" || slot.tone === "cleanup"),
+			) ?? null;
+
+		if (convertibleSlot) {
+			moves.push({
+				id: `intraday-convert-${convertibleSlot.date}-${convertibleSlot.start}`,
+				kind: "convert-slot",
+				tone: protectiveMode ? "watch" : "good",
+				title: "Перевести ближайшее тихое окно в recovery",
+				detail: `${formatSlotBrief(convertibleSlot)} лучше использовать как quiet recovery / stretch + walk, а не как ещё одну попытку дожать день через силу.`,
+			});
+		}
+	}
+
+	const customTaskSlot =
+		upcomingTodaySlots.find(
+			(slot) => isCustomScheduleSlot(slot) && slot.kind !== "event",
+		) ?? null;
+
+	if (customTaskSlot) {
+		moves.push({
+			id: `intraday-unslot-${customTaskSlot.id}`,
+			kind: "unslot",
+			tone: context.heys.intradayCritical ? "critical" : "watch",
+			title: "Снять из календаря хотя бы один task-slot",
+			detail: `${formatSlotBrief(customTaskSlot)} лучше не держать жёстко в остатке дня: оставить как soft task или перенести, чтобы не усиливать перегруз.`,
+		});
+	} else {
+		const futureTaskWindow =
+			context.tasks.distribution.suggestions.find(
+				(window) => window.date > context.today,
+			) ?? null;
+		const deferrableTask =
+			context.tasks.unscheduled[0] ??
+			context.tasks.dueSoon.find((task) => task.priority !== "p1") ??
+			context.tasks.actionable.find((task) => task.priority !== "p1") ??
+			leadTask;
+
+		if (deferrableTask && futureTaskWindow) {
+			moves.push({
+				id: `intraday-move-task-${deferrableTask.id}`,
+				kind: "move-task",
+				tone: context.heys.intradayCritical ? "critical" : "watch",
+				title: "Вынести один хвост из сегодня в спокойное окно",
+				detail: `${clipText(deferrableTask.title, 44)} лучше переложить в ${formatTaskWindowSuggestion(futureTaskWindow)}, чем тащить его фоном через ухудшение ${focusMetric}.`,
+			});
+		}
+	}
+
+	return moves.slice(0, 3);
+}
+
 export function buildAgentPracticalPlan(
 	recommendations: AgentRecommendation[],
 	context: RecommendationRuntimeContext | null | undefined,
@@ -3050,8 +3234,19 @@ export function buildAgentPracticalPlan(
 		strictProtectiveMode,
 		executionMode,
 	});
+	const intradayReschedule = buildIntradayRescheduleMoves({
+		context,
+		planningSlot,
+		recoveryAnchor,
+		projectTarget,
+		leadTask,
+		strictProtectiveMode,
+		protectiveMode,
+	});
 
-	const scheduleUpdate = recoveryAnchor
+	const scheduleUpdate = intradayReschedule[0]
+		? intradayReschedule[0].detail
+		: recoveryAnchor
 		? recoveryAnchor.mode === "protect"
 			? `Защитить ${formatRecoveryAnchorBrief(recoveryAnchor)} как recovery без других задач.`
 			: recoveryAnchor.mode === "create"
@@ -3083,6 +3278,7 @@ export function buildAgentPracticalPlan(
 		dayModeTactics: context.heys.tactics.slice(0, 3),
 		dayModeNoGo: context.heys.noGo.slice(0, 3),
 		weeklyNudges,
+		intradayReschedule,
 		mainDecision,
 		backupMoves,
 		doneCriterion:
