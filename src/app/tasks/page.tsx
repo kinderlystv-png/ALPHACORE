@@ -102,6 +102,12 @@ type TaskGroup = {
   focusMinutes: number;
 };
 
+type PrioritySwitchProps = {
+  value: Task["priority"];
+  onChange: (priority: Task["priority"]) => void;
+  size?: "sm" | "md";
+};
+
 function pluralizeTasks(count: number): string {
   const mod10 = count % 10;
   const mod100 = count % 100;
@@ -195,6 +201,40 @@ function formatGroupSummary(group: TaskGroup): string {
   }
 
   return parts.join(" · ");
+}
+
+function PrioritySwitch({ value, onChange, size = "sm" }: PrioritySwitchProps) {
+  const shellSizeCls = size === "md" ? "min-h-10 px-1.5 py-1.5" : "min-h-8 px-1 py-1";
+  const buttonSizeCls = size === "md" ? "px-2.5 py-1.5 text-xs" : "px-2 py-1 text-[10px]";
+  const hintTone = value === "p1" ? "text-rose-300" : "text-zinc-500";
+
+  return (
+    <div className={`flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 ${shellSizeCls}`}>
+      {(["p1", "p2", "p3"] as const).map((priority) => {
+        const isActive = value === priority;
+
+        return (
+          <button
+            key={priority}
+            type="button"
+            onClick={() => onChange(priority)}
+            title={PRIORITY_SWITCH_HINT[priority]}
+            aria-pressed={isActive}
+            className={`rounded-md border font-semibold uppercase tracking-wide transition ${buttonSizeCls} ${
+              isActive
+                ? PRIO_CLS[priority]
+                : "border-zinc-800 bg-zinc-900/70 text-zinc-500 hover:border-zinc-700 hover:text-zinc-200"
+            }`}
+          >
+            {PRIORITY_SWITCH_LABEL[priority]}
+          </button>
+        );
+      })}
+      <span className={`hidden pl-1 text-[10px] sm:inline ${hintTone}`}>
+        {PRIORITY_SWITCH_HINT[value]}
+      </span>
+    </div>
+  );
 }
 
 function dueBadge(due?: string): { cls: string; label: string } | null {
@@ -502,15 +542,7 @@ export default function TasksPage() {
             suggestedAccent="violet"
             size="md"
           />
-          <select
-            value={prio}
-            onChange={(event) => setPrio(event.target.value as "p1" | "p2" | "p3")}
-            className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none"
-          >
-            <option value="p1">P1</option>
-            <option value="p2">P2</option>
-            <option value="p3">P3</option>
-          </select>
+          <PrioritySwitch value={prio} onChange={(priority) => setPrio(priority)} size="md" />
           <input
             type="date"
             value={dueDate}
@@ -702,31 +734,11 @@ export default function TasksPage() {
                               suggestedAccent="violet"
                               size="sm"
                             />
-                            <div className="flex min-h-8 items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 px-1 py-1">
-                              {(["p1", "p2", "p3"] as const).map((priority) => {
-                                const isActive = task.priority === priority;
-
-                                return (
-                                  <button
-                                    key={priority}
-                                    type="button"
-                                    onClick={() => handleSetPriority(task.id, priority)}
-                                    title={PRIORITY_SWITCH_HINT[priority]}
-                                    aria-pressed={isActive}
-                                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition ${
-                                      isActive
-                                        ? PRIO_CLS[priority]
-                                        : "border-zinc-800 bg-zinc-900/70 text-zinc-500 hover:border-zinc-700 hover:text-zinc-200"
-                                    }`}
-                                  >
-                                    {PRIORITY_SWITCH_LABEL[priority]}
-                                  </button>
-                                );
-                              })}
-                              <span className="hidden pl-1 text-[10px] text-zinc-500 sm:inline">
-                                {task.priority === "p1" ? "Супер срочно" : "priority"}
-                              </span>
-                            </div>
+                            <PrioritySwitch
+                              value={task.priority}
+                              onChange={(priority) => handleSetPriority(task.id, priority)}
+                              size="sm"
+                            />
                           </div>
                         )}
                       </div>
