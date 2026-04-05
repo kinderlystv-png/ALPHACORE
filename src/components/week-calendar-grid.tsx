@@ -10,8 +10,8 @@ import { CalendarQuickMenu } from "@/components/calendar-quick-menu";
 import { CalendarReboundPreview } from "@/components/calendar-rebound-preview";
 import { useCalendarPointerEdit } from "@/components/use-calendar-pointer-edit";
 import { useCalendarQuickMenu } from "@/components/use-calendar-quick-menu";
+import { useCalendarTaskDragAndDrop } from "@/components/use-calendar-task-dnd";
 import {
-  DEFAULT_CUSTOM_DURATION_MIN,
   DESKTOP_SLOT_HINT_DELAY_MS,
   DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT,
   DESKTOP_SLOT_HINT_WIDTH,
@@ -19,24 +19,19 @@ import {
   HEADER_TASK_GAP,
   HEADER_TASK_MARGIN_TOP,
   HEADER_TASK_ROW_H,
-  HOUR_END,
   HOUR_START,
   ROW_H,
-  STEP_MIN,
   TOTAL_HOURS,
   clamp,
   formatHour,
   getCompactStart,
   getDayModeBadgeClass,
-  minutesToCalendarTime,
   slotTop as sharedSlotTop,
-  toneFromArea,
   centerNowLine,
   type CalendarViewMode,
   type DayColumn,
   type DesktopSlotHintContent,
   type DesktopSlotHintState,
-  type DragState,
   type EditableSlotDraft,
   type WeekCalendarGridProps,
 } from "@/components/calendar-grid-types";
@@ -61,19 +56,15 @@ import {
 import {
   AREA_COLOR,
   AREA_LEGEND,
-  taskArea,
   taskColor,
 } from "@/lib/life-areas";
 import {
   getScheduledTaskIds,
   toggleScheduleSlotApproval,
-  upsertTaskSlot,
   type ScheduleSlot,
-  type ScheduleTone,
   getScheduleForDate,
   timeToMinutes,
 } from "@/lib/schedule";
-import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { getProjects } from "@/lib/projects";
 import { dateStr, subscribeAppDataChange } from "@/lib/storage";
 import {
@@ -81,7 +72,6 @@ import {
   getActionableTasks,
   getTasks,
   type Task,
-  updateTask,
 } from "@/lib/tasks";
 import { useHeysSync } from "@/lib/use-heys-sync";
 
@@ -118,46 +108,6 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
   return isToday && task.dueDate < today;
 }
 
-function inferTaskSlotTone(task: Task): ScheduleTone {
-  const projectLabel = `${task.projectId ?? ""} ${task.project ?? ""}`.toLowerCase();
-
-  if (projectLabel.includes("kinderly")) return "kinderly";
-  if (projectLabel.includes("heys")) return "heys";
-
-  return toneFromArea(taskArea(task));
-}
-
-function buildTaskSlotTags(task: Task): string[] {
-  const projectTag = (task.projectId ?? task.project ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return [...new Set([
-    "task",
-    "task-slot",
-    task.priority,
-    task.status,
-    ...(projectTag ? [projectTag] : []),
-  ])];
-}
-
-function getTaskDropStartMinutes(
-  event: React.DragEvent<HTMLDivElement>,
-  hour: number,
-): number {
-  const rect = event.currentTarget.getBoundingClientRect();
-  const pointerOffset = event.clientY - rect.top;
-  const minuteOffset = pointerOffset >= rect.height / 2 ? STEP_MIN : 0;
-
-  return clamp(
-    hour * 60 + minuteOffset,
-    HOUR_START * 60,
-    HOUR_END * 60 - DEFAULT_CUSTOM_DURATION_MIN,
-  );
-}
-
 /* ── Component ── */
 
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
@@ -165,8 +115,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [version, setVersion] = useState(0);
   const [anchor, setAnchor] = useState<Date | null>(null);
   const [shouldCenterNow, setShouldCenterNow] = useState(true);
-  const [drag, setDrag] = useState<DragState>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [hoveredSlotKey, setHoveredSlotKey] = useState<string | null>(null);
   const [desktopSlotHint, setDesktopSlotHint] = useState<DesktopSlotHintState | null>(null);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
@@ -465,6 +413,21 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     onVersionBump: bumpVersion,
   });
 
+  const {
+    drag,
+    dropTarget,
+    beginTaskDrag,
+    endTaskDrag,
+    handleDragOver,
+    handleDragLeave,
+    handleDropToDayHeader,
+    handleDropToTimeCell,
+  } = useCalendarTaskDragAndDrop({
+    linkedTasksById,
+    getBlockingSlot,
+    onVersionBump: bumpVersion,
+  });
+
   useEffect(() => {
     return () => {
       clearDesktopSlotHintTimer();
@@ -534,107 +497,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [viewMode, columns.length, compactCount, shiftWeek, goToday]);
 
-  // drag handlers
-  const onDragStartTask = useCallback((taskId: string, originDay: string) => {
-    setDrag({ type: "task", taskId, originDay });
-  }, []);
-
-  const moveTaskToDay = useCallback((taskId: string, targetDay: string) => {
-    const task = linkedTasksById.get(taskId);
-    if (!task) return false;
-    if (task.dueDate === targetDay) return false;
-
-    updateTask(taskId, { dueDate: targetDay });
-    return true;
-  }, [linkedTasksById]);
-
   const toggleSlotApproval = useCallback((slot: ScheduleSlot) => {
     toggleScheduleSlotApproval(slot);
     setVersion((value) => value + 1);
-  }, []);
-
-  const scheduleTaskFromDrop = useCallback((
-    taskId: string,
-    targetDay: string,
-    startMinutes: number,
-  ) => {
-    const task = linkedTasksById.get(taskId);
-    if (!task) return false;
-
-    const draft: EditableSlotDraft = {
-      id: null,
-      date: targetDay,
-      start: minutesToCalendarTime(startMinutes),
-      end: minutesToCalendarTime(startMinutes + DEFAULT_CUSTOM_DURATION_MIN),
-      title: task.title,
-      tone: inferTaskSlotTone(task),
-      tags: buildTaskSlotTags(task),
-      kind: "task",
-    };
-
-    const blockingSlot = getBlockingSlot(draft, null);
-    if (blockingSlot) {
-      return false;
-    }
-
-    const scheduled = upsertTaskSlot({
-      taskId,
-      date: draft.date,
-      start: draft.start,
-      end: draft.end,
-      title: draft.title,
-      tone: draft.tone,
-      tags: draft.tags,
-    });
-
-    if (!scheduled) return false;
-
-    setVersion((value) => value + 1);
-    return true;
-  }, [getBlockingSlot, linkedTasksById]);
-
-  const onDragOver = useCallback((e: React.DragEvent, dayKey: string) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDropTarget(dayKey);
-  }, []);
-
-  const onDragLeave = useCallback(() => {
-    setDropTarget(null);
-  }, []);
-
-  const onDropToDayHeader = useCallback(
-    (e: React.DragEvent, targetDay: string) => {
-      e.preventDefault();
-      setDropTarget(null);
-      const taskId = readTaskDragId(e.dataTransfer) ?? drag?.taskId ?? null;
-      if (!taskId) return;
-
-      moveTaskToDay(taskId, targetDay);
-
-      setDrag(null);
-    },
-    [drag?.taskId, moveTaskToDay],
-  );
-
-  const onDropToTimeCell = useCallback(
-    (e: React.DragEvent<HTMLDivElement>, targetDay: string, hour: number) => {
-      e.preventDefault();
-      setDropTarget(null);
-      const taskId = readTaskDragId(e.dataTransfer) ?? drag?.taskId ?? null;
-      if (!taskId) return;
-
-      const startMinutes = getTaskDropStartMinutes(e, hour);
-      scheduleTaskFromDrop(taskId, targetDay, startMinutes);
-
-      setDrag(null);
-    },
-    [drag?.taskId, scheduleTaskFromDrop],
-  );
-
-  const onDragEnd = useCallback(() => {
-    setDrag(null);
-    setDropTarget(null);
   }, []);
 
   // week label
@@ -842,9 +707,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 col.isToday ? "border-r-sky-400/35" : "border-r-zinc-700/70"
               }`}
               style={{ height: headerHeight }}
-              onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
-              onDragLeave={!col.isPast ? onDragLeave : undefined}
-              onDrop={(e) => !col.isPast && onDropToDayHeader(e, col.key)}
+              onDragOver={(e) => !col.isPast && handleDragOver(e, col.key)}
+              onDragLeave={!col.isPast ? handleDragLeave : undefined}
+              onDrop={(e) => !col.isPast && handleDropToDayHeader(e, col.key)}
             >
               <p
                 className={`text-center text-[9px] uppercase tracking-[0.18em] ${
@@ -889,11 +754,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                         draggable={!col.isPast}
                         onDragStart={(e) => {
                           if (col.isPast) return;
-                          e.dataTransfer.effectAllowed = "move";
-                          writeTaskDragData(e.dataTransfer, t.id);
-                          onDragStartTask(t.id, col.key);
+                          beginTaskDrag(e, t.id, col.key);
                         }}
-                        onDragEnd={onDragEnd}
+                        onDragEnd={endTaskDrag}
                         className={`block w-full truncate rounded-md border px-2 py-1 text-left text-[10px] font-medium leading-tight ${
                           col.isPast
                             ? "border-zinc-800 bg-zinc-900/50 text-zinc-600"
@@ -946,9 +809,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                       col.isToday ? "border-r-sky-400/18" : "border-r-zinc-700/30"
                     }`}
                     style={{ height: ROW_H }}
-                    onDragOver={(e) => !col.isPast && onDragOver(e, col.key)}
-                    onDragLeave={!col.isPast ? onDragLeave : undefined}
-                    onDrop={(e) => !col.isPast && onDropToTimeCell(e, col.key, hour)}
+                    onDragOver={(e) => !col.isPast && handleDragOver(e, col.key)}
+                    onDragLeave={!col.isPast ? handleDragLeave : undefined}
+                    onDrop={(e) => !col.isPast && handleDropToTimeCell(e, col.key, hour)}
                     onPointerDown={(e) => {
                       if (col.isPast) return;
                       queuePointerEdit("create", e, col.key, null);
