@@ -11,7 +11,6 @@ import {
   getScheduleSlotApprovalState,
   timeToMinutes,
   type ScheduleSlot,
-  type ScheduleTone,
 } from "@/lib/schedule";
 import { toneColor } from "@/lib/life-areas";
 import type { Project } from "@/lib/projects";

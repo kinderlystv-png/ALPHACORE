@@ -4,7 +4,64 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
 import { CalendarDesktopHint } from "@/components/calendar-desktop-hint";
+import { CalendarNowLine } from "@/components/calendar-now-line";
 import { CalendarQuickMenu } from "@/components/calendar-quick-menu";
+import {
+  AUTO_SCROLL_EDGE_PX,
+  AUTO_SCROLL_MAX_STEP,
+  DEFAULT_CUSTOM_DURATION_MIN,
+  DESKTOP_SLOT_HINT_DELAY_MS,
+  DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT,
+  DESKTOP_SLOT_HINT_WIDTH,
+  HEADER_BASE_H,
+  HEADER_TASK_GAP,
+  HEADER_TASK_MARGIN_TOP,
+  HEADER_TASK_ROW_H,
+  HOUR_END,
+  HOUR_START,
+  MIN_SLOT_MIN,
+  MOUSE_HOLD_MS,
+  POINTER_SLOP_PX,
+  QUICK_MENU_ESTIMATED_HEIGHT,
+  ROW_H,
+  STEP_MIN,
+  SLOT_LANE_GAP_PX,
+  SLOT_SIDE_INSET_PX,
+  SUPPORT_LANE_RATIO,
+  TOTAL_HOURS,
+  TOUCH_HOLD_MS,
+  clamp,
+  copyTitle,
+  formatDurationDelta,
+  formatHour,
+  getCompactStart,
+  getDayModeBadgeClass,
+  getSupportNoteChipClass,
+  minutesToCalendarTime,
+  sameEdgeCue,
+  slotHeight as sharedSlotHeight,
+  slotTop as sharedSlotTop,
+  snapMinutes,
+  toneFromArea,
+  vibrateIfAvailable,
+  centerNowLine,
+  type ActivePointerEdit,
+  type CalendarViewMode,
+  type DayColumn,
+  type DesktopSlotHintContent,
+  type DesktopSlotHintState,
+  type DragState,
+  type EdgeCueState,
+  type EditableSlotDraft,
+  type LaneMetrics,
+  type LaneRenderable,
+  type PendingPointerEdit,
+  type PointerEditMode,
+  type QuickMenuState,
+  type ReboundPreview,
+  type TimeRange,
+  type WeekCalendarGridProps,
+} from "@/components/calendar-grid-types";
 
 import {
   getSlotCarryoverActions,
@@ -12,7 +69,6 @@ import {
 } from "@/lib/calendar-slot-carryover";
 import {
   getCalendarDayPressure,
-  type CalendarDayPressure,
 } from "@/lib/calendar-day-pressure";
 import {
   getCalendarSlotSupportNote,
@@ -22,7 +78,6 @@ import {
   buildBundleContextProfile,
   getDefaultMetricKey,
   getHeysDayMode,
-  type DayMode,
 } from "@/lib/heys-day-mode";
 import {
   formatCompletionLabel,
@@ -34,7 +89,6 @@ import { getScheduleSlotExplainability } from "@/lib/calendar-slot-explainabilit
 import {
   AREA_COLOR,
   AREA_LEGEND,
-  type LifeArea,
   taskArea,
   taskColor,
   toneColor,
@@ -53,7 +107,6 @@ import {
   upsertTaskSlot,
   unscheduleCustomTaskEvent,
   type ScheduleSlot,
-  type ScheduleSource,
   type ScheduleTone,
   getScheduleForDate,
   timeToMinutes,
@@ -70,43 +123,6 @@ import {
   updateTask,
 } from "@/lib/tasks";
 import { useHeysSync } from "@/lib/use-heys-sync";
-
-/* ── Constants ── */
-
-const HOUR_START = 5; // 05:00
-const HOUR_END = 26; // 02:00 next day
-const TOTAL_HOURS = HOUR_END - HOUR_START; // 21
-const ROW_H = 56; // px per hour row
-const HEADER_BASE_H = 66; // day/date header height without day tasks
-const HEADER_TASK_ROW_H = 24;
-const HEADER_TASK_GAP = 4;
-const HEADER_TASK_MARGIN_TOP = 6;
-const STEP_MIN = 30;
-const MIN_SLOT_MIN = 30;
-const DEFAULT_CUSTOM_DURATION_MIN = 60;
-const MOUSE_HOLD_MS = 110;
-const TOUCH_HOLD_MS = 240;
-const POINTER_SLOP_PX = 10;
-const AUTO_SCROLL_EDGE_PX = 72;
-const AUTO_SCROLL_MAX_STEP = 24;
-const QUICK_MENU_ESTIMATED_HEIGHT = 560;
-const SUPPORT_LANE_RATIO = 0.36;
-const SLOT_SIDE_INSET_PX = 4;
-const SLOT_LANE_GAP_PX = 6;
-const DESKTOP_SLOT_HINT_DELAY_MS = 3000;
-const DESKTOP_SLOT_HINT_WIDTH = 296;
-const DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT = 248;
-
-const QUICK_TONE_OPTIONS: Array<{ value: ScheduleTone; label: string }> = [
-  { value: "work", label: "💼 Работа" },
-  { value: "kinderly", label: "🎉 Kinderly" },
-  { value: "heys", label: "⚙️ HEYS" },
-  { value: "health", label: "🫀 Здоровье" },
-  { value: "personal", label: "🌙 Личное" },
-  { value: "cleanup", label: "🧹 Опер." },
-  { value: "family", label: "🏡 Семья" },
-  { value: "review", label: "🧠 Review" },
-];
 
 /* ── Helpers ── */
 
@@ -132,13 +148,11 @@ function buildWindow(anchor: Date): Date[] {
 }
 
 function slotTop(startTime: string): number {
-  const mins = timeToMinutes(startTime);
-  return ((mins - HOUR_START * 60) / 60) * ROW_H;
+  return sharedSlotTop(startTime, timeToMinutes);
 }
 
 function slotHeight(start: string, end: string): number {
-  const duration = timeToMinutes(end) - timeToMinutes(start);
-  return Math.max((duration / 60) * ROW_H, 20);
+  return sharedSlotHeight(start, end, timeToMinutes);
 }
 
 function getTaskCompletionDetails(
@@ -175,50 +189,6 @@ function isYesterdayUndoneTask(
   today: string,
 ): boolean {
   return isOverdueUndoneTask(task, today) && task.dueDate === shiftDateKey(today, -1);
-}
-
-function formatHour(hour: number): string {
-  const displayHour = hour % 24;
-  return `${String(displayHour).padStart(2, "0")}:00`;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-function snapMinutes(minutes: number): number {
-  return Math.round(minutes / STEP_MIN) * STEP_MIN;
-}
-
-function minutesToCalendarTime(minutes: number): string {
-  const safe = Math.min(Math.max(0, minutes), HOUR_END * 60);
-  const h = Math.floor(safe / 60);
-  const m = safe % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function copyTitle(title: string): string {
-  const trimmed = title.trim();
-  if (trimmed.toLowerCase().endsWith("(копия)")) return trimmed;
-  return `${trimmed} (копия)`;
-}
-
-function toneFromArea(area: LifeArea): ScheduleTone {
-  switch (area) {
-    case "health":
-      return "health";
-    case "family":
-      return "family";
-    case "reflection":
-      return "review";
-    case "recovery":
-      return "personal";
-    case "operations":
-      return "cleanup";
-    case "work":
-    default:
-      return "work";
-  }
 }
 
 function inferTaskSlotTone(task: Task): ScheduleTone {
@@ -288,25 +258,6 @@ function getSlotProjectLabel(
   }
   return slot.project ?? linkedTask?.project ?? null;
 }
-
-type TimeRange = {
-  start: string;
-  end: string;
-};
-
-type LaneRenderable = {
-  id: string;
-  start: string;
-  end: string;
-  source: ScheduleSource;
-  tags: string[];
-};
-
-type LaneMetrics = {
-  left: number;
-  width: number;
-  isSupportLane: boolean;
-};
 
 function rangesOverlap(left: TimeRange, right: TimeRange): boolean {
   return (
@@ -482,54 +433,6 @@ function getLaneMetrics(
   };
 }
 
-function vibrateIfAvailable(pattern: number | number[]) {
-  if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return;
-  navigator.vibrate(pattern);
-}
-
-function sameEdgeCue(
-  left: { top: number; bottom: number; left: number; right: number },
-  right: { top: number; bottom: number; left: number; right: number },
-) {
-  return (
-    left.top === right.top &&
-    left.bottom === right.bottom &&
-    left.left === right.left &&
-    left.right === right.right
-  );
-}
-
-function formatDurationDelta(minutes: number): string {
-  if (minutes === 0) return "±0м";
-  const sign = minutes > 0 ? "+" : "−";
-  const abs = Math.abs(minutes);
-  if (abs % 60 === 0) return `${sign}${abs / 60}ч`;
-  if (abs > 60) {
-    const hours = Math.floor(abs / 60);
-    const rest = abs % 60;
-    return `${sign}${hours}ч ${rest}м`;
-  }
-  return `${sign}${abs}м`;
-}
-
-type DesktopSlotHintTone = "rose" | "amber" | "sky" | "zinc" | "emerald" | "violet";
-
-type DesktopSlotHintContent = {
-  eyebrow: string;
-  title: string;
-  summary: string;
-  detail?: string;
-  points?: string[];
-  tone: DesktopSlotHintTone;
-  icon?: string;
-};
-
-type DesktopSlotHintState = DesktopSlotHintContent & {
-  slotKey: string;
-  left: number;
-  top: number;
-};
-
 function getExplainabilityDesktopHint(
   slot: Pick<ScheduleSlot, "source" | "tags">,
   explainability: ReturnType<typeof getScheduleSlotExplainability>,
@@ -670,152 +573,6 @@ function toSupportDesktopHintContent(
     tone: note.tone,
     icon: note.icon,
   };
-}
-
-function getSupportNoteChipClass(
-  tone: CalendarSlotSupportNote["tone"],
-  isMuted: boolean,
-): string {
-  if (isMuted) {
-    return "border-zinc-700 bg-zinc-900/80 text-zinc-500";
-  }
-
-  switch (tone) {
-    case "rose":
-      return "border-rose-400/30 bg-rose-500/12 text-rose-100";
-    case "amber":
-      return "border-amber-400/30 bg-amber-500/12 text-amber-100";
-    case "sky":
-      return "border-sky-400/30 bg-sky-500/12 text-sky-100";
-    case "emerald":
-      return "border-emerald-400/30 bg-emerald-500/12 text-emerald-100";
-    case "violet":
-      return "border-violet-400/30 bg-violet-500/12 text-violet-100";
-    default:
-      return "border-white/10 bg-black/10 text-white/75";
-  }
-}
-
-function getDayModeBadgeClass(dayMode: DayMode): string {
-  switch (dayMode.id) {
-    case "damage-control":
-      return "border-rose-500/25 bg-rose-500/10 text-rose-200";
-    case "recovery":
-      return "border-amber-500/25 bg-amber-500/10 text-amber-200";
-    case "execution":
-      return "border-emerald-500/25 bg-emerald-500/10 text-emerald-200";
-    case "light-rhythm":
-    default:
-      return "border-zinc-700 bg-zinc-900/60 text-zinc-300";
-  }
-}
-
-/* ── Types ── */
-
-type DayColumn = {
-  key: string;
-  date: Date;
-  dayLabel: string;
-  dateLabel: string;
-  isToday: boolean;
-  isPast: boolean;
-  isWeekend: boolean;
-  pressure: CalendarDayPressure;
-  tasks: Task[];
-  slots: ScheduleSlot[];
-};
-
-type WeekCalendarGridProps = {
-  stats?: {
-    inboxCount: number;
-    activeCount: number;
-    doneThisWeek: number;
-  } | null;
-};
-
-type DragState =
-  | { type: "task"; taskId: string; originDay: string }
-  | null;
-
-type CalendarViewMode = "full" | "compact";
-
-type EditableSlotDraft = {
-  id: string | null;
-  date: string;
-  start: string;
-  end: string;
-  title: string;
-  tone: ScheduleTone;
-  tags: string[];
-  kind: "task" | "event";
-};
-
-type PointerEditMode = "move" | "resize-start" | "resize-end" | "create";
-
-type PendingPointerEdit = {
-  mode: PointerEditMode;
-  pointerId: number;
-  pointerType: string;
-  startX: number;
-  startY: number;
-  dayKey: string;
-  slot: ScheduleSlot | null;
-};
-
-type ActivePointerEdit = {
-  mode: PointerEditMode;
-  pointerId: number;
-  pointerType: string;
-  originClientX: number;
-  originClientY: number;
-  pointerOffsetMin: number;
-  originColumnIndex: number;
-  originalSlot: ScheduleSlot | null;
-  base: EditableSlotDraft;
-  draft: EditableSlotDraft;
-  hasMoved: boolean;
-  blocked: boolean;
-  blockingSlot: ScheduleSlot | null;
-};
-
-type QuickMenuState = {
-  slot: ScheduleSlot;
-  top: number;
-  left: number;
-  mobile: boolean;
-  draftTitle: string;
-  draftTone: ScheduleTone;
-  draftKind: "task" | "event";
-  draftProjectId: string;
-};
-
-type EdgeCueState = {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-};
-
-type ReboundPreview = {
-  id: string;
-  slotId: string | null;
-  slotDate: string;
-  from: EditableSlotDraft;
-  to: EditableSlotDraft;
-  stage: "from" | "to";
-  source: ScheduleSource;
-  tags: string[];
-  tone: ScheduleTone;
-  title: string;
-  blockedLabel: string | null;
-};
-
-function getCompactStart(columns: DayColumn[], compactCount: number): number {
-  if (columns.length <= compactCount) return 0;
-  const todayIndex = columns.findIndex((column) => column.isToday);
-  if (todayIndex < 0) return 0;
-
-  return Math.max(0, Math.min(todayIndex - 1, columns.length - compactCount));
 }
 
 /* ── Component ── */
@@ -2743,7 +2500,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                 })()}
 
                 {/* Now-line */}
-                {col.isToday && <NowLine />}
+                {col.isToday && <CalendarNowLine />}
                 </div>
               );
             })}
@@ -2905,46 +2662,4 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
       {desktopSlotHint && <CalendarDesktopHint hint={desktopSlotHint} />}
     </section>
   );
-}
-
-/* ── Now indicator ── */
-
-function NowLine() {
-  const [top, setTop] = useState(() => calcNowTop());
-
-  useEffect(() => {
-    const id = setInterval(() => setTop(calcNowTop()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (top < 0 || top > TOTAL_HOURS * ROW_H) return null;
-
-  return (
-    <div
-      className="pointer-events-none absolute left-0 right-0 z-30"
-      style={{ top }}
-    >
-      <div className="flex items-center">
-        <div className="h-2.5 w-2.5 rounded-full bg-rose-500" />
-        <div className="h-px flex-1 bg-rose-500/70" />
-      </div>
-    </div>
-  );
-}
-
-function calcNowTop(): number {
-  const now = new Date();
-  const mins = now.getHours() * 60 + now.getMinutes();
-  return ((mins - HOUR_START * 60) / 60) * ROW_H;
-}
-
-function centerNowLine(container: HTMLDivElement | null, headerHeight: number) {
-  if (!container) return;
-
-  const rowViewportHeight = Math.max(container.clientHeight - headerHeight, 0);
-  const rawTarget = calcNowTop() - rowViewportHeight / 2;
-  const maxScroll = Math.max(container.scrollHeight - container.clientHeight, 0);
-  const nextScrollTop = Math.min(Math.max(rawTarget, 0), maxScroll);
-
-  container.scrollTop = nextScrollTop;
 }
