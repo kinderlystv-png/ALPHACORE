@@ -61,8 +61,15 @@ type ProjectDraft = {
   deliverables: DraftDeliverable[];
 };
 
+type CreateEditorState = {
+  mode: "create";
+  parentProjectId?: string;
+  draft: ProjectDraft;
+  isDirty: boolean;
+};
+
 type EditorState =
-  | { mode: "create"; draft: ProjectDraft; isDirty: boolean }
+  | CreateEditorState
   | { mode: "edit"; projectId: string; draft: ProjectDraft; isDirty: boolean }
   | null;
 
@@ -94,6 +101,17 @@ function createDraft(project?: Project): ProjectDraft {
     nextStep: project.nextStep,
     kpis: project.kpis.map((item) => ({ ...item })),
     deliverables: project.deliverables.map((item) => ({ ...item })),
+  };
+}
+
+function createSubprojectDraft(parentProject: Project): ProjectDraft {
+  const base = createDraft();
+
+  return {
+    ...base,
+    status: parentProject.status,
+    accent: parentProject.accent,
+    description: `Подпроект внутри «${parentProject.name}».`,
   };
 }
 
@@ -133,6 +151,7 @@ function SubprojectTree({
   depth = 1,
   onEdit,
   onDelete,
+  onCreateSubproject,
 }: {
   parentId: string;
   projects: Project[];
@@ -140,6 +159,7 @@ function SubprojectTree({
   depth?: number;
   onEdit: (project: Project) => void;
   onDelete: (project: Project, directChildrenCount: number) => void;
+  onCreateSubproject: (project: Project) => void;
 }) {
   const children = getChildProjects(parentId, projects);
 
@@ -186,6 +206,14 @@ function SubprojectTree({
                 >
                   <span className={`h-2 w-2 rounded-full ${STATUS_DOT[project.status]}`} />
                   {STATUS_LABEL[project.status]}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCreateSubproject(project)}
+                  className="rounded-full border border-sky-500/20 px-2 py-1 text-[10px] text-sky-300 transition hover:bg-sky-500/10"
+                  title="Добавить вложенный подпроект"
+                >
+                  ↳＋
                 </button>
                 <button
                   type="button"
@@ -255,6 +283,7 @@ function SubprojectTree({
               depth={depth + 1}
               onEdit={onEdit}
               onDelete={onDelete}
+              onCreateSubproject={onCreateSubproject}
             />
           </article>
         );
@@ -265,16 +294,19 @@ function SubprojectTree({
 
 function ProjectEditor({
   state,
+  parentProjectLabel,
   onChange,
   onSave,
   onCancel,
 }: {
   state: Exclude<EditorState, null>;
+  parentProjectLabel?: string | null;
   onChange: (draft: ProjectDraft) => void;
   onSave: () => void;
   onCancel: () => void;
 }) {
   const { draft } = state;
+  const isCreatingSubproject = state.mode === "create" && !!parentProjectLabel;
 
   const updateKpi = useCallback(
     (id: string, patch: Partial<DraftKpi>) => {
@@ -303,10 +335,16 @@ function ProjectEditor({
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-zinc-50">
-            {state.mode === "create" ? "Новый проект" : "Редактирование проекта"}
+            {isCreatingSubproject
+              ? "Новый подпроект"
+              : state.mode === "create"
+                ? "Новый проект"
+                : "Редактирование проекта"}
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Хранится локально и обновляется сразу на дашборде и в поиске.
+            {isCreatingSubproject
+              ? `Будет вложен в ${parentProjectLabel}.`
+              : "Хранится локально и обновляется сразу на дашборде и в поиске."}
           </p>
         </div>
         <button
@@ -494,7 +532,11 @@ function ProjectEditor({
           disabled={!draft.name.trim()}
           className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {state.mode === "create" ? "Создать проект" : "Сохранить изменения"}
+          {isCreatingSubproject
+            ? "Создать подпроект"
+            : state.mode === "create"
+              ? "Создать проект"
+              : "Сохранить изменения"}
         </button>
         <button
           type="button"
@@ -551,11 +593,36 @@ function ProjectsPageContent() {
     () => (openId ? getProjectRootId(openId, projects) : null),
     [openId, projects],
   );
+  const editorParentProject = useMemo(() => {
+    if (!editor || editor.mode !== "create" || !editor.parentProjectId) return null;
+    return projects.find((project) => project.id === editor.parentProjectId) ?? null;
+  }, [editor, projects]);
+  const editorParentProjectLabel = useMemo(
+    () => (editorParentProject ? getProjectDisplayName(editorParentProject, projects) : null),
+    [editorParentProject, projects],
+  );
+
+  const openCreateProject = useCallback(() => {
+    setEditor({ mode: "create", draft: createDraft(), isDirty: false });
+  }, []);
+
+  const openCreateSubproject = useCallback((parentProject: Project) => {
+    setOpenId(parentProject.id);
+    setEditor({
+      mode: "create",
+      parentProjectId: parentProject.id,
+      draft: createSubprojectDraft(parentProject),
+      isDirty: false,
+    });
+  }, []);
 
   const handleSaveEditor = useCallback(() => {
     if (!editor) return;
     if (editor.mode === "create") {
-      const created = addProject(toInput(editor.draft));
+      const created = addProject({
+        ...toInput(editor.draft),
+        parentProjectId: editor.parentProjectId,
+      });
       setOpenId(created.id);
     } else {
       updateProject(editor.projectId, toInput(editor.draft));
@@ -606,7 +673,7 @@ function ProjectsPageContent() {
           </div>
           <button
             type="button"
-            onClick={() => setEditor({ mode: "create", draft: createDraft(), isDirty: false })}
+            onClick={openCreateProject}
             className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
           >
             + Проект
@@ -616,6 +683,7 @@ function ProjectsPageContent() {
         {editor && (
           <ProjectEditor
             state={editor}
+            parentProjectLabel={editorParentProjectLabel}
             onChange={(draft) => setEditor((prev) => (prev ? { ...prev, draft, isDirty: true } : prev))}
             onSave={handleSaveEditor}
             onCancel={() => {
@@ -723,6 +791,14 @@ function ProjectsPageContent() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => openCreateSubproject(project)}
+                      className="rounded-full border border-sky-500/20 px-2 py-1 text-[10px] text-sky-300 transition hover:bg-sky-500/10"
+                      title="Добавить подпроект"
+                    >
+                      ↳＋
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleEditProject(project)}
                       className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
                     >
@@ -755,6 +831,7 @@ function ProjectsPageContent() {
                           highlightedId={openId}
                           onEdit={handleEditProject}
                           onDelete={handleDeleteProject}
+                          onCreateSubproject={openCreateSubproject}
                         />
                       </section>
                     )}
@@ -808,6 +885,13 @@ function ProjectsPageContent() {
                     </div>
 
                     <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openCreateSubproject(project)}
+                        className="rounded-xl border border-sky-500/20 px-3 py-2 text-xs text-sky-200 transition hover:bg-sky-500/10"
+                      >
+                        Добавить подпроект
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleEditProject(project)}
