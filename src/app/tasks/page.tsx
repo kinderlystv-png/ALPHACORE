@@ -442,7 +442,10 @@ export default function TasksPage() {
   const [prio, setPrio] = useState<"p1" | "p2" | "p3">("p2");
   const [dueDate, setDueDate] = useState("");
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const TASKS_PER_GROUP = 15;
 
   const reload = useCallback(() => {
     setTasks(getTasks());
@@ -911,7 +914,7 @@ export default function TasksPage() {
                 </div>
 
                 <div className="mt-3 space-y-2">
-                  {group.tasks.map((task) => {
+                  {(expandedGroups.has(group.id) ? group.tasks : group.tasks.slice(0, TASKS_PER_GROUP)).map((task) => {
                     const badge = dueBadge(task.dueDate);
                     const focus = getTaskFocusTotal(task);
                     const taskProjectId = getTaskProjectId(task);
@@ -1070,6 +1073,16 @@ export default function TasksPage() {
                       </div>
                     );
                   })}
+
+                  {!expandedGroups.has(group.id) && group.tasks.length > TASKS_PER_GROUP && (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedGroups((s) => new Set(s).add(group.id))}
+                      className="w-full rounded-xl border border-zinc-800 py-2 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
+                    >
+                      Показать ещё {group.tasks.length - TASKS_PER_GROUP}
+                    </button>
+                  )}
                 </div>
               </section>
             );

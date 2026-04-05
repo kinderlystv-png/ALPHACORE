@@ -60,6 +60,7 @@ function JournalPageContent() {
   const [author, setAuthor] = useState<JournalAuthor>("user");
   const [text, setText] = useState("");
   const [tagInput, setTagInput] = useState("");
+  const [visibleDays, setVisibleDays] = useState(7);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const openId = searchParams.get("open");
 
@@ -160,7 +161,7 @@ function JournalPageContent() {
         </section>
 
         <section className="space-y-5">
-          {grouped.map((group) => (
+          {grouped.slice(0, visibleDays).map((group) => (
             <div key={group.day} className="space-y-3">
               <div className="sticky top-2 z-10 inline-flex rounded-full border border-zinc-800 bg-zinc-950/90 px-3 py-1 text-[11px] capitalize tracking-wide text-zinc-500 backdrop-blur">
                 {group.day}
@@ -223,6 +224,16 @@ function JournalPageContent() {
               </div>
             </div>
           ))}
+
+          {grouped.length > visibleDays && (
+            <button
+              type="button"
+              onClick={() => setVisibleDays((v) => v + 7)}
+              className="mx-auto block rounded-xl border border-zinc-800 px-5 py-2.5 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
+            >
+              Показать ещё {Math.min(7, grouped.length - visibleDays)} дн.
+            </button>
+          )}
         </section>
       </div>
     </AppShell>

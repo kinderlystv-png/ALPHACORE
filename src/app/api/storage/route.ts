@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 
 import { isStorageKey, type StorageKey } from "@/lib/app-data-keys";
 import {
@@ -15,12 +16,18 @@ export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = MAX_PAYLOAD_BYTES;
 
-function noStoreJson(payload: unknown, init?: ResponseInit) {
+function requestId(request: NextRequest): string {
+  return request.headers.get("x-request-id") || randomUUID().slice(0, 8);
+}
+
+function noStoreJson(payload: unknown, init?: ResponseInit & { reqId?: string }) {
+  const { reqId, ...rest } = init ?? {};
   return NextResponse.json(payload, {
-    ...init,
+    ...rest,
     headers: {
       "Cache-Control": "no-store, max-age=0",
-      ...(init?.headers ?? {}),
+      ...(reqId ? { "x-request-id": reqId } : {}),
+      ...(rest.headers ?? {}),
     },
   });
 }
@@ -59,18 +66,21 @@ function applyRateLimit(request: NextRequest): Response | null {
   return null;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const rid = requestId(request);
   try {
-    return noStoreJson(await getCloudSnapshot());
+    return noStoreJson(await getCloudSnapshot(), { reqId: rid });
   } catch (error) {
+    console.error(`[storage][${rid}] GET failed:`, toMessage(error));
     return noStoreJson(
-      { error: "storage_read_failed", message: toMessage(error) },
-      { status: 500 },
+      { error: "storage_read_failed", message: toMessage(error), requestId: rid },
+      { status: 500, reqId: rid },
     );
   }
 }
 
 export async function PUT(request: NextRequest) {
+  const rid = requestId(request);
   const rateLimited = applyRateLimit(request);
   if (rateLimited) return rateLimited;
   try {
@@ -79,22 +89,24 @@ export async function PUT(request: NextRequest) {
     const key = parseStorageKey(obj?.key);
 
     if (!key) {
-      return noStoreJson({ error: "invalid_key" }, { status: 400 });
+      return noStoreJson({ error: "invalid_key", requestId: rid }, { status: 400, reqId: rid });
     }
 
-    return noStoreJson(await upsertCloudItem(key, obj?.value ?? null));
+    return noStoreJson(await upsertCloudItem(key, obj?.value ?? null), { reqId: rid });
   } catch (error) {
     if (error instanceof PayloadTooLargeError) {
-      return noStoreJson({ error: "payload_too_large" }, { status: 413 });
+      return noStoreJson({ error: "payload_too_large", requestId: rid }, { status: 413, reqId: rid });
     }
+    console.error(`[storage][${rid}] PUT failed:`, toMessage(error));
     return noStoreJson(
-      { error: "storage_write_failed", message: toMessage(error) },
-      { status: 500 },
+      { error: "storage_write_failed", message: toMessage(error), requestId: rid },
+      { status: 500, reqId: rid },
     );
   }
 }
 
 export async function POST(request: NextRequest) {
+  const rid = requestId(request);
   const rateLimited = applyRateLimit(request);
   if (rateLimited) return rateLimited;
   try {
@@ -104,26 +116,28 @@ export async function POST(request: NextRequest) {
     const rawItems = obj?.items;
 
     if (!rawItems || typeof rawItems !== "object" || Array.isArray(rawItems)) {
-      return noStoreJson({ error: "invalid_items" }, { status: 400 });
+      return noStoreJson({ error: "invalid_items", requestId: rid }, { status: 400, reqId: rid });
     }
 
     const items = Object.fromEntries(
       Object.entries(rawItems).filter(([key]) => isStorageKey(key)),
     ) as Partial<Record<StorageKey, unknown>>;
 
-    return noStoreJson(await upsertCloudItems(items, mode));
+    return noStoreJson(await upsertCloudItems(items, mode), { reqId: rid });
   } catch (error) {
     if (error instanceof PayloadTooLargeError) {
-      return noStoreJson({ error: "payload_too_large" }, { status: 413 });
+      return noStoreJson({ error: "payload_too_large", requestId: rid }, { status: 413, reqId: rid });
     }
+    console.error(`[storage][${rid}] POST failed:`, toMessage(error));
     return noStoreJson(
-      { error: "storage_bulk_write_failed", message: toMessage(error) },
-      { status: 500 },
+      { error: "storage_bulk_write_failed", message: toMessage(error), requestId: rid },
+      { status: 500, reqId: rid },
     );
   }
 }
 
 export async function DELETE(request: NextRequest) {
+  const rid = requestId(request);
   const rateLimited = applyRateLimit(request);
   if (rateLimited) return rateLimited;
   try {
@@ -135,14 +149,15 @@ export async function DELETE(request: NextRequest) {
     }
 
     if (!key) {
-      return noStoreJson({ error: "invalid_key" }, { status: 400 });
+      return noStoreJson({ error: "invalid_key", requestId: rid }, { status: 400, reqId: rid });
     }
 
-    return noStoreJson(await deleteCloudItem(key));
+    return noStoreJson(await deleteCloudItem(key), { reqId: rid });
   } catch (error) {
+    console.error(`[storage][${rid}] DELETE failed:`, toMessage(error));
     return noStoreJson(
-      { error: "storage_delete_failed", message: toMessage(error) },
-      { status: 500 },
+      { error: "storage_delete_failed", message: toMessage(error), requestId: rid },
+      { status: 500, reqId: rid },
     );
   }
 }

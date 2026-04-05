@@ -1759,6 +1759,36 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     setShouldCenterNow(true);
   }, []);
 
+  // keyboard navigation: ← → shift week/window, t → today
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (viewMode === "compact") {
+          setCompactStart((c) => Math.max(0, c - 1));
+        } else {
+          shiftWeek(-1);
+        }
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        if (viewMode === "compact") {
+          setCompactStart((c) => Math.min(columns.length - compactCount, c + 1));
+        } else {
+          shiftWeek(1);
+        }
+      } else if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        goToday();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [viewMode, columns.length, compactCount, shiftWeek, goToday]);
+
   // drag handlers
   const onDragStartTask = useCallback((taskId: string, originDay: string) => {
     setDrag({ type: "task", taskId, originDay });

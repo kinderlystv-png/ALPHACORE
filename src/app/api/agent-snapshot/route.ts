@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 
 import { getCloudSnapshot } from "@/lib/cloud-store-server";
 import {
@@ -14,17 +15,24 @@ import { syncFromHeys, extractHealthSignals } from "@/lib/heys-bridge";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function noStoreJson(payload: unknown, init?: ResponseInit) {
+function requestId(request: NextRequest): string {
+  return request.headers.get("x-request-id") || randomUUID().slice(0, 8);
+}
+
+function noStoreJson(payload: unknown, init?: ResponseInit & { reqId?: string }) {
+  const { reqId, ...rest } = init ?? {};
   return NextResponse.json(payload, {
-    ...init,
+    ...rest,
     headers: {
       "Cache-Control": "no-store, max-age=0",
-      ...(init?.headers ?? {}),
+      ...(reqId ? { "x-request-id": reqId } : {}),
+      ...(rest.headers ?? {}),
     },
   });
 }
 
 export async function GET(request: NextRequest) {
+  const rid = requestId(request);
   try {
     const mode = request.nextUrl.searchParams.get("mode");
     const cloudSnapshot = await getCloudSnapshot();
@@ -33,10 +41,10 @@ export async function GET(request: NextRequest) {
     try {
       raw = extractRawData(cloudSnapshot.items);
     } catch (extractError) {
-      console.error("[ALPHACORE] extractRawData failed:", extractError);
+      console.error(`[agent-snapshot][${rid}] extractRawData failed:`, extractError);
       return noStoreJson(
-        { error: "data_extraction_failed", message: extractError instanceof Error ? extractError.message : "Unknown" },
-        { status: 500 },
+        { error: "data_extraction_failed", message: extractError instanceof Error ? extractError.message : "Unknown", requestId: rid },
+        { status: 500, reqId: rid },
       );
     }
 
@@ -53,28 +61,29 @@ export async function GET(request: NextRequest) {
     try {
       snapshot = getServerSnapshot(raw, heysSignals);
     } catch (snapshotError) {
-      console.error("[ALPHACORE] getServerSnapshot failed:", snapshotError);
+      console.error(`[agent-snapshot][${rid}] getServerSnapshot failed:`, snapshotError);
       return noStoreJson(
-        { error: "snapshot_build_failed", message: snapshotError instanceof Error ? snapshotError.message : "Unknown" },
-        { status: 500 },
+        { error: "snapshot_build_failed", message: snapshotError instanceof Error ? snapshotError.message : "Unknown", requestId: rid },
+        { status: 500, reqId: rid },
       );
     }
 
     if (mode === "brief") {
-      return noStoreJson({ ...snapshot, brief: generateMorningBrief(snapshot), heysSignals });
+      return noStoreJson({ ...snapshot, brief: generateMorningBrief(snapshot), heysSignals, requestId: rid }, { reqId: rid });
     }
 
     if (mode === "review") {
-      return noStoreJson({ ...snapshot, review: generateEveningReview(snapshot), heysSignals });
+      return noStoreJson({ ...snapshot, review: generateEveningReview(snapshot), heysSignals, requestId: rid }, { reqId: rid });
     }
 
-    return noStoreJson({ ...snapshot, heysSignals });
+    return noStoreJson({ ...snapshot, heysSignals, requestId: rid }, { reqId: rid });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown snapshot error";
+    console.error(`[agent-snapshot][${rid}] GET failed:`, message);
     return noStoreJson(
-      { error: "snapshot_failed", message },
-      { status: 500 },
+      { error: "snapshot_failed", message, requestId: rid },
+      { status: 500, reqId: rid },
     );
   }
 }
