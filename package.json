@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3004",
+    "prebuild": "node -e \"const fs=require('fs');const p='public/sw.js';const c=fs.readFileSync(p,'utf8');fs.writeFileSync(p,c.replace('__BUILD_TS__',Date.now().toString(36)))\"",
     "build": "next build",
     "start": "next start --port 3000",
     "lint": "eslint",

@@ -1252,7 +1252,31 @@ export function deleteTaskWithScheduledSlot(taskId: string): boolean {
   return true;
 }
 
+/** Guard to prevent concurrent upsertTaskSlot creating duplicate slots */
+let slotUpsertLock = false;
+
 export function upsertTaskSlot(input: {
+  taskId: string;
+  date: string;
+  start: string;
+  end: string;
+  title?: string;
+  tone?: ScheduleTone;
+  tags?: string[];
+}): CustomEvent | null {
+  if (slotUpsertLock) {
+    console.warn("[ALPHACORE] Schedule: concurrent upsertTaskSlot blocked");
+    return null;
+  }
+  slotUpsertLock = true;
+  try {
+    return upsertTaskSlotInner(input);
+  } finally {
+    slotUpsertLock = false;
+  }
+}
+
+function upsertTaskSlotInner(input: {
   taskId: string;
   date: string;
   start: string;

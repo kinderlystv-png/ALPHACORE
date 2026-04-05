@@ -66,7 +66,10 @@ async function api(method, url, body) {
     process.exit(1);
   }
 
-  const data = await res.json();
+  const data = await res.json().catch(() => {
+    console.error(`❌ Invalid JSON response from ${url}`);
+    process.exit(1);
+  });
   if (!res.ok) {
     console.error(`❌ API error ${res.status}:`, data.message ?? data.error ?? "Unknown");
     process.exit(1);
@@ -93,12 +96,31 @@ async function taskAdd(args) {
     process.exit(1);
   }
 
+  const priority = flags.priority ?? "p2";
+  if (!["p1", "p2", "p3"].includes(priority)) {
+    console.error("❌ Invalid priority. Use p1, p2, or p3.");
+    process.exit(1);
+  }
+
+  if (flags.due && !/^\d{4}-\d{2}-\d{2}$/.test(flags.due)) {
+    console.error("❌ Invalid date format. Use YYYY-MM-DD.");
+    process.exit(1);
+  }
+
+  if (flags.due) {
+    const d = new Date(`${flags.due}T00:00:00`);
+    if (isNaN(d.getTime())) {
+      console.error(`❌ Invalid date: ${flags.due}`);
+      process.exit(1);
+    }
+  }
+
   const tasks = (await getKey("alphacore_tasks")) ?? [];
   const task = {
     id: uid(),
     title,
     project: flags.project ?? undefined,
-    priority: flags.priority ?? "p2",
+    priority,
     status: "inbox",
     dueDate: flags.due ?? undefined,
     createdAt: new Date().toISOString(),
@@ -465,6 +487,16 @@ async function scheduleAdd(args) {
   const tone = flags.tone ?? "work";
   if (!VALID_TONES.includes(tone)) {
     console.error(`❌ Invalid tone: ${tone}. Valid: ${VALID_TONES.join(", ")}`);
+    process.exit(1);
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(flags.date)) {
+    console.error("❌ Invalid date format. Use YYYY-MM-DD.");
+    process.exit(1);
+  }
+
+  if (!/^\d{1,2}:\d{2}$/.test(flags.start) || !/^\d{1,2}:\d{2}$/.test(flags.end)) {
+    console.error("❌ Invalid time format. Use HH:MM.");
     process.exit(1);
   }
 

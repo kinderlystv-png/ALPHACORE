@@ -1,5 +1,7 @@
 // ALPHACORE Service Worker — offline shell + icon caching
-const CACHE_NAME = "alphacore-v5";
+// Version derived from build timestamp to auto-bust cache on deploy
+const BUILD_TS = "__BUILD_TS__";
+const CACHE_NAME = `alphacore-${BUILD_TS || "v5"}`;
 const OFFLINE_URL = "/offline";
 
 const PRECACHE_URLS = [

@@ -7,9 +7,12 @@ import {
   upsertCloudItem,
   upsertCloudItems,
 } from "@/lib/cloud-store-server";
+import { MAX_PAYLOAD_BYTES } from "@/lib/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_BODY_BYTES = MAX_PAYLOAD_BYTES;
 
 function noStoreJson(payload: unknown, init?: ResponseInit) {
   return NextResponse.json(payload, {
@@ -29,6 +32,20 @@ function parseStorageKey(value: unknown): StorageKey | null {
   return typeof value === "string" && isStorageKey(value) ? value : null;
 }
 
+async function safeJsonBody(request: NextRequest): Promise<unknown> {
+  const text = await request.text();
+  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) {
+    throw new PayloadTooLargeError();
+  }
+  return JSON.parse(text) as unknown;
+}
+
+class PayloadTooLargeError extends Error {
+  constructor() {
+    super("Payload too large");
+  }
+}
+
 export async function GET() {
   try {
     return noStoreJson(await getCloudSnapshot());
@@ -42,15 +59,19 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   try {
-    const body = await request.json();
-    const key = parseStorageKey(body?.key);
+    const body = await safeJsonBody(request);
+    const obj = body as Record<string, unknown> | null;
+    const key = parseStorageKey(obj?.key);
 
     if (!key) {
       return noStoreJson({ error: "invalid_key" }, { status: 400 });
     }
 
-    return noStoreJson(await upsertCloudItem(key, body?.value ?? null));
+    return noStoreJson(await upsertCloudItem(key, obj?.value ?? null));
   } catch (error) {
+    if (error instanceof PayloadTooLargeError) {
+      return noStoreJson({ error: "payload_too_large" }, { status: 413 });
+    }
     return noStoreJson(
       { error: "storage_write_failed", message: toMessage(error) },
       { status: 500 },
@@ -60,9 +81,10 @@ export async function PUT(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const mode = body?.mode === "replace" ? "replace" : "merge";
-    const rawItems = body?.items;
+    const body = await safeJsonBody(request);
+    const obj = body as Record<string, unknown> | null;
+    const mode = obj?.mode === "replace" ? "replace" : "merge";
+    const rawItems = obj?.items;
 
     if (!rawItems || typeof rawItems !== "object" || Array.isArray(rawItems)) {
       return noStoreJson({ error: "invalid_items" }, { status: 400 });
@@ -74,6 +96,9 @@ export async function POST(request: NextRequest) {
 
     return noStoreJson(await upsertCloudItems(items, mode));
   } catch (error) {
+    if (error instanceof PayloadTooLargeError) {
+      return noStoreJson({ error: "payload_too_large" }, { status: 413 });
+    }
     return noStoreJson(
       { error: "storage_bulk_write_failed", message: toMessage(error) },
       { status: 500 },

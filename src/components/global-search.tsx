@@ -144,12 +144,19 @@ function search(q: string): Result[] {
 export function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [idx, setIdx] = useState(0);
   const [version, setVersion] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  const results = useMemo(() => search(query), [query, version]);
+  // Debounce search query (150ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 150);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const results = useMemo(() => search(debouncedQuery), [debouncedQuery, version]);
 
   // Cmd+K / Ctrl+K
   useEffect(() => {

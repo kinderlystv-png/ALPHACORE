@@ -1,4 +1,5 @@
 import { lsGet, lsSet, uid } from "./storage";
+import { validateTitle, validateBody, validateTags } from "./validation";
 
 /* ── Types ── */
 
@@ -25,15 +26,19 @@ function save(notes: Note[]): void {
 export function addNote(title: string, body: string, tags: string[] = []): Note {
   const notes = getNotes();
   const now = new Date().toISOString();
-  const n: Note = { id: uid(), title, body, tags, pinned: false, createdAt: now, updatedAt: now };
+  const n: Note = { id: uid(), title: validateTitle(title), body: validateBody(body), tags: validateTags(tags), pinned: false, createdAt: now, updatedAt: now };
   notes.unshift(n);
   save(notes);
   return n;
 }
 
 export function updateNote(id: string, patch: Partial<Pick<Note, "title" | "body" | "tags" | "pinned">>): void {
+  const sanitized = { ...patch };
+  if (sanitized.title !== undefined) sanitized.title = validateTitle(sanitized.title);
+  if (sanitized.body !== undefined) sanitized.body = validateBody(sanitized.body);
+  if (sanitized.tags !== undefined) sanitized.tags = validateTags(sanitized.tags);
   const notes = getNotes().map((n) =>
-    n.id === id ? { ...n, ...patch, updatedAt: new Date().toISOString() } : n,
+    n.id === id ? { ...n, ...sanitized, updatedAt: new Date().toISOString() } : n,
   );
   save(notes);
 }

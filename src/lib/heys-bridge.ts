@@ -507,6 +507,9 @@ async function fetchKV(key: string): Promise<unknown | null> {
 
   if (!response.ok) return null;
 
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return null;
+
   const rows = (await response.json()) as Array<{ v: unknown }>;
   if (!rows.length) return null;
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { DailyTaskCarryoverBanner } from "@/components/daily-task-carryover";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { GlobalSearch } from "@/components/global-search";
 
 const routes = [
@@ -118,7 +119,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <DailyTaskCarryoverBanner />
 
-          <div className="px-4 sm:px-6 lg:px-5">{children}</div>
+          <ErrorBoundary>
+            <div className="px-4 sm:px-6 lg:px-5">{children}</div>
+          </ErrorBoundary>
         </main>
       </div>
 

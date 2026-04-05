@@ -1,4 +1,5 @@
 import { lsGet, lsSet, uid } from "./storage";
+import { validateEntryText, validateTags } from "./validation";
 
 export type JournalAuthor = "user" | "assistant";
 
@@ -67,8 +68,8 @@ export function addJournalEntry(
   const entry: JournalEntry = {
     id: uid(),
     author,
-    text: text.trim(),
-    tags: tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean),
+    text: validateEntryText(text),
+    tags: validateTags(tags),
     createdAt: new Date().toISOString(),
   };
 

@@ -26,6 +26,22 @@ const OVERRIDE_KEY = "alphacore_habit_overrides";
 
 type HabitOverrideMode = "skip" | "extra";
 
+/** Simple guard to prevent concurrent toggle/skip/snooze overwrites */
+let mutationLock = false;
+
+function withLock<T>(fn: () => T): T {
+  if (mutationLock) {
+    console.warn("[ALPHACORE] Habits: concurrent mutation blocked");
+    return fn();
+  }
+  mutationLock = true;
+  try {
+    return fn();
+  } finally {
+    mutationLock = false;
+  }
+}
+
 function ds(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -82,12 +98,14 @@ export function getChecks(date: string): Record<string, boolean> {
 }
 
 export function toggle(habitId: string, date: string): boolean {
-  const log = load();
-  const key = sk(habitId, date);
-  const v = !log[key];
-  log[key] = v;
-  save(log);
-  return v;
+  return withLock(() => {
+    const log = load();
+    const key = sk(habitId, date);
+    const v = !log[key];
+    log[key] = v;
+    save(log);
+    return v;
+  });
 }
 
 export type DaySummary = {
@@ -129,26 +147,32 @@ export function streak(): number {
 }
 
 export function skipHabit(habitId: string, date: string): void {
-  const overrides = loadOverrides();
-  overrides[sk(habitId, date)] = "skip";
-  saveOverrides(overrides);
+  withLock(() => {
+    const overrides = loadOverrides();
+    overrides[sk(habitId, date)] = "skip";
+    saveOverrides(overrides);
+  });
 }
 
 export function snoozeHabitToTomorrow(habitId: string, date: string): void {
-  const overrides = loadOverrides();
-  const next = new Date(`${date}T00:00:00`);
-  next.setDate(next.getDate() + 1);
-  const tomorrow = ds(next);
+  withLock(() => {
+    const overrides = loadOverrides();
+    const next = new Date(`${date}T00:00:00`);
+    next.setDate(next.getDate() + 1);
+    const tomorrow = ds(next);
 
-  overrides[sk(habitId, date)] = "skip";
-  overrides[sk(habitId, tomorrow)] = "extra";
-  saveOverrides(overrides);
+    overrides[sk(habitId, date)] = "skip";
+    overrides[sk(habitId, tomorrow)] = "extra";
+    saveOverrides(overrides);
+  });
 }
 
 export function clearHabitOverride(habitId: string, date: string): void {
-  const overrides = loadOverrides();
-  delete overrides[sk(habitId, date)];
-  saveOverrides(overrides);
+  withLock(() => {
+    const overrides = loadOverrides();
+    delete overrides[sk(habitId, date)];
+    saveOverrides(overrides);
+  });
 }
 
 export function getHabitOverrideMode(habitId: string, date: string): HabitOverrideMode | null {
