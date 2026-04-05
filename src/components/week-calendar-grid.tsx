@@ -13,6 +13,10 @@ import { useCalendarPointerEdit } from "@/components/use-calendar-pointer-edit";
 import { useCalendarQuickMenu } from "@/components/use-calendar-quick-menu";
 import { useCalendarTaskDragAndDrop } from "@/components/use-calendar-task-dnd";
 import {
+  useCalendarAnchorNavigation,
+  useCalendarViewWindow,
+} from "@/components/use-calendar-window-state";
+import {
   HEADER_BASE_H,
   HEADER_TASK_GAP,
   HEADER_TASK_MARGIN_TOP,
@@ -21,11 +25,9 @@ import {
   ROW_H,
   TOTAL_HOURS,
   formatHour,
-  getCompactStart,
   getDayModeBadgeClass,
   slotTop as sharedSlotTop,
   centerNowLine,
-  type CalendarViewMode,
   type DayColumn,
   type EditableSlotDraft,
   type WeekCalendarGridProps,
@@ -76,23 +78,6 @@ function todayKey() {
   return dateStr();
 }
 
-function getTodayWindowAnchor() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function buildWindow(anchor: Date): Date[] {
-  const start = new Date(anchor);
-  start.setHours(0, 0, 0, 0);
-  return Array.from({ length: 8 }, (_, i) => {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    return d;
-  });
-}
-
 function slotTop(startTime: string): number {
   return sharedSlotTop(startTime, timeToMinutes);
 }
@@ -108,40 +93,23 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const { signals: heysSignals, snapshot: heysSnapshot } = useHeysSync();
   const [version, setVersion] = useState(0);
-  const [anchor, setAnchor] = useState<Date | null>(null);
-  const [shouldCenterNow, setShouldCenterNow] = useState(true);
   const [hoveredSlotKey, setHoveredSlotKey] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
-  const [compactStart, setCompactStart] = useState(0);
-  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const overlayGridRef = useRef<HTMLDivElement>(null);
-  const responsiveInitRef = useRef(false);
   const visibleColumnsRef = useRef<DayColumn[]>([]);
   const skipNextClickRef = useRef(false);
   const today = todayKey();
   const yesterdayKey = getYesterdayKey(today);
 
-  useEffect(() => {
-    setAnchor(getTodayWindowAnchor());
-    setShouldCenterNow(true);
-  }, []);
-
-  useEffect(() => {
-    const syncViewport = () => {
-      const width = window.innerWidth;
-      setViewportWidth(width);
-
-      if (!responsiveInitRef.current) {
-        responsiveInitRef.current = true;
-        setViewMode("full");
-      }
-    };
-
-    syncViewport();
-    window.addEventListener("resize", syncViewport);
-    return () => window.removeEventListener("resize", syncViewport);
-  }, []);
+  const {
+    anchor,
+    days,
+    shouldCenterNow,
+    markNowCentered,
+    shiftWeek,
+    goToday,
+    weekLabel,
+  } = useCalendarAnchorNavigation();
 
   // subscribe to data changes
   useEffect(() => {
@@ -156,7 +124,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     });
   }, []);
 
-  const days = useMemo(() => (anchor ? buildWindow(anchor) : []), [anchor]);
   const projects = useMemo(() => getProjects(), [version]);
   const projectNameById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
@@ -194,8 +161,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, today, version]);
 
-  const compactCount = viewportWidth != null && viewportWidth < 640 ? 2 : 3;
-
   const heysDayMode = useMemo(() => {
     if (!heysSignals) return null;
 
@@ -208,20 +173,23 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     );
   }, [heysSignals, heysSnapshot?.profile?.sleepHoursGoal, version]);
 
-  useEffect(() => {
-    if (viewMode !== "compact" || columns.length === 0) return;
-    setCompactStart((current) => {
-      const maxStart = Math.max(0, columns.length - compactCount);
-      if (current > maxStart) return maxStart;
-      if (current === 0) return getCompactStart(columns, compactCount);
-      return current;
-    });
-  }, [columns, compactCount, viewMode]);
-
-  const visibleColumns = useMemo(() => {
-    if (viewMode === "full") return columns;
-    return columns.slice(compactStart, compactStart + compactCount);
-  }, [columns, compactCount, compactStart, viewMode]);
+  const {
+    viewMode,
+    compactStart,
+    compactCount,
+    viewportWidth,
+    visibleColumns,
+    visibleWindowLabel,
+    showCompactControls,
+    switchToCompact,
+    switchToFull,
+    shiftCompactWindow,
+    resetCompactWindow,
+  } = useCalendarViewWindow({
+    columns,
+    shiftWeek,
+    goToday,
+  });
 
   useEffect(() => {
     visibleColumnsRef.current = visibleColumns;
@@ -254,27 +222,16 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
     const frame = requestAnimationFrame(() => {
       centerNowLine(gridRef.current, headerHeight);
-      setShouldCenterNow(false);
+      markNowCentered();
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [days, headerHeight, shouldCenterNow, today]);
-
-  const visibleWindowLabel = useMemo(() => {
-    if (visibleColumns.length === 0) return "";
-    const first = visibleColumns[0]?.date;
-    const last = visibleColumns[visibleColumns.length - 1]?.date;
-    if (!first || !last) return "";
-    const fmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
-    return `${fmt.format(first)} — ${fmt.format(last)}`;
-  }, [visibleColumns]);
+  }, [days, headerHeight, markNowCentered, shouldCenterNow, today]);
 
   const linkedTasksById = useMemo(
     () => new Map(getTasks().map((task) => [task.id, task])),
     [version],
   );
-
-  const showCompactControls = viewMode === "compact" && columns.length > compactCount;
 
   const bumpVersion = useCallback(() => {
     setVersion((value) => value + 1);
@@ -365,68 +322,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     onVersionBump: bumpVersion,
   });
 
-  // navigation
-  const shiftWeek = useCallback(
-    (delta: number) => {
-      setAnchor((prev) => {
-        if (!prev) return getTodayWindowAnchor();
-        const next = new Date(prev);
-        next.setDate(prev.getDate() + delta * 7);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const goToday = useCallback(() => {
-    setAnchor(getTodayWindowAnchor());
-    setCompactStart(0);
-    setShouldCenterNow(true);
-  }, []);
-
-  // keyboard navigation: ← → shift week/window, t → today
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        if (viewMode === "compact") {
-          setCompactStart((c) => Math.max(0, c - 1));
-        } else {
-          shiftWeek(-1);
-        }
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        if (viewMode === "compact") {
-          setCompactStart((c) => Math.min(columns.length - compactCount, c + 1));
-        } else {
-          shiftWeek(1);
-        }
-      } else if (e.key === "t" || e.key === "T") {
-        e.preventDefault();
-        goToday();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [viewMode, columns.length, compactCount, shiftWeek, goToday]);
+  const handleGoToday = useCallback(() => {
+    goToday();
+    resetCompactWindow();
+  }, [goToday, resetCompactWindow]);
 
   const toggleSlotApproval = useCallback((slot: ScheduleSlot) => {
     toggleScheduleSlotApproval(slot);
     setVersion((value) => value + 1);
   }, []);
-
-  // week label
-  const weekLabel = useMemo(() => {
-    if (days.length === 0) return "";
-    const first = days[0];
-    const last = days[days.length - 1];
-    const fmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
-    return `${fmt.format(first)} — ${fmt.format(last)}`;
-  }, [days]);
 
   if (!anchor) {
     return (
@@ -492,7 +396,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           </button>
           <button
             type="button"
-            onClick={goToday}
+            onClick={handleGoToday}
             className="rounded-xl border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-600 hover:text-zinc-100"
           >
             Сегодня
@@ -542,10 +446,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           <div className="mr-1 flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/40 p-1">
             <button
               type="button"
-              onClick={() => {
-                setViewMode("compact");
-                setCompactStart(getCompactStart(columns, compactCount));
-              }}
+              onClick={switchToCompact}
               className={`rounded-full px-2 py-1 text-[10px] transition ${
                 viewMode === "compact" ? "bg-zinc-50 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"
               }`}
@@ -554,7 +455,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("full")}
+              onClick={switchToFull}
               className={`rounded-full px-2 py-1 text-[10px] transition ${
                 viewMode === "full" ? "bg-zinc-50 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"
               }`}
@@ -567,16 +468,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             <div className="mr-2 flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/40 p-1">
               <button
                 type="button"
-                onClick={() => setCompactStart((current) => Math.max(0, current - 1))}
+                onClick={() => shiftCompactWindow(-1)}
                 className="rounded-full px-2 py-1 text-[10px] text-zinc-400 transition hover:text-zinc-100"
               >
                 ← окно
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  setCompactStart((current) => Math.min(columns.length - compactCount, current + 1))
-                }
+                onClick={() => shiftCompactWindow(1)}
                 className="rounded-full px-2 py-1 text-[10px] text-zinc-400 transition hover:text-zinc-100"
               >
                 окно →
