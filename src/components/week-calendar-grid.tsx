@@ -19,6 +19,12 @@ import {
   type CalendarSlotSupportNote,
 } from "@/lib/calendar-slot-support-notes";
 import {
+  buildBundleContextProfile,
+  getDefaultMetricKey,
+  getHeysDayMode,
+  type DayMode,
+} from "@/lib/heys-day-mode";
+import {
   formatCompletionLabel,
   getSlotAttentionState,
   getYesterdayKey,
@@ -63,6 +69,7 @@ import {
   type Task,
   updateTask,
 } from "@/lib/tasks";
+import { useHeysSync } from "@/lib/use-heys-sync";
 
 /* ── Constants ── */
 
@@ -595,6 +602,8 @@ function getSupportNoteChipClass(
   }
 
   switch (tone) {
+    case "rose":
+      return "border-rose-400/30 bg-rose-500/12 text-rose-100";
     case "amber":
       return "border-amber-400/30 bg-amber-500/12 text-amber-100";
     case "sky":
@@ -605,6 +614,20 @@ function getSupportNoteChipClass(
       return "border-violet-400/30 bg-violet-500/12 text-violet-100";
     default:
       return "border-white/10 bg-black/10 text-white/75";
+  }
+}
+
+function getDayModeBadgeClass(dayMode: DayMode): string {
+  switch (dayMode.id) {
+    case "damage-control":
+      return "border-rose-500/25 bg-rose-500/10 text-rose-200";
+    case "recovery":
+      return "border-amber-500/25 bg-amber-500/10 text-amber-200";
+    case "execution":
+      return "border-emerald-500/25 bg-emerald-500/10 text-emerald-200";
+    case "light-rhythm":
+    default:
+      return "border-zinc-700 bg-zinc-900/60 text-zinc-300";
   }
 }
 
@@ -719,6 +742,7 @@ function getCompactStart(columns: DayColumn[], compactCount: number): number {
 /* ── Component ── */
 
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
+  const { signals: heysSignals, snapshot: heysSnapshot } = useHeysSync();
   const [version, setVersion] = useState(0);
   const [anchor, setAnchor] = useState<Date | null>(null);
   const [shouldCenterNow, setShouldCenterNow] = useState(true);
@@ -823,6 +847,18 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   }, [days, today, version]);
 
   const compactCount = viewportWidth != null && viewportWidth < 640 ? 2 : 3;
+
+  const heysDayMode = useMemo(() => {
+    if (!heysSignals) return null;
+
+    const fallbackMetricKey = getDefaultMetricKey(heysSignals);
+    return getHeysDayMode(
+      heysSignals,
+      buildBundleContextProfile(),
+      fallbackMetricKey,
+      heysSnapshot?.profile?.sleepHoursGoal,
+    );
+  }, [heysSignals, heysSnapshot?.profile?.sleepHoursGoal, version]);
 
   useEffect(() => {
     if (viewMode !== "compact" || columns.length === 0) return;
@@ -1852,6 +1888,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               </span>
             </div>
           )}
+
+          {heysDayMode && (
+            <span
+              title={heysDayMode.summary}
+              className={`ml-2 rounded-lg border px-2 py-1 text-[11px] ${getDayModeBadgeClass(heysDayMode)}`}
+            >
+              HEYS · {heysDayMode.label}
+            </span>
+          )}
         </div>
 
         {/* Legend */}
@@ -2169,7 +2214,9 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     isCompleted: isCompletedSlot,
                     explainability,
                   });
-                  const supportNote = getCalendarSlotSupportNote(slot);
+                  const supportNote = getCalendarSlotSupportNote(slot, {
+                    dayModeId: heysDayMode?.id,
+                  });
                   const supportHintKey = `${slotInstanceKey}:support`;
                   const supportHintContent = supportNote
                     ? toSupportDesktopHintContent(supportNote)
