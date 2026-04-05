@@ -10,6 +10,8 @@ export type CalendarSlotSupportNote = {
   timingLabel?: string;
   sequenceLabel?: string;
   pressureLabel?: string;
+  durationLabel?: string;
+  budgetLabel?: string;
   title: string;
   summary: string;
   detail?: string;
@@ -35,11 +37,19 @@ type SupportPressureInput = Pick<
   | "slotsCount"
 >;
 
+type SupportRemainingDayInput = {
+  remainingSlots: number;
+  remainingHeavySlots: number;
+  remainingWorkSlots: number;
+  remainingRecoverySlots: number;
+};
+
 type SupportNoteContext = {
   dayModeId?: DayModeId | null;
   previousSlot?: SupportSlotInput | null;
   nextSlot?: SupportSlotInput | null;
   pressure?: SupportPressureInput | null;
+  remainingDay?: SupportRemainingDayInput | null;
 };
 
 type SlotDayPart = "morning" | "day" | "evening" | "late-evening";
@@ -143,6 +153,10 @@ function getTimingLabel(dayPart: SlotDayPart): string {
 
 function getGapMinutes(left: Pick<SupportSlotInput, "end">, right: Pick<SupportSlotInput, "start">): number {
   return timeToMinutes(right.start) - timeToMinutes(left.end);
+}
+
+function getSlotDurationMinutes(slot: Pick<SupportSlotInput, "start" | "end">): number {
+  return Math.max(0, timeToMinutes(slot.end) - timeToMinutes(slot.start));
 }
 
 function isTightTransition(
@@ -440,6 +454,209 @@ function applyPressureContext(
   }
 
   return note;
+}
+
+function applyDurationAndBudgetContext(
+  note: CalendarSlotSupportNote,
+  slot: SupportSlotInput,
+  context?: SupportNoteContext,
+): CalendarSlotSupportNote {
+  const durationMin = getSlotDurationMinutes(slot);
+  const remainingDay = context?.remainingDay ?? null;
+  const dayPart = getSlotDayPart(slot);
+  let nextNote = note;
+
+  if (note.id === "load-fuel") {
+    if (durationMin >= 180) {
+      nextNote = {
+        ...nextNote,
+        durationLabel: "длинный слот",
+        title: nextNote.sequenceLabel ? nextNote.title : "Это длинный тяжёлый слот — паузы и финиш нужны заранее",
+        summary: appendSentence(
+          nextNote.summary,
+          "На длинном окне нельзя ехать только на адреналине: fuel, вода и точка финиша нужны заранее.",
+        ),
+        detail: `${nextNote.detail ?? ""}${nextNote.detail ? " " : ""}Внутри длинного окна тоже нужен ритм, а не одна бесконечная дуга.`,
+        points: mergePoints(
+          [
+            "Разбей окно хотя бы на 2 внутренних отрезка.",
+            "Точку выхода реши до старта, не по остаточному состоянию.",
+          ],
+          nextNote.points,
+        ),
+      };
+    } else if (durationMin <= 45) {
+      nextNote = {
+        ...nextNote,
+        durationLabel: "короткий слот",
+        summary: appendSentence(
+          nextNote.summary,
+          "Окно короткое, так что его лучше закрыть по ядру и не разгонять хвост вокруг него.",
+        ),
+      };
+    }
+
+    if (remainingDay) {
+      if (remainingDay.remainingWorkSlots + remainingDay.remainingHeavySlots >= 2) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "ещё окна",
+          summary: appendSentence(
+            nextNote.summary,
+            "После него у дня ещё есть заметная работа, так что нельзя сжечь всё топливо здесь.",
+          ),
+          points: mergePoints(["Оставь ресурс на оставшиеся окна дня."], nextNote.points),
+        };
+      } else if (remainingDay.remainingSlots === 0) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "финал дня",
+          summary: appendSentence(
+            nextNote.summary,
+            "Это последний заметный узел дня, так что цель — финишировать в shutdown, а не открыть вторую смену.",
+          ),
+        };
+      }
+    }
+  }
+
+  if (note.id === "recovery") {
+    if (durationMin <= 45) {
+      nextNote = {
+        ...nextNote,
+        durationLabel: "micro-reset",
+        title: nextNote.sequenceLabel ? nextNote.title : "Это короткий reset, а не полноразмерная пауза",
+        summary: appendSentence(
+          nextNote.summary,
+          "Такое окно должно быстро вернуть ровность, а не раствориться в бесформенной прокрастинации.",
+        ),
+      };
+    } else if (durationMin >= 120) {
+      nextNote = {
+        ...nextNote,
+        durationLabel: "якорь",
+        title: nextNote.sequenceLabel ? nextNote.title : "Это уже recovery-anchor, а не случайная пауза",
+        summary: appendSentence(
+          nextNote.summary,
+          "Длинное recovery-окно лучше воспринимать как реальный якорь дня, а не как фон между делами.",
+        ),
+      };
+    }
+
+    if (remainingDay) {
+      if (remainingDay.remainingWorkSlots + remainingDay.remainingHeavySlots >= 2) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "день не закончен",
+          summary: appendSentence(
+            nextNote.summary,
+            "После этого окна у дня ещё остаются рабочие или тяжёлые узлы, значит recovery должен реально вернуть ресурс, а не просто создать видимость отдыха.",
+          ),
+        };
+      } else if (remainingDay.remainingSlots === 0) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "финал дня",
+          title:
+            dayPart === "evening" || dayPart === "late-evening"
+              ? "Это уже shutdown-anchor, а не транзитная пауза"
+              : nextNote.title,
+          summary: appendSentence(
+            nextNote.summary,
+            "После этого уже почти нет обязательных окон, так что recovery можно считать полноценным landing, а не транзитом.",
+          ),
+        };
+      }
+    }
+  }
+
+  if (note.id === "base-stack") {
+    if (durationMin <= 45) {
+      nextNote = {
+        ...nextNote,
+        durationLabel: "короткое окно",
+        summary: appendSentence(
+          nextNote.summary,
+          "Окно короткое, поэтому базу лучше закрыть одним чистым движением без ritual sprawl.",
+        ),
+      };
+    }
+
+    if (remainingDay) {
+      if (remainingDay.remainingWorkSlots + remainingDay.remainingHeavySlots >= 1) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "дальше окна",
+          summary: appendSentence(
+            nextNote.summary,
+            "Дальше день ещё попросит внимания, так что база здесь должна уменьшить friction следующих окон, а не съесть его сейчас.",
+          ),
+          points: mergePoints(["Закрой базу быстро и не возвращайся к ней пять раз."], nextNote.points),
+        };
+      } else if (remainingDay.remainingSlots === 0) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "закрытие дня",
+          title:
+            dayPart === "evening" || dayPart === "late-evening"
+              ? "В финале дня база — это закрытие дня, не новый протокол"
+              : nextNote.title,
+        };
+      }
+    }
+  }
+
+  if (note.id === "strength-base") {
+    if (durationMin >= 90) {
+      nextNote = {
+        ...nextNote,
+        durationLabel: "длинный блок",
+        summary: appendSentence(
+          nextNote.summary,
+          "Длинный силовой слот требует особенно бережно следить за запасом, чтобы не раздать весь ресурс внутри него.",
+        ),
+        points: mergePoints(
+          [
+            "Оставь 1–2 передачи усилия в запасе, даже если субъективно можешь дожать.",
+          ],
+          nextNote.points,
+        ),
+      };
+    } else if (durationMin <= 45) {
+      nextNote = {
+        ...nextNote,
+        durationLabel: "короткий формат",
+        summary: appendSentence(
+          nextNote.summary,
+          "Короткий формат здесь плюс: можно снять сигнал силы без лишнего урона по остатку дня.",
+        ),
+      };
+    }
+
+    if (remainingDay) {
+      if (remainingDay.remainingWorkSlots + remainingDay.remainingHeavySlots >= 2) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "ещё узлы",
+          summary: appendSentence(
+            nextNote.summary,
+            "После слота день ещё требует нервной ёмкости, так что оставь запас, а не только выполненность.",
+          ),
+        };
+      } else if (remainingDay.remainingSlots === 0) {
+        nextNote = {
+          ...nextNote,
+          budgetLabel: "последний узел",
+          summary: appendSentence(
+            nextNote.summary,
+            "Если это последний заметный узел дня, выигрывает чистая техника и своевременный выход, а не добивание ради галочки.",
+          ),
+        };
+      }
+    }
+  }
+
+  return nextNote;
 }
 
 function buildHeavyLoadNote(
@@ -959,5 +1176,6 @@ export function getCalendarSlotSupportNote(
   if (!note) return null;
 
   const sequenceAwareNote = applySequenceContext(note, slot, context);
-  return applyPressureContext(sequenceAwareNote, context);
+  const pressureAwareNote = applyPressureContext(sequenceAwareNote, context);
+  return applyDurationAndBudgetContext(pressureAwareNote, slot, context);
 }

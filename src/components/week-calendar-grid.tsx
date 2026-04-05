@@ -329,6 +329,36 @@ function isAmbientContextSlot(slot: Pick<ScheduleSlot, "tags">): boolean {
   );
 }
 
+function isBudgetHeavySlot(slot: Pick<ScheduleSlot, "source" | "tags" | "title">): boolean {
+  const title = slot.title.toLowerCase();
+  return (
+    slot.source === "studio" ||
+    slot.tags.some((tag) => ["cleanup", "high-load", "party", "studio", "support", "between-parties", "household"].includes(tag)) ||
+    ["уборк", "cleanup", "праздник", "party"].some((token) => title.includes(token))
+  );
+}
+
+function isBudgetWorkLikeSlot(slot: Pick<ScheduleSlot, "tone" | "tags" | "title">): boolean {
+  const title = slot.title.toLowerCase();
+  return (
+    slot.tone === "work" ||
+    slot.tone === "kinderly" ||
+    slot.tone === "heys" ||
+    slot.tone === "review" ||
+    slot.tags.some((tag) => ["work", "deep-work", "strategy", "execution", "comms", "ops", "planning", "review"].includes(tag)) ||
+    ["work", "deep work", "strategy", "review", "задач", "стратег", "план", "реализац"].some((token) => title.includes(token))
+  );
+}
+
+function isBudgetRecoveryLikeSlot(slot: Pick<ScheduleSlot, "tone" | "tags" | "title">): boolean {
+  const title = slot.title.toLowerCase();
+  return (
+    slot.tone === "personal" ||
+    slot.tags.some((tag) => ["recovery", "sleep", "shutdown", "bedtime", "quiet-buffer", "rest", "stress", "wellbeing"].includes(tag)) ||
+    ["сон", "sleep", "recovery", "quiet", "shutdown", "stretch", "rest", "восстанов"].some((token) => title.includes(token))
+  );
+}
+
 function getAdjacentContextSlot(
   slots: ScheduleSlot[],
   currentSlot: ScheduleSlot,
@@ -620,7 +650,14 @@ function getDesktopSlotHintContent(params: {
 function toSupportDesktopHintContent(
   note: CalendarSlotSupportNote,
 ): DesktopSlotHintContent {
-  const eyebrow = [note.badge, note.timingLabel, note.sequenceLabel, note.pressureLabel]
+  const eyebrow = [
+    note.badge,
+    note.timingLabel,
+    note.durationLabel,
+    note.sequenceLabel,
+    note.pressureLabel,
+    note.budgetLabel,
+  ]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
 
@@ -2258,11 +2295,22 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   });
                   const previousContextSlot = getAdjacentContextSlot(col.slots, slot, "previous");
                   const nextContextSlot = getAdjacentContextSlot(col.slots, slot, "next");
+                  const remainingDaySlots = col.slots.filter((candidate) => {
+                    if (candidate.id === slot.id) return false;
+                    if (isAmbientContextSlot(candidate)) return false;
+                    return timeToMinutes(candidate.start) >= timeToMinutes(slot.end);
+                  });
                   const supportNote = getCalendarSlotSupportNote(slot, {
                     dayModeId: heysDayMode?.id,
                     previousSlot: previousContextSlot,
                     nextSlot: nextContextSlot,
                     pressure: col.pressure,
+                    remainingDay: {
+                      remainingSlots: remainingDaySlots.length,
+                      remainingHeavySlots: remainingDaySlots.filter(isBudgetHeavySlot).length,
+                      remainingWorkSlots: remainingDaySlots.filter(isBudgetWorkLikeSlot).length,
+                      remainingRecoverySlots: remainingDaySlots.filter(isBudgetRecoveryLikeSlot).length,
+                    },
                   });
                   const supportHintKey = `${slotInstanceKey}:support`;
                   const supportHintContent = supportNote
