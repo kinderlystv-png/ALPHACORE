@@ -162,6 +162,11 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
+function clipUiText(text: string, maxLength = 180): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 function buildBundleOrchestrationPrompt(
   recommendations: AgentRecommendation[],
   practicalPlan: AgentPracticalPlan | null,
@@ -496,7 +501,44 @@ function LearningProfile({
         </span>
       </div>
 
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {profile.preferredTags.slice(0, 2).map((tag) => (
+          <span
+            key={`pref-${tag}`}
+            className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-200"
+          >
+            #{tag}
+          </span>
+        ))}
+        {clarificationProfile.topSignals.slice(0, 2).map(({ signal, label, count }) => (
+          <span
+            key={`clarify-${signal}`}
+            className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-100"
+            title={label}
+          >
+            {label} · {count}
+          </span>
+        ))}
+        {profile.topDislikeReasons.slice(0, 1).map(({ reason, count }) => (
+          <span
+            key={`reason-${reason}`}
+            className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-100"
+            title={FEEDBACK_REASON_LABEL[reason]}
+          >
+            {FEEDBACK_REASON_SHORT_LABEL[reason]} · {count}
+          </span>
+        ))}
+        {profile.preferredTags.length === 0 && clarificationProfile.topSignals.length === 0 && profile.topDislikeReasons.length === 0 && (
+          <span className="text-xs text-zinc-500">Пока сигнала немного — learning-layer ещё калибруется.</span>
+        )}
+      </div>
+
+      <details className="mt-3 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
+        <summary className="cursor-pointer list-none text-xs font-medium text-zinc-300">
+          Показать learning-детали
+        </summary>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
         <div>
           <p className="text-[10px] uppercase tracking-widest text-zinc-600">Что чаще заходит</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -572,7 +614,9 @@ function LearningProfile({
             )}
           </div>
         </div>
-      </div>
+
+        </div>
+      </details>
     </div>
   );
 }
@@ -592,12 +636,15 @@ function RecommendationCard({
   onImplemented: (recommendation: AgentRecommendation) => void;
   reasonPickerOpen: boolean;
 }) {
+  const signalPreview = recommendation.signals.slice(0, 2);
+  const hiddenSignalCount = Math.max(0, recommendation.signals.length - signalPreview.length);
+
   return (
     <article className={`flex h-full flex-col rounded-3xl border p-4 shadow-lg shadow-black/10 ${LEVEL_CARD_CLS[recommendation.level]}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-zinc-50">{recommendation.title}</p>
-          <p className="mt-2 text-xs text-zinc-400">{recommendation.context}</p>
+          <p className="mt-2 line-clamp-2 text-xs text-zinc-400">{recommendation.context}</p>
         </div>
 
         <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
@@ -610,7 +657,7 @@ function RecommendationCard({
         </div>
       </div>
 
-      <p className="mt-3 text-sm text-zinc-200">{recommendation.impact}</p>
+      <p className="mt-3 line-clamp-3 text-sm text-zinc-200">{recommendation.impact}</p>
 
       {recommendation.staleReason && (
         <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
@@ -624,27 +671,59 @@ function RecommendationCard({
         </div>
       )}
 
-      {recommendation.signals.length > 0 && (
-        <ul className="mt-3 space-y-1.5 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3 text-xs text-zinc-300">
-          {recommendation.signals.map((signal) => (
-            <li key={signal} className="flex gap-2">
-              <span className="mt-0.5 text-zinc-600">•</span>
-              <span>{signal}</span>
-            </li>
+      {(signalPreview.length > 0 || recommendation.tags.length > 0) && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
+            effort {recommendation.effort}
+          </span>
+          {signalPreview.map((signal) => (
+            <span key={signal} className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
+              {clipUiText(signal, 34)}
+            </span>
           ))}
-        </ul>
+          {hiddenSignalCount > 0 && (
+            <span className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
+              +{hiddenSignalCount} сигнала
+            </span>
+          )}
+        </div>
       )}
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <span className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
-          effort {recommendation.effort}
-        </span>
-        {recommendation.tags.map((tag) => (
-          <span key={tag} className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
-            #{tag}
-          </span>
-        ))}
-      </div>
+      <details className="mt-3 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
+        <summary className="cursor-pointer list-none text-xs font-medium text-zinc-300">
+          Контекст и детали
+        </summary>
+        <div className="mt-3 space-y-3 text-xs text-zinc-300">
+          <p className="text-zinc-400">{recommendation.context}</p>
+          {recommendation.signals.length > 0 && (
+            <ul className="space-y-1.5 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3 text-xs text-zinc-300">
+              {recommendation.signals.map((signal) => (
+                <li key={signal} className="flex gap-2">
+                  <span className="mt-0.5 text-zinc-600">•</span>
+                  <span>{signal}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            <span className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
+              effort {recommendation.effort}
+            </span>
+            {recommendation.tags.map((tag) => (
+              <span key={tag} className="rounded-full border border-zinc-800 bg-zinc-950/60 px-2 py-1 text-[10px] text-zinc-400">
+                #{tag}
+              </span>
+            ))}
+          </div>
+          {(recommendation.latestReason || recommendation.staleReason) && (
+            <p className="text-[10px] text-zinc-500">
+              {recommendation.latestReason
+                ? `Последняя причина: ${FEEDBACK_REASON_LABEL[recommendation.latestReason]}`
+                : `Stale-сигнал: ${FEEDBACK_REASON_LABEL[recommendation.staleReason!]}`}
+            </p>
+          )}
+        </div>
+      </details>
 
       <details className="mt-3 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
         <summary className="cursor-pointer list-none text-xs font-medium text-zinc-300">
@@ -701,14 +780,6 @@ function RecommendationCard({
           открыть источник →
         </Link>
       </div>
-
-      {(recommendation.latestReason || recommendation.staleReason) && (
-        <p className="mt-2 text-[10px] text-zinc-500">
-          {recommendation.latestReason
-            ? `Последняя причина: ${FEEDBACK_REASON_LABEL[recommendation.latestReason]}`
-            : `Stale-сигнал: ${FEEDBACK_REASON_LABEL[recommendation.staleReason!]}`}
-        </p>
-      )}
     </article>
   );
 }
@@ -779,6 +850,10 @@ function PracticalPlanCard({
   plan: AgentPracticalPlan;
   onApplyRescheduleMove: (move: PracticalPlanRescheduleMove) => void;
 }) {
+  const primaryReschedule = plan.intradayReschedule[0] ?? null;
+  const highlightNudges = plan.weeklyNudges.slice(0, 2);
+  const clarificationPreview = plan.clarificationQuestions.slice(0, 2);
+
   return (
     <section className="rounded-3xl border border-sky-500/20 bg-linear-to-br from-sky-950/20 via-zinc-950/70 to-zinc-950/90 p-4 shadow-lg shadow-black/10">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -803,7 +878,100 @@ function PracticalPlanCard({
         )}
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
+      <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
+        <div className="rounded-3xl border border-sky-500/20 bg-sky-500/5 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {plan.dayModeLabel && (
+              <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[10px] text-sky-100">
+                {plan.dayModeLabel}
+              </span>
+            )}
+            {plan.dayModeFocus && (
+              <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
+                фокус: {plan.dayModeFocus.toLowerCase()}
+              </span>
+            )}
+          </div>
+
+          <p className="mt-3 text-[10px] uppercase tracking-widest text-zinc-500">Главное решение сейчас</p>
+          <p className="mt-2 text-sm text-zinc-100">{plan.mainDecision}</p>
+
+          {plan.backupMoves[0] && (
+            <p className="mt-3 text-xs leading-5 text-zinc-400">
+              Запасной ход: {plan.backupMoves[0]}
+            </p>
+          )}
+
+          {highlightNudges.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {highlightNudges.map((nudge) => (
+                <span
+                  key={nudge.id}
+                  className={`rounded-full border px-2 py-1 text-[10px] ${LEVEL_PILL_CLS[nudge.tone]}`}
+                >
+                  {nudge.title}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="rounded-3xl border border-zinc-800/70 bg-zinc-950/45 p-4">
+            <p className="text-[10px] uppercase tracking-widest text-zinc-500">Критерий done</p>
+            <p className="mt-2 text-sm text-zinc-100">{clipUiText(plan.doneCriterion, 180)}</p>
+
+            <ul className="mt-3 space-y-1.5 text-xs text-zinc-400">
+              <li><span className="text-zinc-500">Tasks:</span> {clipUiText(plan.updates.task, 96)}</li>
+              <li><span className="text-zinc-500">Calendar:</span> {clipUiText(plan.updates.schedule, 96)}</li>
+              <li><span className="text-zinc-500">Journal:</span> {clipUiText(plan.updates.journal, 96)}</li>
+            </ul>
+          </div>
+
+          {primaryReschedule && (
+            <div className="rounded-3xl border border-zinc-800/70 bg-zinc-950/45 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm">{getPlanRescheduleIcon(primaryReschedule.kind)}</span>
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${LEVEL_PILL_CLS[primaryReschedule.tone]}`}>
+                  {getPlanRescheduleLabel(primaryReschedule.kind)}
+                </span>
+              </div>
+              <p className="mt-2 text-sm font-medium text-zinc-100">{primaryReschedule.title}</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-400">{clipUiText(primaryReschedule.detail, 140)}</p>
+              <button
+                type="button"
+                onClick={() => onApplyRescheduleMove(primaryReschedule)}
+                className="mt-3 rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:border-sky-400/40"
+              >
+                Применить
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {clarificationPreview.length > 0 && (
+        <div className="mt-3 rounded-3xl border border-zinc-800/70 bg-zinc-950/35 p-4">
+          <p className="text-[10px] uppercase tracking-widest text-zinc-500">Сначала спросить</p>
+          <ul className="mt-2 space-y-2 text-sm text-zinc-200">
+            {clarificationPreview.map((question) => (
+              <li key={question.id}>{question.question}</li>
+            ))}
+          </ul>
+          {plan.clarificationQuestions.length > clarificationPreview.length && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Ещё {plan.clarificationQuestions.length - clarificationPreview.length} уточнения спрятаны в полном плане.
+            </p>
+          )}
+        </div>
+      )}
+
+      <details className="mt-4 rounded-3xl border border-zinc-800/70 bg-zinc-950/35 p-4">
+        <summary className="cursor-pointer list-none text-sm font-medium text-zinc-200">
+          Развернуть полный план
+        </summary>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)]">
         <div className="space-y-4">
           {plan.dayModeLabel && (
             <div className="rounded-3xl border border-sky-500/20 bg-sky-500/5 p-4">
@@ -1011,7 +1179,8 @@ function PracticalPlanCard({
             </ul>
           </div>
         </div>
-      </div>
+        </div>
+      </details>
     </section>
   );
 }
@@ -1069,6 +1238,12 @@ export function AgentControlPanel({
     () => buildAgentPracticalPlan(recommendations, runtimeContext, clarificationAnswerEvents),
     [clarificationAnswerEvents, recommendations, runtimeContext],
   );
+  const weakestAreas = useMemo(
+    () => [...snapshot.areas].sort((left, right) => left.score - right.score).slice(0, 3),
+    [snapshot.areas],
+  );
+  const visibleRecommendations = recommendations.slice(0, 2);
+  const hiddenRecommendations = recommendations.slice(2);
 
   const notify = useCallback((payload: FlashPayload) => {
     if (onFlash) {
@@ -1160,7 +1335,7 @@ export function AgentControlPanel({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-3xl">
           <h2 className="text-lg font-semibold text-zinc-50">🧭 Agent cockpit</h2>
-          <p className="mt-1 text-sm text-zinc-400">{snapshot.modeStatement}</p>
+          <p className="mt-1 text-sm text-zinc-400">{clipUiText(snapshot.modeStatement, 180)}</p>
           {snapshot.heysDayMode && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className={`rounded-full border px-2.5 py-1 text-[10px] ${getDayModePillCls(snapshot.heysDayMode.tone)}`}>
@@ -1179,7 +1354,12 @@ export function AgentControlPanel({
               ))}
             </div>
           )}
-          <p className="mt-3 text-sm text-zinc-300">{snapshot.narrative}</p>
+          <details className="mt-3 rounded-2xl border border-zinc-800/60 bg-zinc-950/35 px-3 py-2">
+            <summary className="cursor-pointer list-none text-xs font-medium text-zinc-300">
+              Почему этот режим и что за ним стоит
+            </summary>
+            <p className="mt-3 text-sm text-zinc-300">{snapshot.narrative}</p>
+          </details>
 
           {inlineFlash && (
             <div
@@ -1201,53 +1381,86 @@ export function AgentControlPanel({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <RadarWheel areas={snapshot.areas} balanceScore={snapshot.balanceScore} />
-
-        <div className="space-y-3">
-          <div className="rounded-3xl border border-zinc-800/60 bg-zinc-950/40 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-zinc-50">🤖 AI prompts для среды разработки</p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {runtimeContext
-                    ? `Карточки уже grounded в живых данных: ${runtimeContext.planning.unslottedTasks.length} задач без слота, ${runtimeContext.planning.calendarTasks.length} дел уже стоят в календаре, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий и ${runtimeContext.journal.recent.length} свежих записей.${runtimeContext.heys.dayMode ? ` Текущий режим: ${runtimeContext.heys.dayMode.label}.` : ""}`
-                    : "Карточки строятся из текущего контекста ALPHACORE и подстраиваются по copy / dislike / implemented."}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={handleCopyAll}
-                  disabled={recommendations.length === 0}
-                  className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-[11px] font-medium text-sky-100 transition hover:border-sky-400/40 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900/60 disabled:text-zinc-500"
+      <div className="mt-5 rounded-3xl border border-zinc-800/60 bg-zinc-950/35 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="max-w-3xl">
+            <p className="text-sm font-semibold text-zinc-50">🤖 Контекст для агентских решений</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {runtimeContext
+                ? clipUiText(`Живой grounding: ${runtimeContext.planning.unslottedTasks.length} задач без слота, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий, ${runtimeContext.journal.recent.length} свежих записей.${runtimeContext.heys.dayMode ? ` Режим: ${runtimeContext.heys.dayMode.label}.` : ""}`, 180)
+                : "Карточки строятся из текущего контекста ALPHACORE и подстраиваются по feedback."}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {weakestAreas.map((area) => (
+                <span
+                  key={area.key}
+                  className={`rounded-full border px-2 py-1 text-[10px] ${LEVEL_PILL_CLS[area.level]}`}
                 >
-                  Скопировать пакет prompts
-                </button>
-                <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
-                  {recommendations.length} активных
+                  {area.emoji} {area.label} {area.score}
                 </span>
-                {runtimeContext?.heys.dayMode && (
-                  <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
-                    mode-aware: {runtimeContext.heys.dayMode.label}
-                  </span>
-                )}
-              </div>
+              ))}
             </div>
           </div>
 
-          <LearningProfile
-            feedbackEvents={feedbackEvents}
-            clarificationAnswerEvents={clarificationAnswerEvents}
-          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleCopyAll}
+              disabled={recommendations.length === 0}
+              className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-[11px] font-medium text-sky-100 transition hover:border-sky-400/40 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900/60 disabled:text-zinc-500"
+            >
+              Скопировать пакет prompts
+            </button>
+            <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
+              {recommendations.length} активных
+            </span>
+          </div>
         </div>
+
+        <details className="mt-3 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
+          <summary className="cursor-pointer list-none text-xs font-medium text-zinc-300">
+            Открыть radar, grounding и learning
+          </summary>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <RadarWheel areas={snapshot.areas} balanceScore={snapshot.balanceScore} />
+
+            <div className="space-y-3">
+              <div className="rounded-3xl border border-zinc-800/60 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-50">🤖 AI prompts для среды разработки</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {runtimeContext
+                        ? `Карточки already grounded: ${runtimeContext.planning.unslottedTasks.length} задач без слота, ${runtimeContext.planning.calendarTasks.length} уже в календаре, ${runtimeContext.projects.attention.length} проектов в tension, ${runtimeContext.schedule.studio.length} студийных событий и ${runtimeContext.journal.recent.length} свежих записей.${runtimeContext.heys.dayMode ? ` Текущий режим: ${runtimeContext.heys.dayMode.label}.` : ""}`
+                        : "Карточки строятся из текущего контекста ALPHACORE и подстраиваются по copy / dislike / implemented."}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {runtimeContext?.heys.dayMode && (
+                      <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] text-zinc-400">
+                        mode-aware: {runtimeContext.heys.dayMode.label}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <LearningProfile
+                feedbackEvents={feedbackEvents}
+                clarificationAnswerEvents={clarificationAnswerEvents}
+              />
+            </div>
+          </div>
+        </details>
       </div>
 
       {practicalPlan && <div className="mt-4"><PracticalPlanCard plan={practicalPlan} onApplyRescheduleMove={handleApplyRescheduleMove} /></div>}
 
       {recommendations.length > 0 ? (
+        <>
         <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-          {recommendations.map((recommendation) => (
+          {visibleRecommendations.map((recommendation) => (
             <RecommendationCard
               key={recommendation.id}
               recommendation={recommendation}
@@ -1259,57 +1472,85 @@ export function AgentControlPanel({
             />
           ))}
         </div>
+
+        {hiddenRecommendations.length > 0 && (
+          <details className="mt-3 rounded-3xl border border-zinc-800/70 bg-zinc-950/35 p-4">
+            <summary className="cursor-pointer list-none text-sm font-medium text-zinc-200">
+              Показать ещё {hiddenRecommendations.length} совет{hiddenRecommendations.length === 1 ? "" : hiddenRecommendations.length < 5 ? "а" : "ов"}
+            </summary>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+              {hiddenRecommendations.map((recommendation) => (
+                <RecommendationCard
+                  key={recommendation.id}
+                  recommendation={recommendation}
+                  onCopy={handleCopy}
+                  onOpenReasonPicker={(item) => setReasonPickerId((current) => current === item.id ? null : item.id)}
+                  onDislikeWithReason={(item, reason) => commitFeedback(item, "disliked", reason)}
+                  onImplemented={(item) => commitFeedback(item, "implemented")}
+                  reasonPickerOpen={reasonPickerId === recommendation.id}
+                />
+              ))}
+            </div>
+          </details>
+        )}
+        </>
       ) : (
         <div className="mt-4 rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/30 p-6 text-sm text-zinc-500">
           Активные советы скрыты твоим недавним feedback. Как только контекст поменяется или появятся новые сигналы, блок предложит следующую волну prompts.
         </div>
       )}
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {snapshot.areas.map((area) => (
-          <Link
-            key={area.key}
-            href={area.href}
-            className="rounded-3xl border border-zinc-800/60 bg-zinc-950/40 p-4 transition hover:border-zinc-600"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-zinc-50">
-                  {area.emoji} {area.label}
-                </p>
-                <p className="mt-1 text-xs text-zinc-500">{area.summary}</p>
+      <details className="mt-5 rounded-3xl border border-zinc-800/70 bg-zinc-950/35 p-4">
+        <summary className="cursor-pointer list-none text-sm font-medium text-zinc-200">
+          Открыть breakdown по зонам ({snapshot.areas.length})
+        </summary>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {snapshot.areas.map((area) => (
+            <Link
+              key={area.key}
+              href={area.href}
+              className="rounded-3xl border border-zinc-800/60 bg-zinc-950/40 p-4 transition hover:border-zinc-600"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-50">
+                    {area.emoji} {area.label}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">{area.summary}</p>
+                </div>
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${LEVEL_PILL_CLS[area.level]}`}>
+                  {LEVEL_LABEL[area.level]}
+                </span>
               </div>
-              <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-widest ${LEVEL_PILL_CLS[area.level]}`}>
-                {LEVEL_LABEL[area.level]}
-              </span>
-            </div>
 
-            <div className="mt-3 h-2 rounded-full bg-zinc-800">
-              <div
-                className={`h-full rounded-full ${
-                  area.level === "good"
-                    ? "bg-emerald-400"
-                    : area.level === "watch"
-                      ? "bg-amber-400"
-                      : "bg-rose-400"
-                }`}
-                style={{ width: `${area.score}%` }}
-              />
-            </div>
+              <div className="mt-3 h-2 rounded-full bg-zinc-800">
+                <div
+                  className={`h-full rounded-full ${
+                    area.level === "good"
+                      ? "bg-emerald-400"
+                      : area.level === "watch"
+                        ? "bg-amber-400"
+                        : "bg-rose-400"
+                  }`}
+                  style={{ width: `${area.score}%` }}
+                />
+              </div>
 
-            <p className="mt-3 text-sm text-zinc-200">{area.insight}</p>
+              <p className="mt-3 text-sm text-zinc-200">{area.insight}</p>
 
-            <ul className="mt-3 space-y-1.5 text-xs text-zinc-500">
-              {area.evidence.map((item) => (
-                <li key={item} className="flex gap-2">
-                  <span className="mt-0.5 text-zinc-700">•</span>
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </Link>
-        ))}
-      </div>
+              <ul className="mt-3 space-y-1.5 text-xs text-zinc-500">
+                {area.evidence.map((item) => (
+                  <li key={item} className="flex gap-2">
+                    <span className="mt-0.5 text-zinc-700">•</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </Link>
+          ))}
+        </div>
+      </details>
     </section>
   );
 }

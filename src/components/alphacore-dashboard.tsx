@@ -146,6 +146,12 @@ function daysSinceDate(dateLike: string | null) {
   return Math.max(0, Math.floor((now.getTime() - target.getTime()) / 86_400_000));
 }
 
+function buildTextPreview(text: string, maxLines = 8): string {
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  return [...lines.slice(0, maxLines), "…"].join("\n");
+}
+
 function parseQuickTaskDraft(input: string): QuickTaskDraft {
   let next = input.trim();
 
@@ -266,6 +272,11 @@ export function AlphacoreDashboard() {
 
   const activeBriefText = briefPanelMode === "review" ? eveningReview : morningBrief;
   const activeBriefTitle = briefPanelMode === "review" ? "Вечерний review" : "Утренний brief";
+  const activeBriefPreview = useMemo(
+    () => buildTextPreview(activeBriefText, 9),
+    [activeBriefText],
+  );
+  const briefHasOverflow = activeBriefPreview !== activeBriefText;
 
   const refreshDashboard = useCallback(() => {
     setAgentControl(getAgentControlSnapshot());
@@ -1367,7 +1378,16 @@ export function AlphacoreDashboard() {
                 ready to share
               </span>
             </div>
-            <pre className="whitespace-pre-wrap text-sm leading-6 text-zinc-300">{activeBriefText}</pre>
+            <pre className="whitespace-pre-wrap text-sm leading-6 text-zinc-300">{activeBriefPreview}</pre>
+
+            {briefHasOverflow && (
+              <details className="mt-4 rounded-2xl border border-zinc-800/70 bg-zinc-950/35 p-3">
+                <summary className="cursor-pointer list-none text-xs font-medium text-zinc-300">
+                  Показать полный текст
+                </summary>
+                <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-zinc-300">{activeBriefText}</pre>
+              </details>
+            )}
           </div>
         </section>
       )}
@@ -1386,8 +1406,62 @@ export function AlphacoreDashboard() {
             </span>
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
             <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-4">
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Главная task недели</p>
+              <p className="mt-2 text-sm font-medium text-zinc-100">
+                {weeklyReport.topTask?.title ?? "Пока без лидера по фокусу"}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {weeklyReport.topTask
+                  ? `🍅 ${weeklyReport.topTask.sessions} · ${weeklyReport.topTask.minutes} мин${
+                      weeklyReport.topTask.projectLabel
+                        ? ` · ${weeklyReport.topTask.projectLabel}`
+                        : ""
+                    }`
+                  : "Запусти пару помодоро — и лидер сразу найдётся."}
+              </p>
+
+              {weeklyReport.topTask && (
+                <button
+                  type="button"
+                  onClick={() => pushTaskToPomodoro(weeklyReport.topTask?.id ?? "", true)}
+                  className="mt-3 rounded-lg border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[11px] text-violet-200 transition hover:border-violet-400/40"
+                >
+                  В Pomodoro
+                </button>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-4">
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Проект недели</p>
+              <p className="mt-2 text-sm font-medium text-zinc-100">
+                {weeklyReport.topProject?.name ?? "Пока без project focus leader"}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {weeklyReport.topProject
+                  ? `${weeklyReport.topProject.minutes} мин чистого фокуса`
+                  : "Как только задачи получат проектную привязку, карточка станет ещё умнее."}
+              </p>
+
+              {weeklyReport.topProject?.id && (
+                <button
+                  type="button"
+                  onClick={() => handleProjectQuickOpen(weeklyReport.topProject!.id!)}
+                  className="mt-3 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                >
+                  Открыть проект
+                </button>
+              )}
+            </div>
+          </div>
+
+          <details className="mt-4 rounded-3xl border border-zinc-800/70 bg-zinc-950/35 p-4">
+            <summary className="cursor-pointer list-none text-sm font-medium text-zinc-200">
+              Показать динамику по дням
+            </summary>
+
+            <div className="mt-4 rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-4">
               <div className="space-y-2">
                 {weeklyReport.days.map((day) => (
                   <div
@@ -1419,57 +1493,7 @@ export function AlphacoreDashboard() {
                 ))}
               </div>
             </div>
-
-            <div className="space-y-3">
-              <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-4">
-                <p className="text-[10px] uppercase tracking-widest text-zinc-500">Главная task недели</p>
-                <p className="mt-2 text-sm font-medium text-zinc-100">
-                  {weeklyReport.topTask?.title ?? "Пока без лидера по фокусу"}
-                </p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {weeklyReport.topTask
-                    ? `🍅 ${weeklyReport.topTask.sessions} · ${weeklyReport.topTask.minutes} мин${
-                        weeklyReport.topTask.projectLabel
-                          ? ` · ${weeklyReport.topTask.projectLabel}`
-                          : ""
-                      }`
-                    : "Запусти пару помодоро — и лидер сразу найдётся."}
-                </p>
-
-                {weeklyReport.topTask && (
-                  <button
-                    type="button"
-                    onClick={() => pushTaskToPomodoro(weeklyReport.topTask?.id ?? "", true)}
-                    className="mt-3 rounded-lg border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[11px] text-violet-200 transition hover:border-violet-400/40"
-                  >
-                    В Pomodoro
-                  </button>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-4">
-                <p className="text-[10px] uppercase tracking-widest text-zinc-500">Проект недели</p>
-                <p className="mt-2 text-sm font-medium text-zinc-100">
-                  {weeklyReport.topProject?.name ?? "Пока без project focus leader"}
-                </p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {weeklyReport.topProject
-                    ? `${weeklyReport.topProject.minutes} мин чистого фокуса`
-                    : "Как только задачи получат проектную привязку, карточка станет ещё умнее."}
-                </p>
-
-                {weeklyReport.topProject?.id && (
-                  <button
-                    type="button"
-                    onClick={() => handleProjectQuickOpen(weeklyReport.topProject!.id!)}
-                    className="mt-3 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-                  >
-                    Открыть проект
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
+          </details>
         </section>
       )}
     </div>
