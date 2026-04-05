@@ -15,6 +15,10 @@ import {
   type CalendarDayPressure,
 } from "@/lib/calendar-day-pressure";
 import {
+  getCalendarSlotSupportNote,
+  type CalendarSlotSupportNote,
+} from "@/lib/calendar-slot-support-notes";
+import {
   formatCompletionLabel,
   getSlotAttentionState,
   getYesterdayKey,
@@ -84,7 +88,7 @@ const SLOT_SIDE_INSET_PX = 4;
 const SLOT_LANE_GAP_PX = 6;
 const DESKTOP_SLOT_HINT_DELAY_MS = 3000;
 const DESKTOP_SLOT_HINT_WIDTH = 296;
-const DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT = 168;
+const DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT = 248;
 
 const QUICK_TONE_OPTIONS: Array<{ value: ScheduleTone; label: string }> = [
   { value: "work", label: "💼 Работа" },
@@ -433,14 +437,16 @@ function formatDurationDelta(minutes: number): string {
   return `${sign}${abs}м`;
 }
 
-type DesktopSlotHintTone = "rose" | "amber" | "sky" | "zinc";
+type DesktopSlotHintTone = "rose" | "amber" | "sky" | "zinc" | "emerald" | "violet";
 
 type DesktopSlotHintContent = {
   eyebrow: string;
   title: string;
   summary: string;
   detail?: string;
+  points?: string[];
   tone: DesktopSlotHintTone;
+  icon?: string;
 };
 
 type DesktopSlotHintState = DesktopSlotHintContent & {
@@ -564,6 +570,42 @@ function getDesktopSlotHintContent(params: {
   }
 
   return getExplainabilityDesktopHint(params.slot, params.explainability);
+}
+
+function toSupportDesktopHintContent(
+  note: CalendarSlotSupportNote,
+): DesktopSlotHintContent {
+  return {
+    eyebrow: note.badge,
+    title: note.title,
+    summary: note.summary,
+    detail: note.detail,
+    points: note.points,
+    tone: note.tone,
+    icon: note.icon,
+  };
+}
+
+function getSupportNoteChipClass(
+  tone: CalendarSlotSupportNote["tone"],
+  isMuted: boolean,
+): string {
+  if (isMuted) {
+    return "border-zinc-700 bg-zinc-900/80 text-zinc-500";
+  }
+
+  switch (tone) {
+    case "amber":
+      return "border-amber-400/30 bg-amber-500/12 text-amber-100";
+    case "sky":
+      return "border-sky-400/30 bg-sky-500/12 text-sky-100";
+    case "emerald":
+      return "border-emerald-400/30 bg-emerald-500/12 text-emerald-100";
+    case "violet":
+      return "border-violet-400/30 bg-violet-500/12 text-violet-100";
+    default:
+      return "border-white/10 bg-black/10 text-white/75";
+  }
 }
 
 /* ── Types ── */
@@ -882,6 +924,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     element: HTMLElement,
     slotKey: string,
     content: DesktopSlotHintContent | null,
+    options?: { delayMs?: number },
   ) => {
     if (!content) {
       hideDesktopSlotHint();
@@ -910,7 +953,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     );
 
     desktopSlotHintPendingKeyRef.current = slotKey;
-    desktopSlotHintTimerRef.current = window.setTimeout(() => {
+    const revealHint = () => {
       desktopSlotHintTimerRef.current = null;
       desktopSlotHintPendingKeyRef.current = null;
       setDesktopSlotHint({
@@ -919,7 +962,16 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         top,
         ...content,
       });
-    }, DESKTOP_SLOT_HINT_DELAY_MS);
+    };
+
+    const delayMs = options?.delayMs ?? DESKTOP_SLOT_HINT_DELAY_MS;
+
+    if (delayMs <= 0) {
+      revealHint();
+      return;
+    }
+
+    desktopSlotHintTimerRef.current = window.setTimeout(revealHint, delayMs);
   }, [clearDesktopSlotHintTimer, desktopSlotHint?.slotKey, hideDesktopSlotHint]);
 
   const resetEdgeCue = useCallback(() => {
@@ -2117,6 +2169,11 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     isCompleted: isCompletedSlot,
                     explainability,
                   });
+                  const supportNote = getCalendarSlotSupportNote(slot);
+                  const supportHintKey = `${slotInstanceKey}:support`;
+                  const supportHintContent = supportNote
+                    ? toSupportDesktopHintContent(supportNote)
+                    : null;
                   const isEditable = isEditableScheduleSlot(slot);
                   const isSupportSlot = laneMetrics.isSupportLane;
                   const isBlockingSlot =
@@ -2128,6 +2185,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date;
                   const isSelectedSlot = isQuickMenuSlot || isActiveSlot;
                   const isHoveredSlot = hoveredSlotKey === slotInstanceKey;
+                  const showSupportNoteInline = Boolean(
+                    supportNote && !isChildcareBackground && !isSupportSlot && height > 66,
+                  );
+                  const showSupportNoteCompact = Boolean(
+                    supportNote && !isChildcareBackground && !showSupportNoteInline && height > 34,
+                  );
                   const slotPadding = isChildcareBackground
                     ? height >= 88
                       ? "px-3 py-2.5"
@@ -2261,6 +2324,49 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                               {heysBadgeLabel}
                             </span>
                           )}
+                          {showSupportNoteCompact && supportNote && supportHintContent && (
+                            <button
+                              type="button"
+                              aria-label={supportNote.title}
+                              title={supportNote.summary}
+                              className={`absolute bottom-1.5 right-1.5 z-10 inline-flex h-5 w-5 items-center justify-center rounded-full border text-[11px] shadow-[0_6px_18px_rgba(0,0,0,0.18)] ${getSupportNoteChipClass(supportNote.tone, isYesterdayMutedSlot)}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                              }}
+                              onPointerDown={(event) => {
+                                event.stopPropagation();
+                              }}
+                              onPointerEnter={(event) => {
+                                if (event.pointerType !== "mouse") return;
+                                scheduleDesktopSlotHint(
+                                  event.currentTarget,
+                                  supportHintKey,
+                                  supportHintContent,
+                                  { delayMs: 0 },
+                                );
+                              }}
+                              onPointerLeave={() => {
+                                if (desktopSlotHint?.slotKey === supportHintKey) {
+                                  hideDesktopSlotHint();
+                                }
+                              }}
+                              onFocus={(event) => {
+                                scheduleDesktopSlotHint(
+                                  event.currentTarget,
+                                  supportHintKey,
+                                  supportHintContent,
+                                  { delayMs: 0 },
+                                );
+                              }}
+                              onBlur={() => {
+                                if (desktopSlotHint?.slotKey === supportHintKey) {
+                                  hideDesktopSlotHint();
+                                }
+                              }}
+                            >
+                              <span aria-hidden="true">{supportNote.icon}</span>
+                            </button>
+                          )}
                           {isEditable && (
                             <button
                               type="button"
@@ -2311,6 +2417,52 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                               <p className={`mt-0.5 font-medium leading-snug ${primaryTextClass} ${isSupportSlot ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"} ${isCompletedSlot ? isYesterdayMutedSlot ? "line-through decoration-zinc-500/40 opacity-85" : "line-through decoration-emerald-100/45 opacity-90" : ""}`}>
                                 {slot.title}
                               </p>
+                              {showSupportNoteInline && supportNote && supportHintContent && (
+                                <div className="mt-1 flex">
+                                  <button
+                                    type="button"
+                                    aria-label={supportNote.title}
+                                    title={supportNote.summary}
+                                    className={`relative z-10 inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[8px] font-medium uppercase tracking-[0.14em] ${getSupportNoteChipClass(supportNote.tone, isYesterdayMutedSlot)}`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                    }}
+                                    onPointerDown={(event) => {
+                                      event.stopPropagation();
+                                    }}
+                                    onPointerEnter={(event) => {
+                                      if (event.pointerType !== "mouse") return;
+                                      scheduleDesktopSlotHint(
+                                        event.currentTarget,
+                                        supportHintKey,
+                                        supportHintContent,
+                                        { delayMs: 0 },
+                                      );
+                                    }}
+                                    onPointerLeave={() => {
+                                      if (desktopSlotHint?.slotKey === supportHintKey) {
+                                        hideDesktopSlotHint();
+                                      }
+                                    }}
+                                    onFocus={(event) => {
+                                      scheduleDesktopSlotHint(
+                                        event.currentTarget,
+                                        supportHintKey,
+                                        supportHintContent,
+                                        { delayMs: 0 },
+                                      );
+                                    }}
+                                    onBlur={() => {
+                                      if (desktopSlotHint?.slotKey === supportHintKey) {
+                                        hideDesktopSlotHint();
+                                      }
+                                    }}
+                                  >
+                                    <span aria-hidden="true">{supportNote.icon}</span>
+                                    <span className="truncate">{supportNote.badge}</span>
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
                           {projectLabel && !isSupportSlot && height > 46 && (
@@ -2861,6 +3013,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           ? "border-rose-400/45 bg-rose-950/94 text-rose-50"
           : desktopSlotHint.tone === "amber"
             ? "border-amber-400/45 bg-amber-950/94 text-amber-50"
+            : desktopSlotHint.tone === "emerald"
+              ? "border-emerald-400/45 bg-emerald-950/94 text-emerald-50"
+              : desktopSlotHint.tone === "violet"
+                ? "border-violet-400/45 bg-violet-950/94 text-violet-50"
             : desktopSlotHint.tone === "sky"
               ? "border-sky-400/40 bg-zinc-950/94 text-zinc-50"
               : "border-zinc-700/80 bg-zinc-950/94 text-zinc-50";
@@ -2868,6 +3024,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           ? "text-rose-200/90"
           : desktopSlotHint.tone === "amber"
             ? "text-amber-200/90"
+            : desktopSlotHint.tone === "emerald"
+              ? "text-emerald-200/90"
+              : desktopSlotHint.tone === "violet"
+                ? "text-violet-200/90"
             : desktopSlotHint.tone === "sky"
               ? "text-sky-300/90"
               : "text-zinc-400";
@@ -2875,11 +3035,19 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           ? "text-rose-100/78"
           : desktopSlotHint.tone === "amber"
             ? "text-amber-100/78"
+            : desktopSlotHint.tone === "emerald"
+              ? "text-emerald-100/82"
+              : desktopSlotHint.tone === "violet"
+                ? "text-violet-100/82"
             : "text-zinc-200/80";
         const detailClass = desktopSlotHint.tone === "rose"
           ? "text-rose-200/78"
           : desktopSlotHint.tone === "amber"
             ? "text-amber-200/78"
+            : desktopSlotHint.tone === "emerald"
+              ? "text-emerald-200/78"
+              : desktopSlotHint.tone === "violet"
+                ? "text-violet-200/78"
             : desktopSlotHint.tone === "sky"
               ? "text-sky-200/78"
               : "text-zinc-400";
@@ -2890,15 +3058,34 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             style={{ left: desktopSlotHint.left, top: desktopSlotHint.top, width: DESKTOP_SLOT_HINT_WIDTH }}
           >
             <div className={`rounded-2xl border px-3 py-3 shadow-[0_18px_40px_rgba(0,0,0,0.35)] backdrop-blur ${toneClass}`}>
-              <p className={`text-[10px] font-medium uppercase tracking-[0.16em] ${eyebrowClass}`}>
-                {desktopSlotHint.eyebrow}
-              </p>
-              <p className="mt-1 text-[13px] font-semibold leading-5">
-                {desktopSlotHint.title}
-              </p>
+              <div className="flex items-start gap-2">
+                {desktopSlotHint.icon && (
+                  <span className="mt-0.5 text-base" aria-hidden="true">
+                    {desktopSlotHint.icon}
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className={`text-[10px] font-medium uppercase tracking-[0.16em] ${eyebrowClass}`}>
+                    {desktopSlotHint.eyebrow}
+                  </p>
+                  <p className="mt-1 text-[13px] font-semibold leading-5">
+                    {desktopSlotHint.title}
+                  </p>
+                </div>
+              </div>
               <p className={`mt-1 text-[11px] leading-5 ${summaryClass}`}>
                 {desktopSlotHint.summary}
               </p>
+              {desktopSlotHint.points && desktopSlotHint.points.length > 0 && (
+                <ul className={`mt-2 space-y-1 text-[10px] leading-4 ${detailClass}`}>
+                  {desktopSlotHint.points.map((point) => (
+                    <li key={point} className="flex items-start gap-2">
+                      <span className="mt-0.5 text-[8px]">●</span>
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               {desktopSlotHint.detail && (
                 <p className={`mt-2 text-[10px] leading-4 ${detailClass}`}>
                   {desktopSlotHint.detail}
