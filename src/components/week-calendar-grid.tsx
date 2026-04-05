@@ -583,7 +583,7 @@ function toSupportDesktopHintContent(
   note: CalendarSlotSupportNote,
 ): DesktopSlotHintContent {
   return {
-    eyebrow: note.badge,
+    eyebrow: note.timingLabel ? `${note.badge} · ${note.timingLabel}` : note.badge,
     title: note.title,
     summary: note.summary,
     detail: note.detail,
