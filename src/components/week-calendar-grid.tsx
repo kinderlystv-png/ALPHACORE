@@ -322,6 +322,44 @@ function slotsOverlap(
   return rangesOverlap(left, right);
 }
 
+function isAmbientContextSlot(slot: Pick<ScheduleSlot, "tags">): boolean {
+  return (
+    slot.tags.includes("childcare-window") ||
+    (slot.tags.includes("admin") && slot.tags.includes("danya"))
+  );
+}
+
+function getAdjacentContextSlot(
+  slots: ScheduleSlot[],
+  currentSlot: ScheduleSlot,
+  direction: "previous" | "next",
+): ScheduleSlot | null {
+  const currentStart = timeToMinutes(currentSlot.start);
+  const currentEnd = timeToMinutes(currentSlot.end);
+  const candidates = slots.filter((candidate) => {
+    if (candidate.id === currentSlot.id) return false;
+    if (isAmbientContextSlot(candidate)) return false;
+
+    return direction === "previous"
+      ? timeToMinutes(candidate.end) <= currentStart
+      : timeToMinutes(candidate.start) >= currentEnd;
+  });
+
+  if (candidates.length === 0) return null;
+
+  return direction === "previous"
+    ? candidates.sort(
+        (left, right) =>
+          timeToMinutes(right.end) - timeToMinutes(left.end) ||
+          timeToMinutes(right.start) - timeToMinutes(left.start),
+      )[0] ?? null
+    : candidates.sort(
+        (left, right) =>
+          timeToMinutes(left.start) - timeToMinutes(right.start) ||
+          timeToMinutes(left.end) - timeToMinutes(right.end),
+      )[0] ?? null;
+}
+
 function isChildcareBackgroundSlot(
   slot: Pick<ScheduleSlot, "source" | "tags"> | LaneRenderable,
 ): boolean {
@@ -582,8 +620,12 @@ function getDesktopSlotHintContent(params: {
 function toSupportDesktopHintContent(
   note: CalendarSlotSupportNote,
 ): DesktopSlotHintContent {
+  const eyebrow = [note.badge, note.timingLabel, note.sequenceLabel]
+    .filter((value): value is string => Boolean(value))
+    .join(" · ");
+
   return {
-    eyebrow: note.timingLabel ? `${note.badge} · ${note.timingLabel}` : note.badge,
+    eyebrow,
     title: note.title,
     summary: note.summary,
     detail: note.detail,
@@ -2214,8 +2256,12 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     isCompleted: isCompletedSlot,
                     explainability,
                   });
+                  const previousContextSlot = getAdjacentContextSlot(col.slots, slot, "previous");
+                  const nextContextSlot = getAdjacentContextSlot(col.slots, slot, "next");
                   const supportNote = getCalendarSlotSupportNote(slot, {
                     dayModeId: heysDayMode?.id,
+                    previousSlot: previousContextSlot,
+                    nextSlot: nextContextSlot,
                   });
                   const supportHintKey = `${slotInstanceKey}:support`;
                   const supportHintContent = supportNote

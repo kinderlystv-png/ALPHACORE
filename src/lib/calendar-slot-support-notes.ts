@@ -1,4 +1,4 @@
-import type { ScheduleSlot } from "./schedule";
+import { timeToMinutes, type ScheduleSlot } from "./schedule";
 import type { DayModeId } from "./heys-day-mode";
 
 export type CalendarSlotSupportNoteTone = "amber" | "sky" | "emerald" | "violet" | "rose";
@@ -7,6 +7,7 @@ export type CalendarSlotSupportNote = {
   id: "load-fuel" | "recovery" | "base-stack" | "strength-base";
   badge: string;
   timingLabel?: string;
+  sequenceLabel?: string;
   title: string;
   summary: string;
   detail?: string;
@@ -19,6 +20,8 @@ type SupportSlotInput = Pick<ScheduleSlot, "tone" | "tags" | "title" | "source" 
 
 type SupportNoteContext = {
   dayModeId?: DayModeId | null;
+  previousSlot?: SupportSlotInput | null;
+  nextSlot?: SupportSlotInput | null;
 };
 
 type SlotDayPart = "morning" | "day" | "evening" | "late-evening";
@@ -118,6 +121,165 @@ function getTimingLabel(dayPart: SlotDayPart): string {
     case "late-evening":
       return "поздний вечер";
   }
+}
+
+function getGapMinutes(left: Pick<SupportSlotInput, "end">, right: Pick<SupportSlotInput, "start">): number {
+  return timeToMinutes(right.start) - timeToMinutes(left.end);
+}
+
+function isTightTransition(
+  left: Pick<SupportSlotInput, "end">,
+  right: Pick<SupportSlotInput, "start">,
+  maxGapMin = 120,
+): boolean {
+  const gap = getGapMinutes(left, right);
+  return gap >= 0 && gap <= maxGapMin;
+}
+
+function isNearFutureWindow(
+  left: Pick<SupportSlotInput, "end">,
+  right: Pick<SupportSlotInput, "start">,
+  maxGapMin = 240,
+): boolean {
+  const gap = getGapMinutes(left, right);
+  return gap >= 0 && gap <= maxGapMin;
+}
+
+function isWorkLikeSlot(slot: SupportSlotInput): boolean {
+  return (
+    slot.tone === "work" ||
+    slot.tone === "kinderly" ||
+    slot.tone === "heys" ||
+    slot.tone === "review" ||
+    hasAnyTag(slot, ["work", "deep-work", "strategy", "execution", "comms", "ops", "planning", "review"]) ||
+    includesAnyToken(slot.title, ["work", "deep work", "strategy", "review", "задач", "стратег", "план", "реализац"])
+  );
+}
+
+function toContextSlotLabel(slot: Pick<SupportSlotInput, "title">): string {
+  return slot.title.replace(/^[^A-Za-zА-Яа-яЁё0-9]+/u, "").trim();
+}
+
+function applySequenceContext(
+  note: CalendarSlotSupportNote,
+  slot: SupportSlotInput,
+  context?: SupportNoteContext,
+): CalendarSlotSupportNote {
+  const previousSlot = context?.previousSlot ?? null;
+  const nextSlot = context?.nextSlot ?? null;
+  const dayModeId = context?.dayModeId;
+
+  if (note.id === "recovery") {
+    if (previousSlot && isHeavyLoadSlot(previousSlot) && isTightTransition(previousSlot, slot, 120)) {
+      const previousLabel = toContextSlotLabel(previousSlot);
+      return {
+        ...note,
+        sequenceLabel: "после нагрузки",
+        title:
+          dayModeId === "damage-control"
+            ? "После нагрузки нужен настоящий reset"
+            : "Этот recovery нужен, чтобы погасить хвост после нагрузки",
+        summary:
+          dayModeId === "execution"
+            ? `После «${previousLabel}» не уводи себя сразу в новую волну дел: это окно держит остаток дня ровным.`
+            : `После «${previousLabel}» слот нужен под воду, еду и тихий выход, а не под ещё один скрытый sprint.`,
+        detail: `Если украсть и это окно, хвост от «${previousLabel}» поедет дальше по дню или в ночь.`,
+        points: [
+          "Сначала вода/еда, потом любые решения.",
+          "Не открывай новый work-хвост прямо из инерции.",
+          "Пусть тело реально поймёт, что нагрузка закончилась.",
+        ],
+      };
+    }
+
+    if (nextSlot && isWorkLikeSlot(nextSlot) && isTightTransition(slot, nextSlot, 90)) {
+      const nextLabel = toContextSlotLabel(nextSlot);
+      return {
+        ...note,
+        sequenceLabel: "перед work",
+        title: "Это recovery-окно — переход перед work-блоком",
+        summary: `Дальше уже «${nextLabel}», так что buffer нужен, чтобы выровнять фон перед работой, а не размазаться в телефоне.`,
+        detail: `Хороший переход делает «${nextLabel}» дешевле по нервной цене.`,
+        points: [
+          "Короткая тишина, вода, выдох — и только потом работа.",
+          "Не превращай buffer в doom-scroll.",
+          "Смысл окна — войти в следующий блок ровно, а не резко.",
+        ],
+      };
+    }
+  }
+
+  if (note.id === "base-stack") {
+    if (nextSlot && isHeavyLoadSlot(nextSlot) && isNearFutureWindow(slot, nextSlot, 240)) {
+      const nextLabel = toContextSlotLabel(nextSlot);
+      return {
+        ...note,
+        sequenceLabel: "перед нагрузкой",
+        title: "База здесь работает как prep before heavy load",
+        summary: `Позже идёт «${nextLabel}», так что базу и первую нормальную еду лучше закрыть сейчас, а не вспоминать о них уже после нагрузки.`,
+        detail: `Чем лучше prep перед «${nextLabel}», тем меньше цена следующего тяжёлого окна.`,
+        points: [
+          "База + еда до нагрузки работают лучше, чем догонять всё постфактум.",
+          "Не жди провала в энергию как триггера.",
+          "Креатин — floor заранее, а не rescue после cleanup.",
+        ],
+      };
+    }
+  }
+
+  if (note.id === "load-fuel") {
+    if (nextSlot && isWorkLikeSlot(nextSlot) && isTightTransition(slot, nextSlot, 120)) {
+      const nextLabel = toContextSlotLabel(nextSlot);
+      return {
+        ...note,
+        sequenceLabel: "перед work",
+        title: "Не тащи тяжёлый слот хвостом в work-блок",
+        summary: `Сразу дальше идёт «${nextLabel}», поэтому здесь нужен чёткий stop: еда, вода, выдох — и только потом работа.`,
+        detail: `Иначе «${nextLabel}» стартует уже не на execution, а на остатках cleanup-адреналина.`,
+        points: [
+          "Заложи hard stop, а не бесконечный хвост слота.",
+          "После нагрузки сначала вода/еда, потом клавиатура.",
+          "Не воруй fuel у следующего work-окна.",
+        ],
+      };
+    }
+
+    if (nextSlot && isRecoverySlot(nextSlot) && isTightTransition(slot, nextSlot, 120)) {
+      const nextLabel = toContextSlotLabel(nextSlot);
+      return {
+        ...note,
+        sequenceLabel: "перед recovery",
+        title: "После этого окна recovery уже не случайно стоит в календаре",
+        summary: `Дальше идёт «${nextLabel}», и это хорошо: не отдавай этот переход обратно делам, иначе нагрузка поедет в ночь.`,
+        detail: `Тут победа — не в extra-effort, а в том, чтобы честно дойти до «${nextLabel}».`,
+        points: [
+          "Финишируй слот вовремя, не до бесконечности.",
+          "Сразу переключайся в calmer режим.",
+          "Recovery после heavy load — часть плана, а не бонус.",
+        ],
+      };
+    }
+  }
+
+  if (note.id === "strength-base") {
+    if (nextSlot && isHeavyLoadSlot(nextSlot) && isNearFutureWindow(slot, nextSlot, 240)) {
+      const nextLabel = toContextSlotLabel(nextSlot);
+      return {
+        ...note,
+        sequenceLabel: "в связке с нагрузкой",
+        title: "Не превращай силовой слот и heavy load в один марафон",
+        summary: `Если дальше ещё «${nextLabel}», силовая должна остаться короткой и технической — иначе ты сожжёшь пользу обеих частей дня.`,
+        detail: `Смысл связки — собрать базу, а не устроить двойной стресс-тест подряд.`,
+        points: [
+          "Оставь запас усилия до следующего тяжёлого окна.",
+          "Качество техники важнее объёма.",
+          "Связка работает только если между окнами остаётся нервная ёмкость.",
+        ],
+      };
+    }
+  }
+
+  return note;
 }
 
 function buildHeavyLoadNote(
@@ -616,22 +778,23 @@ export function getCalendarSlotSupportNote(
 ): CalendarSlotSupportNote | null {
   const dayModeId = context?.dayModeId;
   const dayPart = getSlotDayPart(slot);
+  let note: CalendarSlotSupportNote | null = null;
 
   if (isHeavyLoadSlot(slot)) {
-    return buildHeavyLoadNote(dayModeId, dayPart);
+    note = buildHeavyLoadNote(dayModeId, dayPart);
   }
 
-  if (isRecoverySlot(slot)) {
-    return buildRecoveryNote(dayModeId, dayPart);
+  if (!note && isRecoverySlot(slot)) {
+    note = buildRecoveryNote(dayModeId, dayPart);
   }
 
-  if (isStrengthSlot(slot)) {
-    return buildStrengthNote(dayModeId, dayPart);
+  if (!note && isStrengthSlot(slot)) {
+    note = buildStrengthNote(dayModeId, dayPart);
   }
 
-  if (isBaseStackSlot(slot)) {
-    return buildBaseStackNote(dayModeId, dayPart);
+  if (!note && isBaseStackSlot(slot)) {
+    note = buildBaseStackNote(dayModeId, dayPart);
   }
 
-  return null;
+  return note ? applySequenceContext(note, slot, context) : null;
 }
