@@ -5,11 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
 import { CalendarActiveEditOverlay } from "@/components/calendar-active-edit-overlay";
 import { CalendarDesktopHint } from "@/components/calendar-desktop-hint";
-import { CalendarDraftPreview } from "@/components/calendar-draft-preview";
-import { CalendarNowLine } from "@/components/calendar-now-line";
+import { CalendarOverlayColumn } from "@/components/calendar-overlay-column";
 import { CalendarQuickMenu } from "@/components/calendar-quick-menu";
 import { CalendarReboundPreview } from "@/components/calendar-rebound-preview";
-import { CalendarSlotCard } from "@/components/calendar-slot-card";
 import {
   AUTO_SCROLL_EDGE_PX,
   AUTO_SCROLL_MAX_STEP,
@@ -55,52 +53,42 @@ import {
   type DragState,
   type EdgeCueState,
   type EditableSlotDraft,
-  type LaneMetrics,
   type LaneRenderable,
   type PendingPointerEdit,
   type PointerEditMode,
   type QuickMenuState,
   type ReboundPreview,
-  type TimeRange,
   type WeekCalendarGridProps,
 } from "@/components/calendar-grid-types";
-
 import {
-  getSlotCarryoverActions,
-  getSlotCarryoverDecision,
-} from "@/lib/calendar-slot-carryover";
+  getLaneMetrics,
+  isAmbientContextSlot,
+  isChildcareBackgroundSlot,
+  isSupportLaneSlot,
+  slotsOverlap,
+} from "@/components/calendar-overlay-helpers";
+
 import {
   getCalendarDayPressure,
 } from "@/lib/calendar-day-pressure";
-import {
-  getCalendarSlotSupportNote,
-  type CalendarSlotSupportNote,
-} from "@/lib/calendar-slot-support-notes";
 import {
   buildBundleContextProfile,
   getDefaultMetricKey,
   getHeysDayMode,
 } from "@/lib/heys-day-mode";
 import {
-  formatCompletionLabel,
-  getSlotAttentionState,
   getYesterdayKey,
   shiftDateKey,
 } from "@/lib/calendar-slot-attention";
-import { getScheduleSlotExplainability } from "@/lib/calendar-slot-explainability";
 import {
   AREA_COLOR,
   AREA_LEGEND,
   taskArea,
   taskColor,
-  toneColor,
 } from "@/lib/life-areas";
 import {
   addCustomEvent,
-  getScheduleSlotApprovalState,
-  getHeysSyncedSlotBadgeLabel,
   getScheduledTaskIds,
-  isHeysSyncedScheduleSlot,
   isEditableScheduleSlot,
   removeEditableScheduleSlot,
   toggleScheduleSlotApproval,
@@ -155,40 +143,10 @@ function slotHeight(start: string, end: string): number {
   return sharedSlotHeight(start, end, timeToMinutes);
 }
 
-function getTaskCompletionDetails(
-  task: Pick<Task, "completedAt">,
-): { dateKey: string; minutes: number; timeLabel: string } | null {
-  if (!task.completedAt) return null;
-
-  const completedAt = new Date(task.completedAt);
-  if (Number.isNaN(completedAt.getTime())) return null;
-
-  return {
-    dateKey: dateStr(completedAt),
-    minutes: completedAt.getHours() * 60 + completedAt.getMinutes(),
-    timeLabel: `${String(completedAt.getHours()).padStart(2, "0")}:${String(completedAt.getMinutes()).padStart(2, "0")}`,
-  };
-}
-
 function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: boolean): boolean {
   if (!task.dueDate) return isToday && task.status === "active";
   if (task.dueDate === dayKey) return true;
   return isToday && task.dueDate < today;
-}
-
-function isOverdueUndoneTask(
-  task: Pick<Task, "dueDate" | "status">,
-  today: string,
-): boolean {
-  const dueDate = task.dueDate;
-  return task.status !== "done" && typeof dueDate === "string" && dueDate < today;
-}
-
-function isYesterdayUndoneTask(
-  task: Pick<Task, "dueDate" | "status">,
-  today: string,
-): boolean {
-  return isOverdueUndoneTask(task, today) && task.dueDate === shiftDateKey(today, -1);
 }
 
 function inferTaskSlotTone(task: Task): ScheduleTone {
@@ -245,334 +203,6 @@ function getSlotProjectId(
   if (slot.projectId) return slot.projectId;
   if (linkedTask?.projectId) return linkedTask.projectId;
   return findProjectIdByLabel(projects, slot.project ?? linkedTask?.project);
-}
-
-function getSlotProjectLabel(
-  slot: Pick<ScheduleSlot, "projectId" | "project">,
-  linkedTask: Pick<Task, "projectId" | "project"> | null,
-  projectNameById: Map<string, string>,
-): string | null {
-  if (slot.projectId) return projectNameById.get(slot.projectId) ?? slot.project ?? null;
-  if (linkedTask?.projectId) {
-    return projectNameById.get(linkedTask.projectId) ?? linkedTask.project ?? slot.project ?? null;
-  }
-  return slot.project ?? linkedTask?.project ?? null;
-}
-
-function rangesOverlap(left: TimeRange, right: TimeRange): boolean {
-  return (
-    timeToMinutes(left.start) < timeToMinutes(right.end) &&
-    timeToMinutes(left.end) > timeToMinutes(right.start)
-  );
-}
-
-function slotsOverlap(
-  left: Pick<EditableSlotDraft, "start" | "end">,
-  right: Pick<ScheduleSlot, "start" | "end">,
-): boolean {
-  return rangesOverlap(left, right);
-}
-
-function isAmbientContextSlot(slot: Pick<ScheduleSlot, "tags">): boolean {
-  return (
-    slot.tags.includes("childcare-window") ||
-    (slot.tags.includes("admin") && slot.tags.includes("danya"))
-  );
-}
-
-function isBudgetHeavySlot(slot: Pick<ScheduleSlot, "source" | "tags" | "title">): boolean {
-  const title = slot.title.toLowerCase();
-  return (
-    slot.source === "studio" ||
-    slot.tags.some((tag) => ["cleanup", "high-load", "party", "studio", "support", "between-parties", "household"].includes(tag)) ||
-    ["уборк", "cleanup", "праздник", "party"].some((token) => title.includes(token))
-  );
-}
-
-function isBudgetWorkLikeSlot(slot: Pick<ScheduleSlot, "tone" | "tags" | "title">): boolean {
-  const title = slot.title.toLowerCase();
-  return (
-    slot.tone === "work" ||
-    slot.tone === "kinderly" ||
-    slot.tone === "heys" ||
-    slot.tone === "review" ||
-    slot.tags.some((tag) => ["work", "deep-work", "strategy", "execution", "comms", "ops", "planning", "review"].includes(tag)) ||
-    ["work", "deep work", "strategy", "review", "задач", "стратег", "план", "реализац"].some((token) => title.includes(token))
-  );
-}
-
-function isBudgetRecoveryLikeSlot(slot: Pick<ScheduleSlot, "tone" | "tags" | "title">): boolean {
-  const title = slot.title.toLowerCase();
-  return (
-    slot.tone === "personal" ||
-    slot.tags.some((tag) => ["recovery", "sleep", "shutdown", "bedtime", "quiet-buffer", "rest", "stress", "wellbeing"].includes(tag)) ||
-    ["сон", "sleep", "recovery", "quiet", "shutdown", "stretch", "rest", "восстанов"].some((token) => title.includes(token))
-  );
-}
-
-function getAdjacentContextSlot(
-  slots: ScheduleSlot[],
-  currentSlot: ScheduleSlot,
-  direction: "previous" | "next",
-): ScheduleSlot | null {
-  const currentStart = timeToMinutes(currentSlot.start);
-  const currentEnd = timeToMinutes(currentSlot.end);
-  const candidates = slots.filter((candidate) => {
-    if (candidate.id === currentSlot.id) return false;
-    if (isAmbientContextSlot(candidate)) return false;
-
-    return direction === "previous"
-      ? timeToMinutes(candidate.end) <= currentStart
-      : timeToMinutes(candidate.start) >= currentEnd;
-  });
-
-  if (candidates.length === 0) return null;
-
-  return direction === "previous"
-    ? candidates.sort(
-        (left, right) =>
-          timeToMinutes(right.end) - timeToMinutes(left.end) ||
-          timeToMinutes(right.start) - timeToMinutes(left.start),
-      )[0] ?? null
-    : candidates.sort(
-        (left, right) =>
-          timeToMinutes(left.start) - timeToMinutes(right.start) ||
-          timeToMinutes(left.end) - timeToMinutes(right.end),
-      )[0] ?? null;
-}
-
-function isChildcareBackgroundSlot(
-  slot: Pick<ScheduleSlot, "source" | "tags"> | LaneRenderable,
-): boolean {
-  return (
-    slot.source === "derived" &&
-    (slot.tags.includes("childcare-window") ||
-      (slot.tags.includes("admin") && slot.tags.includes("danya")))
-  );
-}
-
-function isSupportLaneSlot(slot: Pick<ScheduleSlot, "source" | "tags"> | LaneRenderable): boolean {
-  return (
-    slot.source === "studio" ||
-    (slot.tags.includes("party") && slot.tags.includes("studio"))
-  );
-}
-
-function compareLaneRenderable(left: LaneRenderable, right: LaneRenderable): number {
-  return (
-    timeToMinutes(left.start) - timeToMinutes(right.start) ||
-    timeToMinutes(left.end) - timeToMinutes(right.end) ||
-    left.id.localeCompare(right.id, "ru")
-  );
-}
-
-function getSupportLaneWidth(columnWidth: number): number {
-  return clamp(
-    columnWidth * SUPPORT_LANE_RATIO,
-    42,
-    Math.max(42, columnWidth - 52),
-  );
-}
-
-function getBackgroundSlotMetrics(columnWidth: number): LaneMetrics {
-  return {
-    left: SLOT_SIDE_INSET_PX,
-    width: Math.max(columnWidth - SLOT_SIDE_INSET_PX * 2, 24),
-    isSupportLane: false,
-  };
-}
-
-function getLaneMetrics(
-  slot: LaneRenderable,
-  daySlots: LaneRenderable[],
-  columnWidth: number,
-): LaneMetrics {
-  const contentWidth = Math.max(columnWidth - SLOT_SIDE_INSET_PX * 2, 24);
-  const supportWidth = getSupportLaneWidth(columnWidth);
-
-  if (isSupportLaneSlot(slot)) {
-    const overlapGroup = daySlots
-      .filter((candidate) => isSupportLaneSlot(candidate) && rangesOverlap(candidate, slot))
-      .sort(compareLaneRenderable);
-
-    const laneCount = Math.max(overlapGroup.length, 1);
-    const laneIndex = Math.max(
-      overlapGroup.findIndex((candidate) => candidate.id === slot.id),
-      0,
-    );
-    const available = Math.max(
-      supportWidth - SLOT_SIDE_INSET_PX * 2 - SLOT_LANE_GAP_PX * (laneCount - 1),
-      24,
-    );
-    const width = Math.max(available / laneCount, 22);
-
-    return {
-      left: SLOT_SIDE_INSET_PX + laneIndex * (width + SLOT_LANE_GAP_PX),
-      width,
-      isSupportLane: true,
-    };
-  }
-
-  const hasSupportOverlap = daySlots.some(
-    (candidate) => isSupportLaneSlot(candidate) && rangesOverlap(candidate, slot),
-  );
-
-  if (!hasSupportOverlap) {
-    return {
-      left: SLOT_SIDE_INSET_PX,
-      width: contentWidth,
-      isSupportLane: false,
-    };
-  }
-
-  const left = SLOT_SIDE_INSET_PX + supportWidth + SLOT_LANE_GAP_PX;
-  return {
-    left,
-    width: Math.max(columnWidth - left - SLOT_SIDE_INSET_PX, 24),
-    isSupportLane: false,
-  };
-}
-
-function getExplainabilityDesktopHint(
-  slot: Pick<ScheduleSlot, "source" | "tags">,
-  explainability: ReturnType<typeof getScheduleSlotExplainability>,
-): DesktopSlotHintContent | null {
-  if (!explainability.showBadges) {
-    return null;
-  }
-
-  const badgeLabel = [explainability.primaryBadge, explainability.secondaryBadge]
-    .filter((value): value is string => Boolean(value))
-    .join(" · ");
-
-  if (slot.source === "studio") {
-    return {
-      eyebrow: badgeLabel || "почему слот здесь",
-      title: "Фиксированное окно из schedule.xlsx",
-      summary:
-        "Это реальное событие студии. Вокруг него календарь уже достраивает семейные буферы, логистику и уборку.",
-      detail: "Якорь дня · не требует ручного подтверждения",
-      tone: "sky",
-    };
-  }
-
-  if (slot.tags.includes("between-parties")) {
-    return {
-      eyebrow: badgeLabel || "авто",
-      title: "Окно вставлено между двумя праздниками",
-      summary:
-        "Календарь увидел два события в один день и добавил операционный слот, чтобы не потерять быструю уборку между ними.",
-      detail: "Автологика по шаблону студии",
-      tone: "amber",
-    };
-  }
-
-  if (slot.tags.includes("childcare-window")) {
-    return {
-      eyebrow: badgeLabel || "авто",
-      title: "Это семейный буфер вокруг события",
-      summary:
-        "Слот появился как защитное окно под Даню и бытовую логистику, пока студия занята праздником.",
-      detail: slot.tags.includes("grandma") || slot.tags.includes("rehearsal")
-        ? "Среда · бабушка/репетиция"
-        : "Семейное покрытие вокруг студии",
-      tone: "sky",
-    };
-  }
-
-  if (slot.tags.includes("cleanup") && slot.tags.includes("studio")) {
-    return {
-      eyebrow: badgeLabel || "авто",
-      title: "Уборка поставлена правилом после праздника",
-      summary:
-        "Это не ручной ввод: cleanup-окно возникло из студийного расписания и его можно вручную сдвинуть, если жизнь уехала иначе.",
-      detail: "Derived slot · под реальный послепраздничный хвост",
-      tone: "amber",
-    };
-  }
-
-  if (slot.source === "template") {
-    return {
-      eyebrow: badgeLabel || "ритм недели",
-      title: "Это мягкий weekly-слот",
-      summary:
-        "Он задаёт базовый ритм дня и подтверждается вручную — это ориентир, а не автоматически случившийся факт.",
-      detail: "Можно двигать под реальный день",
-      tone: "zinc",
-    };
-  }
-
-  if (slot.source === "derived") {
-    return {
-      eyebrow: badgeLabel || "авто",
-      title: "Слот сгенерирован правилами календаря",
-      summary:
-        "Он появился не из ручного ввода, а из событий недели и встроенных правил, чтобы день не разваливался на скрытые хвосты.",
-      detail: "Авто-слот · можно скорректировать вручную",
-      tone: "zinc",
-    };
-  }
-
-  return null;
-}
-
-function getDesktopSlotHintContent(params: {
-  slot: Pick<ScheduleSlot, "id" | "date" | "start" | "end" | "title" | "tags" | "taskId" | "tone" | "source" | "origin">;
-  todayKey: string;
-  requiresApproval: boolean;
-  isCompleted: boolean;
-  explainability: ReturnType<typeof getScheduleSlotExplainability>;
-}): DesktopSlotHintContent | null {
-  const carryoverDecision = getSlotCarryoverDecision({
-    slot: params.slot,
-    todayKey: params.todayKey,
-    requiresApproval: params.requiresApproval,
-    isCompleted: params.isCompleted,
-  });
-
-  if (carryoverDecision) {
-    const primaryAction = getSlotCarryoverActions({
-      slot: params.slot,
-      todayKey: params.todayKey,
-      requiresApproval: params.requiresApproval,
-      isCompleted: params.isCompleted,
-    })[0];
-
-    return {
-      eyebrow: carryoverDecision.badge,
-      title: carryoverDecision.title,
-      summary: primaryAction?.hint ?? carryoverDecision.summary,
-      detail: primaryAction ? `Лучший ход: ${primaryAction.buttonLabel}` : undefined,
-      tone: carryoverDecision.tone,
-    };
-  }
-
-  return getExplainabilityDesktopHint(params.slot, params.explainability);
-}
-
-function toSupportDesktopHintContent(
-  note: CalendarSlotSupportNote,
-): DesktopSlotHintContent {
-  const eyebrow = [
-    note.badge,
-    note.timingLabel,
-    note.durationLabel,
-    note.sequenceLabel,
-    note.pressureLabel,
-    note.budgetLabel,
-  ]
-    .filter((value): value is string => Boolean(value))
-    .join(" · ");
-
-  return {
-    eyebrow,
-    title: note.title,
-    summary: note.summary,
-    detail: note.detail,
-    points: note.points,
-    tone: note.tone,
-    icon: note.icon,
-  };
 }
 
 /* ── Component ── */
@@ -1988,295 +1618,32 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             className="relative grid h-full"
             style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
           >
-            {visibleColumns.map((col) => {
-              const isYesterdayColumn = col.key === yesterdayKey;
-              const hasOverdueTaskSlot = col.slots.some((slot) => {
-                const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
-                if (!linkedTask || !isOverdueUndoneTask(linkedTask, today)) return false;
-                return !getScheduleSlotApprovalState(slot).isCompleted;
-              });
-
-              return (
-                <div
-                  key={`overlay-${col.key}`}
-                  className={`relative ${
-                    col.isPast
-                      ? isYesterdayColumn
-                        ? ""
-                        : hasOverdueTaskSlot
-                          ? "opacity-80"
-                          : "opacity-30 grayscale"
-                      : ""
-                  }`}
-                >
-                  <div
-                    className={`pointer-events-none absolute inset-y-0 right-0 w-px ${
-                      col.isToday ? "bg-sky-400/28" : "bg-zinc-500/42"
-                    }`}
-                  />
-                  <div
-                    className={`pointer-events-none absolute inset-y-0 right-0 w-0.5 ${
-                      col.isToday
-                        ? "bg-linear-to-b from-sky-200/18 via-sky-300/60 to-sky-200/18"
-                        : "bg-linear-to-b from-zinc-100/10 via-zinc-200/42 to-zinc-100/10"
-                    }`}
-                  />
-                  {col.slots.map((slot) => {
-                  const slotInstanceKey = `${slot.date}:${slot.id}`;
-                  if (activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date) {
-                    return null;
-                  }
-                  if (reboundPreview?.slotId === slot.id && reboundPreview.slotDate === slot.date) {
-                    return null;
-                  }
-
-                  const top = slotTop(slot.start);
-                  const height = slotHeight(slot.start, slot.end);
-                  const isChildcareBackground = isChildcareBackgroundSlot(slot);
-                  const laneMetrics = isChildcareBackground
-                    ? getBackgroundSlotMetrics(overlayColumnWidth)
-                    : getLaneMetrics(
-                        {
-                          id: slot.id,
-                          start: slot.start,
-                          end: slot.end,
-                          source: slot.source,
-                          tags: slot.tags,
-                        },
-                        col.slots.map((candidate) => ({
-                          id: candidate.id,
-                          start: candidate.start,
-                          end: candidate.end,
-                          source: candidate.source,
-                          tags: candidate.tags,
-                        })),
-                        overlayColumnWidth,
-                      );
-                  const c = toneColor(slot.tone);
-                  const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
-                  const approvalState = getScheduleSlotApprovalState(slot);
-                  const requiresApproval = approvalState.requiresApproval;
-                  const isCompletedSlot = approvalState.isCompleted;
-                  const attentionState = getSlotAttentionState({
-                    dayKey: col.key,
-                    todayKey: today,
-                    requiresApproval,
-                    isCompleted: isCompletedSlot,
-                  });
-                  const { isYesterdayPendingSlot, isYesterdayMutedSlot } = attentionState;
-                  const isOverdueCarryoverTask = Boolean(
-                    !isYesterdayMutedSlot && linkedTask && isOverdueUndoneTask(linkedTask, today) && !isCompletedSlot,
-                  );
-                  const isYesterdayCarryoverTask = Boolean(
-                    !isYesterdayMutedSlot && linkedTask && isYesterdayUndoneTask(linkedTask, today) && !isCompletedSlot,
-                  );
-                  const completionLabel = formatCompletionLabel(approvalState.completedAt);
-                  const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
-                  const isHeysSynced = isHeysSyncedScheduleSlot(slot);
-                  const heysBadgeLabel = isHeysSynced ? getHeysSyncedSlotBadgeLabel(slot) : null;
-                  const explainability = getScheduleSlotExplainability(slot);
-                  const desktopHintContent = getDesktopSlotHintContent({
-                    slot,
-                    todayKey: today,
-                    requiresApproval,
-                    isCompleted: isCompletedSlot,
-                    explainability,
-                  });
-                  const previousContextSlot = getAdjacentContextSlot(col.slots, slot, "previous");
-                  const nextContextSlot = getAdjacentContextSlot(col.slots, slot, "next");
-                  const remainingDaySlots = col.slots.filter((candidate) => {
-                    if (candidate.id === slot.id) return false;
-                    if (isAmbientContextSlot(candidate)) return false;
-                    return timeToMinutes(candidate.start) >= timeToMinutes(slot.end);
-                  });
-                  const supportNote = getCalendarSlotSupportNote(slot, {
-                    dayModeId: heysDayMode?.id,
-                    previousSlot: previousContextSlot,
-                    nextSlot: nextContextSlot,
-                    pressure: col.pressure,
-                    remainingDay: {
-                      remainingSlots: remainingDaySlots.length,
-                      remainingHeavySlots: remainingDaySlots.filter(isBudgetHeavySlot).length,
-                      remainingWorkSlots: remainingDaySlots.filter(isBudgetWorkLikeSlot).length,
-                      remainingRecoverySlots: remainingDaySlots.filter(isBudgetRecoveryLikeSlot).length,
-                    },
-                  });
-                  const supportHintKey = `${slotInstanceKey}:support`;
-                  const supportHintContent = supportNote
-                    ? toSupportDesktopHintContent(supportNote)
-                    : null;
-                  const isEditable = isEditableScheduleSlot(slot);
-                  const isSupportSlot = laneMetrics.isSupportLane;
-                  const isBlockingSlot =
-                    activeEdit?.blocked &&
-                    activeEdit.blockingSlot?.id === slot.id &&
-                    activeEdit.blockingSlot.date === slot.date;
-                  const isQuickMenuSlot = quickMenu?.slot.id === slot.id && quickMenu.slot.date === slot.date;
-                  const isActiveSlot =
-                    activeEdit?.originalSlot?.id === slot.id && activeEdit.originalSlot.date === slot.date;
-                  const isSelectedSlot = isQuickMenuSlot || isActiveSlot;
-                  const isHoveredSlot = hoveredSlotKey === slotInstanceKey;
-                  const showSupportNoteInline = Boolean(
-                    supportNote && !isChildcareBackground && !isSupportSlot && height > 66,
-                  );
-                  const showSupportNoteCompact = Boolean(
-                    supportNote && !isChildcareBackground && !showSupportNoteInline && height > 34,
-                  );
-                  const slotPadding = isChildcareBackground
-                    ? height >= 88
-                      ? "px-3 py-2.5"
-                      : "px-2.5 py-2"
-                    : isSupportSlot
-                      ? height >= 88
-                        ? "px-1.5 py-1.5"
-                        : "px-1 py-1"
-                      : !isEditable
-                        ? isHeysSynced
-                          ? "px-2 pt-5 pb-1"
-                          : "px-2 py-1"
-                        : isHeysSynced
-                          ? height >= 96
-                            ? "px-2 pt-6 pb-5"
-                            : height >= 64
-                              ? "px-2 pt-5 pb-4"
-                              : "px-2 pt-4 pb-3"
-                          : height >= 96
-                            ? "px-2 pt-5 pb-5"
-                            : height >= 64
-                              ? "px-2 pt-4 pb-4"
-                              : "px-2 pt-3 pb-3";
-                  const handleButtonHeight = height >= 64 ? "h-5" : "h-4";
-                  const handleGripSize = height >= 64 ? "h-1 w-4" : "h-0.5 w-3";
-                  const handleOpacity = isActiveSlot
-                    ? "opacity-90"
-                    : isMobileGripMode
-                      ? isQuickMenuSlot
-                        ? "opacity-80"
-                        : "opacity-0"
-                      : isHoveredSlot
-                        ? "opacity-70"
-                        : "opacity-0";
-                  const handleGripTone = isSelectedSlot ? "bg-white/55" : "bg-white/28";
-                  const primaryTextClass = isYesterdayPendingSlot
-                    ? "text-rose-50"
-                    : isYesterdayMutedSlot
-                      ? "text-zinc-400"
-                      : isCompletedSlot
-                        ? "text-emerald-50"
-                        : isYesterdayCarryoverTask
-                          ? "text-rose-50"
-                          : isOverdueCarryoverTask
-                            ? "text-amber-50"
-                            : c.text;
-                  const secondaryTextClass = isYesterdayPendingSlot
-                    ? "text-rose-100/80"
-                    : isYesterdayMutedSlot
-                      ? "text-zinc-500"
-                      : isCompletedSlot
-                        ? "text-emerald-100/80"
-                        : isYesterdayCarryoverTask
-                          ? "text-rose-100/80"
-                          : isOverdueCarryoverTask
-                            ? "text-amber-100/80"
-                            : "text-zinc-500";
-                  const shellTone = isYesterdayPendingSlot
-                    ? "border-rose-500/55 bg-linear-to-br from-rose-500/24 via-red-500/18 to-rose-950/36"
-                    : isYesterdayMutedSlot
-                      ? "border-zinc-800/80 bg-zinc-900/72"
-                      : isChildcareBackground
-                        ? "border-amber-500/16 bg-linear-to-br from-amber-500/12 via-orange-500/8 to-amber-950/4"
-                        : isCompletedSlot
-                          ? "border-emerald-400/55 bg-linear-to-br from-emerald-400/32 via-emerald-500/22 to-emerald-950/42"
-                          : isYesterdayCarryoverTask
-                            ? "border-rose-500/50 bg-linear-to-br from-rose-500/22 via-red-500/16 to-rose-950/34"
-                            : isOverdueCarryoverTask
-                              ? "border-amber-500/50 bg-linear-to-br from-amber-500/20 via-orange-500/14 to-amber-950/32"
-                              : `${c.border} ${c.bg}`;
-                  const shellDepth = isChildcareBackground
-                    ? "shadow-none"
-                    : isBlockingSlot
-                      ? "ring-2 ring-rose-400/80 shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_14px_28px_rgba(127,29,29,0.28)]"
-                      : isSelectedSlot
-                        ? "ring-1 ring-white/12 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_10px_24px_rgba(0,0,0,0.22)]"
-                        : isHeysSynced
-                          ? "shadow-[0_0_0_1px_rgba(251,146,60,0.24),0_10px_24px_rgba(0,0,0,0.22)]"
-                          : "shadow-[0_6px_18px_rgba(0,0,0,0.18)]";
-                  const slotZIndex = isChildcareBackground ? 0 : isSelectedSlot ? 14 : isSupportSlot ? 11 : 12;
-                  const slotCardModel = {
-                    colKey: col.key,
-                    slot,
-                    top,
-                    height,
-                    laneMetrics,
-                    slotInstanceKey,
-                    isChildcareBackground,
-                    isEditable,
-                    isSupportSlot,
-                    isQuickMenuSlot,
-                    isActiveSlot,
-                    isHoveredSlot,
-                    isMobileGripMode,
-                    isYesterdayPendingSlot,
-                    isYesterdayMutedSlot,
-                    isCompletedSlot,
-                    isYesterdayCarryoverTask,
-                    isOverdueCarryoverTask,
-                    requiresApproval,
-                    completionLabel,
-                    projectLabel,
-                    isHeysSynced,
-                    heysBadgeLabel,
-                    explainability,
-                    supportNote,
-                    supportHintKey,
-                    supportHintContent,
-                    desktopHintContent,
-                    primaryTextClass,
-                    secondaryTextClass,
-                    slotPadding,
-                    shellTone,
-                    shellDepth,
-                    handleButtonHeight,
-                    handleGripSize,
-                    handleOpacity,
-                    handleGripTone,
-                    slotZIndex,
-                    showSupportNoteInline,
-                    showSupportNoteCompact,
-                  };
-
-                  return (
-                    <CalendarSlotCard
-                      key={slot.id}
-                      model={slotCardModel}
-                      desktopSlotHintSlotKey={desktopSlotHint?.slotKey ?? null}
-                      desktopSlotHintPendingKey={desktopSlotHintPendingKeyRef.current}
-                      skipNextClickRef={skipNextClickRef}
-                      onQueuePointerEdit={queuePointerEdit}
-                      onScheduleDesktopSlotHint={scheduleDesktopSlotHint}
-                      onHideDesktopSlotHint={hideDesktopSlotHint}
-                      onOpenQuickMenu={openQuickMenu}
-                      onToggleSlotApproval={toggleSlotApproval}
-                      onSetHoveredSlotKey={setHoveredSlotKey}
-                    />
-                  );
-                })}
-
-                <CalendarDraftPreview
-                  activeEdit={activeEdit}
-                  colKey={col.key}
-                  colSlots={col.slots}
-                  overlayColumnWidth={overlayColumnWidth}
-                  getLaneMetrics={getLaneMetrics}
-                  slotTop={slotTop}
-                  slotHeight={slotHeight}
-                />
-
-                {/* Now-line */}
-                {col.isToday && <CalendarNowLine />}
-                </div>
-              );
-            })}
+            {visibleColumns.map((col) => (
+              <CalendarOverlayColumn
+                key={`overlay-${col.key}`}
+                column={col}
+                activeEdit={activeEdit}
+                reboundPreview={reboundPreview}
+                quickMenu={quickMenu}
+                hoveredSlotKey={hoveredSlotKey}
+                desktopSlotHintSlotKey={desktopSlotHint?.slotKey ?? null}
+                desktopSlotHintPendingKey={desktopSlotHintPendingKeyRef.current}
+                overlayColumnWidth={overlayColumnWidth}
+                linkedTasksById={linkedTasksById}
+                projectNameById={projectNameById}
+                today={today}
+                yesterdayKey={yesterdayKey}
+                heysDayModeId={heysDayMode?.id ?? null}
+                isMobileGripMode={isMobileGripMode}
+                skipNextClickRef={skipNextClickRef}
+                onQueuePointerEdit={queuePointerEdit}
+                onScheduleDesktopSlotHint={scheduleDesktopSlotHint}
+                onHideDesktopSlotHint={hideDesktopSlotHint}
+                onOpenQuickMenu={openQuickMenu}
+                onToggleSlotApproval={toggleSlotApproval}
+                onSetHoveredSlotKey={setHoveredSlotKey}
+              />
+            ))}
           </div>
 
           <CalendarReboundPreview
