@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
+import { CalendarActiveEditOverlay } from "@/components/calendar-active-edit-overlay";
 import { CalendarDesktopHint } from "@/components/calendar-desktop-hint";
+import { CalendarDraftPreview } from "@/components/calendar-draft-preview";
 import { CalendarNowLine } from "@/components/calendar-now-line";
 import { CalendarQuickMenu } from "@/components/calendar-quick-menu";
+import { CalendarReboundPreview } from "@/components/calendar-rebound-preview";
 import { CalendarSlotCard } from "@/components/calendar-slot-card";
 import {
   AUTO_SCROLL_EDGE_PX,
@@ -33,7 +36,6 @@ import {
   TOUCH_HOLD_MS,
   clamp,
   copyTitle,
-  formatDurationDelta,
   formatHour,
   getCompactStart,
   getDayModeBadgeClass,
@@ -95,8 +97,6 @@ import {
 } from "@/lib/life-areas";
 import {
   addCustomEvent,
-  formatScheduleClockTime,
-  formatScheduleTimeRange,
   getScheduleSlotApprovalState,
   getHeysSyncedSlotBadgeLabel,
   getScheduledTaskIds,
@@ -2262,58 +2262,15 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                   );
                 })}
 
-                {activeEdit?.draft.date === col.key && (() => {
-                  const draftTop = slotTop(activeEdit.draft.start);
-                  const draftHeight = slotHeight(activeEdit.draft.start, activeEdit.draft.end);
-                  const draftLaneSlot: LaneRenderable = {
-                    id: activeEdit.originalSlot?.id ?? "draft-preview",
-                    start: activeEdit.draft.start,
-                    end: activeEdit.draft.end,
-                    source: activeEdit.originalSlot?.source ?? "derived",
-                    tags: activeEdit.originalSlot?.tags ?? activeEdit.draft.tags,
-                  };
-                  const draftLanePool = col.slots
-                    .filter((slot) => slot.id !== activeEdit.originalSlot?.id)
-                    .map((slot) => ({
-                      id: slot.id,
-                      start: slot.start,
-                      end: slot.end,
-                      source: slot.source,
-                      tags: slot.tags,
-                    }))
-                    .concat(draftLaneSlot);
-                  const draftLaneMetrics = getLaneMetrics(draftLaneSlot, draftLanePool, overlayColumnWidth);
-                  const draftColor = toneColor(activeEdit.draft.tone);
-                  const previewClass = activeEdit.blocked
-                    ? "border-rose-400/80 bg-rose-950/45 text-rose-100"
-                    : `${draftColor.border} ${draftColor.bg}`;
-                  return (
-                    <div
-                      className={`pointer-events-none absolute overflow-hidden rounded-xl border-2 border-dashed px-2 py-2 shadow-[0_18px_42px_rgba(0,0,0,0.28)] ${previewClass} ${
-                        activeEdit.blocked ? "opacity-95" : "opacity-90"
-                      }`}
-                      style={{ top: draftTop, left: draftLaneMetrics.left, width: draftLaneMetrics.width, height: draftHeight, minHeight: 20 }}
-                    >
-                      <p className={`text-[10px] font-semibold leading-tight ${activeEdit.blocked ? "text-rose-100" : draftColor.text}`}>
-                        {formatScheduleTimeRange(activeEdit.draft.start, activeEdit.draft.end)}
-                      </p>
-                      <p className={`mt-0.5 font-semibold leading-snug ${activeEdit.blocked ? "text-rose-100" : draftColor.text} ${draftLaneMetrics.isSupportLane ? "line-clamp-4 text-[10px]" : "truncate text-[11px]"}`}>
-                        {activeEdit.originalSlot ? activeEdit.draft.title : "Новый слот"}
-                      </p>
-                      <p className={`mt-1 text-[9px] font-medium uppercase tracking-[0.14em] ${activeEdit.blocked ? "text-rose-200" : "text-zinc-300"}`}>
-                        {activeEdit.blocked
-                          ? `Нельзя · ${activeEdit.blockingSlot?.title ?? "занято"}`
-                          : activeEdit.mode === "move"
-                            ? "Ghost · перемещение"
-                            : activeEdit.mode === "resize-start"
-                              ? "Ghost · старт"
-                              : activeEdit.mode === "resize-end"
-                                ? "Ghost · финиш"
-                                : "Ghost · создание"}
-                      </p>
-                    </div>
-                  );
-                })()}
+                <CalendarDraftPreview
+                  activeEdit={activeEdit}
+                  colKey={col.key}
+                  colSlots={col.slots}
+                  overlayColumnWidth={overlayColumnWidth}
+                  getLaneMetrics={getLaneMetrics}
+                  slotTop={slotTop}
+                  slotHeight={slotHeight}
+                />
 
                 {/* Now-line */}
                 {col.isToday && <CalendarNowLine />}
@@ -2322,42 +2279,10 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
             })}
           </div>
 
-          {reboundPreview && (() => {
-            const targetDraft = reboundPreview.stage === "from" ? reboundPreview.from : reboundPreview.to;
-            const box = getOverlayBoxForDraft(
-              targetDraft,
-              {
-                id: reboundPreview.slotId ?? "rebound-preview",
-                source: reboundPreview.source,
-                tags: reboundPreview.tags,
-              },
-              reboundPreview.slotId,
-            );
-            if (!box) return null;
-
-            return (
-              <div
-                className="pointer-events-none absolute overflow-hidden rounded-xl border-2 border-rose-400/75 bg-rose-950/35 px-2 py-2 opacity-90 shadow-[0_20px_44px_rgba(0,0,0,0.3)] transition-all duration-200 ease-out"
-                style={{
-                  left: box.left,
-                  top: box.top,
-                  width: box.width,
-                  height: box.height,
-                  minHeight: 20,
-                }}
-              >
-                <p className="text-[10px] font-semibold leading-tight text-rose-100">
-                  {formatScheduleTimeRange(targetDraft.start, targetDraft.end)}
-                </p>
-                <p className="mt-0.5 truncate text-[11px] font-semibold leading-snug text-rose-100">
-                  {reboundPreview.title}
-                </p>
-                <p className="mt-1 text-[9px] font-medium uppercase tracking-[0.14em] text-rose-200">
-                  Возврат назад{reboundPreview.blockedLabel ? ` · занято: ${reboundPreview.blockedLabel}` : ""}
-                </p>
-              </div>
-            );
-          })()}
+          <CalendarReboundPreview
+            reboundPreview={reboundPreview}
+            getOverlayBoxForDraft={getOverlayBoxForDraft}
+          />
         </div>
 
         {activeEdit && (
@@ -2402,78 +2327,13 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           onVersionBump={() => setVersion((v) => v + 1)}
         />
       )}
-
-
-      {activeEdit && (() => {
-        const startTop = slotTop(activeEdit.draft.start);
-        const endTop = slotTop(activeEdit.draft.end);
-        const startMin = timeToMinutes(activeEdit.draft.start);
-        const endMin = timeToMinutes(activeEdit.draft.end);
-        const baseDuration = timeToMinutes(activeEdit.base.end) - timeToMinutes(activeEdit.base.start);
-        const draftDuration = endMin - startMin;
-        const durationDelta = draftDuration - baseDuration;
-        const tooltipColor = activeEdit.blocked
-          ? "border-rose-400/60 bg-rose-950/92 text-rose-100"
-          : "border-sky-400/35 bg-zinc-950/92 text-zinc-100";
-        const guideColor = activeEdit.blocked ? "border-rose-400/50" : "border-sky-400/35";
-        const pointerX = activePointerClientRef.current.x;
-        const pointerY = activePointerClientRef.current.y;
-        const tooltipWidth = 176;
-        const tooltipHeight = 72;
-        const viewportW = typeof window !== "undefined" ? window.innerWidth : 0;
-        const viewportH = typeof window !== "undefined" ? window.innerHeight : 0;
-        const tooltipLeft = clamp(pointerX + 18, 12, Math.max(12, viewportW - tooltipWidth - 12));
-        const tooltipTop = clamp(pointerY - tooltipHeight - 12, 12, Math.max(12, viewportH - tooltipHeight - 12));
-        const durationMeta =
-          activeEdit.mode === "resize-start" || activeEdit.mode === "resize-end"
-            ? formatDurationDelta(durationDelta)
-            : activeEdit.draft.date !== activeEdit.base.date
-              ? `→ ${activeEdit.draft.date.slice(5)}`
-              : `${draftDuration}м`;
-
-        return (
-          <>
-            <div className="pointer-events-none fixed z-50" style={{ left: tooltipLeft, top: tooltipTop, width: tooltipWidth }}>
-              <div className={`rounded-2xl border px-3 py-2 shadow-[0_14px_30px_rgba(0,0,0,0.28)] backdrop-blur ${tooltipColor}`}>
-                <p className="text-[11px] font-semibold tracking-[0.02em]">
-                  {formatScheduleTimeRange(activeEdit.draft.start, activeEdit.draft.end)}
-                </p>
-                <div className="mt-1 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em]">
-                  <span className={activeEdit.blocked ? "text-rose-200" : "text-zinc-400"}>
-                    {activeEdit.mode === "move"
-                      ? "Drag"
-                      : activeEdit.mode === "resize-start"
-                        ? "Resize start"
-                        : activeEdit.mode === "resize-end"
-                          ? "Resize end"
-                          : "Create"}
-                  </span>
-                  <span className={activeEdit.blocked ? "text-rose-200" : "text-sky-300"}>{durationMeta}</span>
-                </div>
-                {activeEdit.blocked && (
-                  <p className="mt-1 truncate text-[10px] text-rose-200">
-                    Конфликт: {activeEdit.blockingSlot?.title ?? "занято"}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="pointer-events-none absolute inset-0 z-20" style={{ top: headerHeight, left: 56, width: "calc(100% - 56px)", height: TOTAL_HOURS * ROW_H }}>
-              {[
-                { top: startTop, label: formatScheduleClockTime(activeEdit.draft.start) },
-                { top: endTop, label: formatScheduleClockTime(activeEdit.draft.end) },
-              ].map((guide) => (
-                <div key={`${guide.label}-${guide.top}`} className="absolute left-0 right-0" style={{ top: guide.top }}>
-                  <div className={`border-t border-dashed ${guideColor}`} />
-                  <span className={`absolute left-2 top-0 -translate-y-1/2 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(0,0,0,0.18)] ${tooltipColor}`}>
-                    {guide.label}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        );
-      })()}
+      <CalendarActiveEditOverlay
+        activeEdit={activeEdit}
+        headerHeight={headerHeight}
+        pointerX={activePointerClientRef.current.x}
+        pointerY={activePointerClientRef.current.y}
+        slotTop={slotTop}
+      />
 
       {desktopSlotHint && <CalendarDesktopHint hint={desktopSlotHint} />}
     </section>
