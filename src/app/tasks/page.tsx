@@ -1,15 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { ProjectSelectManager } from "@/components/project-select-manager";
+import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import {
   PROJECT_ACCENT_CLS,
-  convertTaskToSubproject,
-  findProjectBySourceTaskId,
   getProjectDisplayName,
   type Project,
   type ProjectAccent,
@@ -27,11 +25,13 @@ import {
   type Task,
   type TaskStatus,
   activateTask,
+  assignTaskParent,
   addTask,
+  canAssignTaskParent,
   compareTasksByAttention,
-  deleteTask,
   getTaskFocusTotal,
   getTasks,
+  moveTaskTreeToProject,
   toggleDone,
   updateTask,
 } from "@/lib/tasks";
@@ -104,6 +104,7 @@ type TaskGroup = {
   project: Project | null;
   area: LifeArea | null;
   tasks: Task[];
+  rootTasks: TaskTreeNode[];
   priorityLoad: number;
   priorityCounts: Record<Task["priority"], number>;
   openCount: number;
@@ -111,6 +112,13 @@ type TaskGroup = {
   overdueCount: number;
   focusSessions: number;
   focusMinutes: number;
+};
+
+type TaskTreeNode = {
+  task: Task;
+  children: TaskTreeNode[];
+  depth: number;
+  descendantCount: number;
 };
 
 type PrioritySwitchProps = {
@@ -137,6 +145,40 @@ function pluralizeTasks(count: number): string {
 
 function normalizeGroupKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function buildTaskTree(tasks: Task[]): TaskTreeNode[] {
+  const visibleTaskIds = new Set(tasks.map((task) => task.id));
+  const childrenByParentId = new Map<string, Task[]>();
+
+  for (const task of tasks) {
+    if (!task.parentTaskId || !visibleTaskIds.has(task.parentTaskId)) continue;
+
+    const children = childrenByParentId.get(task.parentTaskId) ?? [];
+    children.push(task);
+    childrenByParentId.set(task.parentTaskId, children);
+  }
+
+  for (const children of childrenByParentId.values()) {
+    children.sort((left, right) => compareTasksByAttention(left, right));
+  }
+
+  const buildNode = (task: Task, depth = 0): TaskTreeNode => {
+    const childNodes = (childrenByParentId.get(task.id) ?? []).map((child) => buildNode(child, depth + 1));
+    const descendantCount = childNodes.reduce((sum, child) => sum + 1 + child.descendantCount, 0);
+
+    return {
+      task,
+      children: childNodes,
+      depth,
+      descendantCount,
+    };
+  };
+
+  return tasks
+    .filter((task) => !task.parentTaskId || !visibleTaskIds.has(task.parentTaskId))
+    .sort((left, right) => compareTasksByAttention(left, right))
+    .map((task) => buildNode(task));
 }
 
 function getDueOffset(dueDate?: string): number | null {
@@ -452,7 +494,6 @@ function quickDueButtonCls(isActive: boolean, size: "sm" | "md"): string {
 }
 
 export default function TasksPage() {
-  const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [filter, setFilter] = useState<TaskStatus | "all">("all");
@@ -462,6 +503,8 @@ export default function TasksPage() {
   const [dueDate, setDueDate] = useState("");
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [nestDropTargetId, setNestDropTargetId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const TASKS_PER_GROUP = 15;
@@ -491,17 +534,6 @@ export default function TasksPage() {
       ),
     [projects],
   );
-  const subprojectBySourceTaskId = useMemo(() => {
-    const map = new Map<string, Project>();
-
-    for (const project of projects) {
-      if (project.sourceTaskId) {
-        map.set(project.sourceTaskId, project);
-      }
-    }
-
-    return map;
-  }, [projects]);
 
   const getTaskProjectLabel = useCallback(
     (task: Task) => {
@@ -628,10 +660,18 @@ export default function TasksPage() {
   const handleSetProject = useCallback(
     (id: string, projectId: string) => {
       const project = getProjects().find((item) => item.id === projectId);
-      updateTask(id, {
-        projectId: project?.id,
-        project: project?.name,
-      });
+      const updatedTasks = moveTaskTreeToProject(id, project?.id, project?.name);
+
+      for (const task of updatedTasks) {
+        const linkedSlot = getScheduledTaskSlot(task.id);
+        if (!linkedSlot) continue;
+
+        updateCustomEvent(linkedSlot.id, {
+          projectId: task.projectId,
+          project: task.project,
+        });
+      }
+
       reload();
     },
     [reload],
@@ -669,35 +709,77 @@ export default function TasksPage() {
     [reload],
   );
 
-  const handleConvertToSubproject = useCallback(
-    (task: Task) => {
-      const parentProjectId = getTaskProjectId(task);
-      if (!parentProjectId) return;
-
-      const created = convertTaskToSubproject({
-        task,
-        parentProjectId,
-      });
-
-      if (!created) return;
-
+  const syncTaskTreeSlots = useCallback((updatedTasks: Task[]) => {
+    for (const task of updatedTasks) {
       const linkedSlot = getScheduledTaskSlot(task.id);
+      if (!linkedSlot) continue;
 
-      if (linkedSlot) {
-        updateCustomEvent(linkedSlot.id, {
-          kind: "event",
-          taskId: null,
-          projectId: created.id,
-          project: created.name,
-        });
-      } else {
-        deleteTask(task.id);
-      }
+      updateCustomEvent(linkedSlot.id, {
+        projectId: task.projectId,
+        project: task.project,
+      });
+    }
+  }, []);
 
+  const handleDetachSubtask = useCallback(
+    (taskId: string) => {
+      const updatedTasks = assignTaskParent(taskId, null);
+      syncTaskTreeSlots(updatedTasks);
       reload();
-      router.push(`/projects?open=${created.id}`);
     },
-    [getTaskProjectId, reload, router],
+    [reload, syncTaskTreeSlots],
+  );
+
+  const handleTaskDragStart = useCallback((event: React.DragEvent<HTMLElement>, taskId: string) => {
+    writeTaskDragData(event.dataTransfer, taskId);
+    event.dataTransfer.effectAllowed = "move";
+    setDraggedTaskId(taskId);
+    setNestDropTargetId(null);
+  }, []);
+
+  const handleTaskDragEnd = useCallback(() => {
+    setDraggedTaskId(null);
+    setNestDropTargetId(null);
+  }, []);
+
+  const handleTaskDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>, targetTask: Task) => {
+      const sourceTaskId = readTaskDragId(event.dataTransfer) ?? draggedTaskId;
+      if (!sourceTaskId) return;
+      if (targetTask.status === "done") return;
+      if (!canAssignTaskParent(sourceTaskId, targetTask.id, tasks)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      setDraggedTaskId(sourceTaskId);
+      setNestDropTargetId(targetTask.id);
+    },
+    [draggedTaskId, tasks],
+  );
+
+  const handleTaskDragLeave = useCallback((targetTaskId: string) => {
+    setNestDropTargetId((current) => (current === targetTaskId ? null : current));
+  }, []);
+
+  const handleTaskDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>, targetTask: Task) => {
+      const sourceTaskId = readTaskDragId(event.dataTransfer) ?? draggedTaskId;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggedTaskId(null);
+      setNestDropTargetId(null);
+
+      if (!sourceTaskId) return;
+      if (targetTask.status === "done") return;
+      if (!canAssignTaskParent(sourceTaskId, targetTask.id, tasks)) return;
+
+      const updatedTasks = assignTaskParent(sourceTaskId, targetTask.id);
+      syncTaskTreeSlots(updatedTasks);
+      reload();
+    },
+    [draggedTaskId, reload, syncTaskTreeSlots, tasks],
   );
 
   const visible = tasks.filter(
@@ -731,6 +813,7 @@ export default function TasksPage() {
         project: resolvedProject,
         area: projectLabel ? inferGroupArea(projectLabel) : null,
         tasks: [],
+        rootTasks: [],
         priorityLoad: 0,
         priorityCounts: { p1: 0, p2: 0, p3: 0 },
         openCount: 0,
@@ -768,6 +851,7 @@ export default function TasksPage() {
       .map((group) => ({
         ...group,
         tasks: [...group.tasks].sort((left, right) => compareTasksByAttention(left, right)),
+        rootTasks: buildTaskTree(group.tasks),
       }))
       .sort((left, right) => {
         const leftOrder = left.project?.order ?? (left.area ? 100 + AREA_GROUP_ORDER[left.area] : 999);
@@ -792,6 +876,263 @@ export default function TasksPage() {
     done: tasks.filter((task) => task.status === "done").length,
     archived: tasks.filter((task) => task.status === "archived").length,
   };
+
+  const renderTaskNode = useCallback(
+    (node: TaskTreeNode): React.ReactNode => {
+      const task = node.task;
+      const badge = dueBadge(task.dueDate);
+      const focus = getTaskFocusTotal(task);
+      const taskProjectId = getTaskProjectId(task);
+      const showQuickProjects = task.status !== "done" && !taskProjectId;
+      const showAssignedProjectTrigger = task.status !== "done" && !!taskProjectId;
+      const isDropTarget = nestDropTargetId === task.id;
+      const isSubtask = node.depth > 0;
+      const activeDraggedTaskId = draggedTaskId ?? null;
+      const canNestHere =
+        activeDraggedTaskId != null &&
+        task.status !== "done" &&
+        canAssignTaskParent(activeDraggedTaskId, task.id, tasks);
+      const dragTitle =
+        task.status === "done"
+          ? "Готовые задачи не вкладываем — пусть наслаждаются пенсией"
+          : "Перетащи задачу сюда, чтобы сделать её подзадачей";
+
+      return (
+        <div
+          key={task.id}
+          className={`${isSubtask ? "ml-5 border-l border-zinc-800/80 pl-3" : ""}`}
+        >
+          <div
+            onDragOver={(event) => handleTaskDragOver(event, task)}
+            onDragLeave={() => handleTaskDragLeave(task.id)}
+            onDrop={(event) => handleTaskDrop(event, task)}
+            className={`rounded-2xl border px-4 py-3 transition ${
+              task.status === "done"
+                ? "border-zinc-800/50 bg-zinc-950/20"
+                : node.children.length > 0
+                  ? "border-violet-500/20 bg-violet-950/10"
+                  : "border-zinc-800/70 bg-zinc-950/35"
+            } ${isDropTarget && canNestHere ? "ring-2 ring-sky-400/35 border-sky-400/30 bg-sky-950/15" : ""}`}
+          >
+            <div className="flex items-start gap-3">
+              <button
+                type="button"
+                onClick={() => handleToggle(task.id)}
+                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
+                  task.status === "done"
+                    ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                    : "border-zinc-600 hover:border-zinc-400"
+                }`}
+              >
+                {task.status === "done" && (
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path
+                      d="M2 6L5 9L10 3"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </button>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-start gap-2">
+                  <button
+                    type="button"
+                    draggable={task.status !== "done"}
+                    onDragStart={(event) => handleTaskDragStart(event, task.id)}
+                    onDragEnd={handleTaskDragEnd}
+                    disabled={task.status === "done"}
+                    className="mt-0.5 shrink-0 cursor-grab rounded-lg border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
+                    title={dragTitle}
+                    aria-label={dragTitle}
+                  >
+                    ⋮⋮
+                  </button>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      {isSubtask && (
+                        <span className="shrink-0 rounded-md border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-200">
+                          ↳ подзадача
+                        </span>
+                      )}
+                      {node.children.length > 0 && (
+                        <span className="shrink-0 rounded-md border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-200">
+                          {node.children.length} подзадач
+                        </span>
+                      )}
+                      <p
+                        className={`min-w-0 flex-1 truncate text-sm ${
+                          task.status === "done" ? "text-zinc-500 line-through" : "text-zinc-100"
+                        }`}
+                        title={task.title}
+                      >
+                        {task.title}
+                      </p>
+                    </div>
+
+                    <div className="mt-2 flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <span
+                          className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[task.status]}`}
+                        >
+                          {task.status}
+                        </span>
+
+                        {badge && (
+                          <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>
+                            📅 {badge.label}
+                          </span>
+                        )}
+
+                        {focus.sessions > 0 && (
+                          <span className="shrink-0 rounded-md border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                            🍅 {focus.sessions} · {focus.minutes}м
+                          </span>
+                        )}
+
+                        {task.status !== "done" && (
+                          <>
+                            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 px-1 py-1">
+                              <button
+                                type="button"
+                                onClick={() => handleSetDue(task.id, todayDateValue)}
+                                aria-pressed={task.dueDate === todayDateValue}
+                                className={quickDueButtonCls(task.dueDate === todayDateValue, "sm")}
+                              >
+                                Сегодня
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleSetDue(task.id, tomorrowDateValue)}
+                                aria-pressed={task.dueDate === tomorrowDateValue}
+                                className={quickDueButtonCls(task.dueDate === tomorrowDateValue, "sm")}
+                              >
+                                Завтра
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleSetDue(task.id, "")}
+                                aria-pressed={!task.dueDate}
+                                className={quickDueButtonCls(!task.dueDate, "sm")}
+                              >
+                                Без даты
+                              </button>
+
+                              <input
+                                type="date"
+                                value={task.dueDate ?? ""}
+                                onChange={(event) => handleSetDue(task.id, event.target.value)}
+                                className="scheme-dark w-30 rounded-md border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
+                              />
+                            </div>
+
+                            <div className={showQuickProjects ? "min-w-0 flex-1" : showAssignedProjectTrigger ? "min-w-24 max-w-44 flex-1" : "min-w-34 max-w-52 flex-1"}>
+                              <ProjectSelectManager
+                                value={taskProjectId}
+                                projects={projects}
+                                quickProjects={showQuickProjects ? popularProjects : undefined}
+                                compactValueOnly={showAssignedProjectTrigger}
+                                desktopSingleRow={showQuickProjects}
+                                onChange={(projectId) => handleSetProject(task.id, projectId)}
+                                onProjectsMutate={() => reload()}
+                                creationContextLabel="редактирования задачи"
+                                suggestedAccent="violet"
+                                size="sm"
+                              />
+                            </div>
+
+                            <div className="shrink-0">
+                              <PrioritySwitch
+                                value={task.priority}
+                                onChange={(priority) => handleSetPriority(task.id, priority)}
+                                size="sm"
+                              />
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-1">
+                        {task.parentTaskId && task.status !== "done" && (
+                          <button
+                            type="button"
+                            onClick={() => handleDetachSubtask(task.id)}
+                            className="rounded-lg border border-violet-500/20 px-2 py-1 text-[10px] text-violet-300 transition hover:bg-violet-500/10"
+                            title="Поднять на верхний уровень внутри проекта"
+                          >
+                            ↰
+                          </button>
+                        )}
+                        {task.status === "inbox" && (
+                          <button
+                            type="button"
+                            onClick={() => handleActivate(task.id)}
+                            className="rounded-lg border border-emerald-500/20 px-2 py-1 text-[10px] text-emerald-400 transition hover:bg-emerald-500/10"
+                            title="В работу"
+                          >
+                            ▶
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(task.id)}
+                          className="rounded-lg border border-rose-500/20 px-2 py-1 text-[10px] text-rose-400 transition hover:bg-rose-500/10"
+                          title="Удалить"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {isDropTarget && canNestHere && (
+                  <div className="mt-3 rounded-xl border border-dashed border-sky-400/35 bg-sky-500/5 px-3 py-2 text-xs text-sky-200">
+                    Отпускай — задача станет подзадачей внутри «{task.title}».
+                  </div>
+                )}
+
+                {node.children.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {node.children.map((child) => renderTaskNode(child))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    },
+    [
+      draggedTaskId,
+      getTaskProjectId,
+      handleActivate,
+      handleDelete,
+      handleDetachSubtask,
+      handleSetDue,
+      handleSetPriority,
+      handleSetProject,
+      handleTaskDragEnd,
+      handleTaskDragLeave,
+      handleTaskDragOver,
+      handleTaskDragStart,
+      handleTaskDrop,
+      handleToggle,
+      nestDropTargetId,
+      popularProjects,
+      projects,
+      reload,
+      tasks,
+      todayDateValue,
+      tomorrowDateValue,
+    ],
+  );
 
   return (
     <AppShell>
@@ -986,185 +1327,15 @@ export default function TasksPage() {
                 </div>
 
                 <div className="mt-3 space-y-2">
-                  {(expandedGroups.has(group.id) ? group.tasks : group.tasks.slice(0, TASKS_PER_GROUP)).map((task) => {
-                    const badge = dueBadge(task.dueDate);
-                    const focus = getTaskFocusTotal(task);
-                    const taskProjectId = getTaskProjectId(task);
-                    const taskSubproject = subprojectBySourceTaskId.get(task.id) ?? findProjectBySourceTaskId(task.id, projects);
-                    const showQuickProjects = task.status !== "done" && !taskProjectId;
-                    const showAssignedProjectTrigger = task.status !== "done" && !!taskProjectId;
-                    const canConvertToSubproject = task.status !== "done" && !!taskProjectId;
+                  {(expandedGroups.has(group.id) ? group.rootTasks : group.rootTasks.slice(0, TASKS_PER_GROUP)).map((node) => renderTaskNode(node))}
 
-                    return (
-                      <div
-                        key={task.id}
-                        className={`flex items-start gap-3 rounded-2xl border px-4 py-3 transition ${
-                          task.status === "done"
-                            ? "border-zinc-800/50 bg-zinc-950/20"
-                            : "border-zinc-800/70 bg-zinc-950/35"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleToggle(task.id)}
-                          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
-                            task.status === "done"
-                              ? "border-emerald-400 bg-emerald-400 text-zinc-950"
-                              : "border-zinc-600 hover:border-zinc-400"
-                          }`}
-                        >
-                          {task.status === "done" && (
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                              <path
-                                d="M2 6L5 9L10 3"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
-                          )}
-                        </button>
-
-                        <div className="min-w-0 flex-1">
-                          <p
-                            className={`truncate text-sm ${
-                              task.status === "done"
-                                ? "text-zinc-500 line-through"
-                                : "text-zinc-100"
-                            }`}
-                            title={task.title}
-                          >
-                            {task.title}
-                          </p>
-
-                          <div className="mt-2 flex min-w-0 items-center gap-2">
-                            <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                              <span
-                                className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[task.status]}`}
-                              >
-                                {task.status}
-                              </span>
-
-                              {badge && (
-                                <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>
-                                  📅 {badge.label}
-                                </span>
-                              )}
-
-                              {focus.sessions > 0 && (
-                                <span className="shrink-0 rounded-md border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
-                                  🍅 {focus.sessions} · {focus.minutes}м
-                                </span>
-                              )}
-
-                              {task.status !== "done" && (
-                                <>
-                                  <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 px-1 py-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSetDue(task.id, todayDateValue)}
-                                      aria-pressed={task.dueDate === todayDateValue}
-                                      className={quickDueButtonCls(task.dueDate === todayDateValue, "sm")}
-                                    >
-                                      Сегодня
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSetDue(task.id, tomorrowDateValue)}
-                                      aria-pressed={task.dueDate === tomorrowDateValue}
-                                      className={quickDueButtonCls(task.dueDate === tomorrowDateValue, "sm")}
-                                    >
-                                      Завтра
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSetDue(task.id, "")}
-                                      aria-pressed={!task.dueDate}
-                                      className={quickDueButtonCls(!task.dueDate, "sm")}
-                                    >
-                                      Без даты
-                                    </button>
-
-                                    <input
-                                      type="date"
-                                      value={task.dueDate ?? ""}
-                                      onChange={(event) => handleSetDue(task.id, event.target.value)}
-                                      className="scheme-dark w-30 rounded-md border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
-                                    />
-                                  </div>
-
-                                  <div className={showQuickProjects ? "min-w-0 flex-1" : showAssignedProjectTrigger ? "min-w-24 max-w-44 flex-1" : "min-w-34 max-w-52 flex-1"}>
-                                    <ProjectSelectManager
-                                      value={taskProjectId}
-                                      projects={projects}
-                                      quickProjects={showQuickProjects ? popularProjects : undefined}
-                                      compactValueOnly={showAssignedProjectTrigger}
-                                      desktopSingleRow={showQuickProjects}
-                                      onChange={(projectId) => handleSetProject(task.id, projectId)}
-                                      onProjectsMutate={() => reload()}
-                                      creationContextLabel="редактирования задачи"
-                                      suggestedAccent="violet"
-                                      size="sm"
-                                    />
-                                  </div>
-
-                                  <div className="shrink-0">
-                                    <PrioritySwitch
-                                      value={task.priority}
-                                      onChange={(priority) => handleSetPriority(task.id, priority)}
-                                      size="sm"
-                                    />
-                                  </div>
-                                </>
-                              )}
-                            </div>
-
-                            <div className="flex shrink-0 items-center gap-1">
-                              {canConvertToSubproject && !taskSubproject && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleConvertToSubproject(task)}
-                                  className="rounded-lg border border-sky-500/20 px-2 py-1 text-[10px] text-sky-300 transition hover:bg-sky-500/10"
-                                  title="Превратить задачу в подпроект и открыть его на странице проектов"
-                                >
-                                  ↳📁
-                                </button>
-                              )}
-                              {task.status === "inbox" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleActivate(task.id)}
-                                  className="rounded-lg border border-emerald-500/20 px-2 py-1 text-[10px] text-emerald-400 transition hover:bg-emerald-500/10"
-                                  title="В работу"
-                                >
-                                  ▶
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(task.id)}
-                                className="rounded-lg border border-rose-500/20 px-2 py-1 text-[10px] text-rose-400 transition hover:bg-rose-500/10"
-                                title="Удалить"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {!expandedGroups.has(group.id) && group.tasks.length > TASKS_PER_GROUP && (
+                  {!expandedGroups.has(group.id) && group.rootTasks.length > TASKS_PER_GROUP && (
                     <button
                       type="button"
                       onClick={() => setExpandedGroups((s) => new Set(s).add(group.id))}
                       className="w-full rounded-xl border border-zinc-800 py-2 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
                     >
-                      Показать ещё {group.tasks.length - TASKS_PER_GROUP}
+                      Показать ещё {group.rootTasks.length - TASKS_PER_GROUP}
                     </button>
                   )}
                 </div>
