@@ -8,13 +8,11 @@ import { CalendarDesktopHint } from "@/components/calendar-desktop-hint";
 import { CalendarOverlayColumn } from "@/components/calendar-overlay-column";
 import { CalendarQuickMenu } from "@/components/calendar-quick-menu";
 import { CalendarReboundPreview } from "@/components/calendar-rebound-preview";
+import { useCalendarDesktopSlotHint } from "@/components/use-calendar-desktop-slot-hint";
 import { useCalendarPointerEdit } from "@/components/use-calendar-pointer-edit";
 import { useCalendarQuickMenu } from "@/components/use-calendar-quick-menu";
 import { useCalendarTaskDragAndDrop } from "@/components/use-calendar-task-dnd";
 import {
-  DESKTOP_SLOT_HINT_DELAY_MS,
-  DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT,
-  DESKTOP_SLOT_HINT_WIDTH,
   HEADER_BASE_H,
   HEADER_TASK_GAP,
   HEADER_TASK_MARGIN_TOP,
@@ -22,7 +20,6 @@ import {
   HOUR_START,
   ROW_H,
   TOTAL_HOURS,
-  clamp,
   formatHour,
   getCompactStart,
   getDayModeBadgeClass,
@@ -30,8 +27,6 @@ import {
   centerNowLine,
   type CalendarViewMode,
   type DayColumn,
-  type DesktopSlotHintContent,
-  type DesktopSlotHintState,
   type EditableSlotDraft,
   type WeekCalendarGridProps,
 } from "@/components/calendar-grid-types";
@@ -116,7 +111,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [anchor, setAnchor] = useState<Date | null>(null);
   const [shouldCenterNow, setShouldCenterNow] = useState(true);
   const [hoveredSlotKey, setHoveredSlotKey] = useState<string | null>(null);
-  const [desktopSlotHint, setDesktopSlotHint] = useState<DesktopSlotHintState | null>(null);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("full");
   const [compactStart, setCompactStart] = useState(0);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
@@ -125,8 +119,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const responsiveInitRef = useRef(false);
   const visibleColumnsRef = useRef<DayColumn[]>([]);
   const skipNextClickRef = useRef(false);
-  const desktopSlotHintTimerRef = useRef<number | null>(null);
-  const desktopSlotHintPendingKeyRef = useRef<string | null>(null);
   const today = todayKey();
   const yesterdayKey = getYesterdayKey(today);
 
@@ -284,22 +276,21 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
 
   const showCompactControls = viewMode === "compact" && columns.length > compactCount;
 
-  const clearDesktopSlotHintTimer = useCallback(() => {
-    if (desktopSlotHintTimerRef.current != null) {
-      window.clearTimeout(desktopSlotHintTimerRef.current);
-      desktopSlotHintTimerRef.current = null;
-    }
-    desktopSlotHintPendingKeyRef.current = null;
-  }, []);
-
-  const hideDesktopSlotHint = useCallback(() => {
-    clearDesktopSlotHintTimer();
-    setDesktopSlotHint(null);
-  }, [clearDesktopSlotHintTimer]);
-
   const bumpVersion = useCallback(() => {
     setVersion((value) => value + 1);
   }, []);
+
+  const {
+    desktopSlotHint,
+    desktopSlotHintPendingKeyRef,
+    hideDesktopSlotHint,
+    scheduleDesktopSlotHint,
+  } = useCalendarDesktopSlotHint({
+    gridRef,
+    version,
+    viewMode,
+    compactStart,
+  });
 
   const {
     quickMenu,
@@ -320,60 +311,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     onVersionBump: bumpVersion,
     onClearHoveredSlot: () => setHoveredSlotKey(null),
   });
-
-  const scheduleDesktopSlotHint = useCallback((
-    element: HTMLElement,
-    slotKey: string,
-    content: DesktopSlotHintContent | null,
-    options?: { delayMs?: number },
-  ) => {
-    if (!content) {
-      hideDesktopSlotHint();
-      return;
-    }
-
-    if (desktopSlotHint?.slotKey === slotKey || desktopSlotHintPendingKeyRef.current === slotKey) {
-      return;
-    }
-
-    clearDesktopSlotHintTimer();
-    setDesktopSlotHint(null);
-
-    const rect = element.getBoundingClientRect();
-    const viewportW = window.innerWidth;
-    const viewportH = window.innerHeight;
-    const left = clamp(
-      rect.right + 14,
-      12,
-      Math.max(12, viewportW - DESKTOP_SLOT_HINT_WIDTH - 12),
-    );
-    const top = clamp(
-      rect.top + Math.min(rect.height * 0.25, 24),
-      12,
-      Math.max(12, viewportH - DESKTOP_SLOT_HINT_ESTIMATED_HEIGHT - 12),
-    );
-
-    desktopSlotHintPendingKeyRef.current = slotKey;
-    const revealHint = () => {
-      desktopSlotHintTimerRef.current = null;
-      desktopSlotHintPendingKeyRef.current = null;
-      setDesktopSlotHint({
-        slotKey,
-        left,
-        top,
-        ...content,
-      });
-    };
-
-    const delayMs = options?.delayMs ?? DESKTOP_SLOT_HINT_DELAY_MS;
-
-    if (delayMs <= 0) {
-      revealHint();
-      return;
-    }
-
-    desktopSlotHintTimerRef.current = window.setTimeout(revealHint, delayMs);
-  }, [clearDesktopSlotHintTimer, desktopSlotHint?.slotKey, hideDesktopSlotHint]);
 
   const getBlockingSlot = useCallback(
     (draft: EditableSlotDraft, originalSlot: ScheduleSlot | null): ScheduleSlot | null => {
@@ -427,26 +364,6 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     getBlockingSlot,
     onVersionBump: bumpVersion,
   });
-
-  useEffect(() => {
-    return () => {
-      clearDesktopSlotHintTimer();
-    };
-  }, [clearDesktopSlotHintTimer]);
-
-  useEffect(() => {
-    const container = gridRef.current;
-    if (!container) return;
-
-    const handleScroll = () => hideDesktopSlotHint();
-
-    container.addEventListener("scroll", handleScroll);
-    return () => container.removeEventListener("scroll", handleScroll);
-  }, [hideDesktopSlotHint]);
-
-  useEffect(() => {
-    hideDesktopSlotHint();
-  }, [hideDesktopSlotHint, version, viewMode, compactStart]);
 
   // navigation
   const shiftWeek = useCallback(
