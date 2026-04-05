@@ -505,6 +505,8 @@ export default function TasksPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [nestDropTargetId, setNestDropTargetId] = useState<string | null>(null);
+  const [subtaskDraftParentId, setSubtaskDraftParentId] = useState<string | null>(null);
+  const [subtaskDraftTitle, setSubtaskDraftTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const TASKS_PER_GROUP = 15;
@@ -703,10 +705,47 @@ export default function TasksPage() {
 
   const handleDelete = useCallback(
     (id: string) => {
+      const shouldCloseSubtaskComposer = subtaskDraftParentId === id;
+
       deleteTaskWithScheduledSlot(id);
+
+      if (shouldCloseSubtaskComposer) {
+        setSubtaskDraftParentId(null);
+        setSubtaskDraftTitle("");
+      }
+
       reload();
     },
-    [reload],
+    [reload, subtaskDraftParentId],
+  );
+
+  const handleOpenSubtaskComposer = useCallback((taskId: string) => {
+    setSubtaskDraftParentId(taskId);
+    setSubtaskDraftTitle("");
+  }, []);
+
+  const handleCloseSubtaskComposer = useCallback(() => {
+    setSubtaskDraftParentId(null);
+    setSubtaskDraftTitle("");
+  }, []);
+
+  const handleAddSubtask = useCallback(
+    (parentTask: Task) => {
+      const title = subtaskDraftTitle.trim();
+      if (!title) return;
+
+      addTask(title, {
+        parentTaskId: parentTask.id,
+        projectId: parentTask.projectId,
+        project: parentTask.project,
+        priority: parentTask.priority,
+        status: parentTask.status === "active" ? "active" : "inbox",
+      });
+
+      handleCloseSubtaskComposer();
+      reload();
+    },
+    [handleCloseSubtaskComposer, reload, subtaskDraftTitle],
   );
 
   const syncTaskTreeSlots = useCallback((updatedTasks: Task[]) => {
@@ -896,6 +935,7 @@ export default function TasksPage() {
         task.status === "done"
           ? "Готовые задачи не вкладываем — пусть наслаждаются пенсией"
           : "Перетащи задачу сюда, чтобы сделать её подзадачей";
+      const isSubtaskComposerOpen = subtaskDraftParentId === task.id;
 
       return (
         <div
@@ -1059,6 +1099,24 @@ export default function TasksPage() {
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1">
+                        {task.status !== "done" && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              isSubtaskComposerOpen
+                                ? handleCloseSubtaskComposer()
+                                : handleOpenSubtaskComposer(task.id)
+                            }
+                            className={`rounded-lg border px-2 py-1 text-[10px] transition ${
+                              isSubtaskComposerOpen
+                                ? "border-sky-400/30 bg-sky-500/10 text-sky-200"
+                                : "border-sky-500/20 text-sky-300 hover:bg-sky-500/10"
+                            }`}
+                            title="Добавить явную подзадачу без drag-and-drop"
+                          >
+                            ↳＋
+                          </button>
+                        )}
                         {task.parentTaskId && task.status !== "done" && (
                           <button
                             type="button"
@@ -1098,6 +1156,54 @@ export default function TasksPage() {
                   </div>
                 )}
 
+                {isSubtaskComposerOpen && (
+                  <div className="mt-3 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-3">
+                    <p className="mb-2 text-[11px] text-sky-200/90">
+                      Новая подзадача внутри «{task.title}»
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        autoFocus
+                        value={subtaskDraftTitle}
+                        onChange={(event) => setSubtaskDraftTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            handleAddSubtask(task);
+                          }
+
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            handleCloseSubtaskComposer();
+                          }
+                        }}
+                        placeholder="Название подзадачи…"
+                        className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-sky-500/40"
+                      />
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleAddSubtask(task)}
+                          disabled={!subtaskDraftTitle.trim()}
+                          className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Создать подзадачу
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCloseSubtaskComposer}
+                          className="rounded-xl border border-zinc-800 px-3 py-2 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
+                        >
+                          Отмена
+                        </button>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-[10px] text-zinc-500">
+                      Подзадача унаследует проект и появится прямо внутри этой ветки.
+                    </p>
+                  </div>
+                )}
+
                 {node.children.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {node.children.map((child) => renderTaskNode(child))}
@@ -1113,8 +1219,11 @@ export default function TasksPage() {
       draggedTaskId,
       getTaskProjectId,
       handleActivate,
+      handleAddSubtask,
+      handleCloseSubtaskComposer,
       handleDelete,
       handleDetachSubtask,
+      handleOpenSubtaskComposer,
       handleSetDue,
       handleSetPriority,
       handleSetProject,
@@ -1128,6 +1237,8 @@ export default function TasksPage() {
       popularProjects,
       projects,
       reload,
+      subtaskDraftParentId,
+      subtaskDraftTitle,
       tasks,
       todayDateValue,
       tomorrowDateValue,
