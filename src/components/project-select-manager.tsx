@@ -65,7 +65,7 @@ export function ProjectSelectManager({
     [projects, value],
   );
   const visibleQuickProjects = useMemo(() => {
-    if (!quickProjects?.length || size !== "md") return [];
+    if (!quickProjects?.length) return [];
 
     const seen = new Set<string>();
     const shortlist = quickProjects.filter((project) => {
@@ -143,9 +143,14 @@ export function ProjectSelectManager({
       : "rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
   const panelAlignCls = align === "right" ? "right-0" : "left-0";
   const quickProjectBtnCls =
-    `flex min-w-0 items-center gap-2 rounded-xl border px-3 py-3 text-xs transition ${
+    `flex min-w-0 items-center ${size === "sm" ? "gap-1.5 rounded-lg px-2 py-1 text-[10px]" : "gap-2 rounded-xl px-3 py-3 text-xs"} border transition ${
       desktopSingleRow ? "shrink-0" : ""
     }`;
+  const quickProjectDotCls = size === "sm" ? "h-1.5 w-1.5" : "h-2 w-2";
+  const quickToggleBtnCls =
+    size === "sm"
+      ? `rounded-lg border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100 ${desktopSingleRow ? "shrink-0" : ""}`
+      : `rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100 ${desktopSingleRow ? "shrink-0" : ""}`;
   const controlsWrapCls = desktopSingleRow ? "flex min-w-0 items-center gap-1.5 lg:flex-nowrap" : "flex min-w-0 flex-wrap items-center gap-1.5";
   const quickProjectsWrapCls = desktopSingleRow
     ? "flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pr-1 lg:flex-nowrap"
@@ -236,7 +241,7 @@ export function ProjectSelectManager({
                       : "border-zinc-800 bg-zinc-900/50 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
                   }`}
                 >
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
+                  <span className={`${quickProjectDotCls} shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
                   <span className="min-w-0 truncate">{project.name}</span>
                 </button>
               );
@@ -250,11 +255,9 @@ export function ProjectSelectManager({
                 setShowAllProjects((current) => !current);
               }}
               aria-expanded={showAllProjects}
-              className={`rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100 ${
-                desktopSingleRow ? "shrink-0" : ""
-              }`}
+              className={quickToggleBtnCls}
             >
-              {showAllProjects ? "Скрыть список" : "Показать все"}
+                {showAllProjects ? "Скрыть список" : "Все"}
             </button>
           </div>
         ) : (
