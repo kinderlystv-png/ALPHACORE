@@ -14,6 +14,7 @@ type ProjectSelectManagerProps = {
   value: string;
   projects: Project[];
   quickProjects?: Project[];
+  compactValueOnly?: boolean;
   desktopSingleRow?: boolean;
   onChange: (projectId: string) => void;
   onProjectsMutate?: (projectId: string) => void;
@@ -43,6 +44,7 @@ export function ProjectSelectManager({
   value,
   projects,
   quickProjects,
+  compactValueOnly = false,
   desktopSingleRow = false,
   onChange,
   onProjectsMutate,
@@ -81,6 +83,7 @@ export function ProjectSelectManager({
     return shortlist;
   }, [quickProjects, selectedProject, size]);
   const usesQuickProjects = visibleQuickProjects.length > 0;
+  const usesCompactValueTrigger = compactValueOnly && !!selectedProject;
   const isOverlayOpen = mode !== null || showAllProjects;
 
   useEffect(() => {
@@ -151,6 +154,10 @@ export function ProjectSelectManager({
     size === "sm"
       ? `rounded-lg border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100 ${desktopSingleRow ? "shrink-0" : ""}`
       : `rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100 ${desktopSingleRow ? "shrink-0" : ""}`;
+  const compactValueBtnCls =
+    size === "sm"
+      ? "flex w-full min-w-0 items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-300 transition hover:border-zinc-700 hover:text-zinc-100"
+      : "flex w-full min-w-0 items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 transition hover:border-zinc-700 hover:text-zinc-100";
   const controlsWrapCls = desktopSingleRow ? "flex min-w-0 items-center gap-1.5 lg:flex-nowrap" : "flex min-w-0 flex-wrap items-center gap-1.5";
   const quickProjectsWrapCls = desktopSingleRow
     ? "flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pr-1 lg:flex-nowrap"
@@ -223,7 +230,25 @@ export function ProjectSelectManager({
   return (
     <div ref={rootRef} className="relative w-full min-w-0">
       <div className={controlsWrapCls}>
-        {usesQuickProjects ? (
+        {usesCompactValueTrigger ? (
+          <button
+            type="button"
+            onClick={() => {
+              setMode(null);
+              setError(null);
+              setShowAllProjects((current) => !current);
+            }}
+            aria-expanded={showAllProjects}
+            className={compactValueBtnCls}
+            title={selectedProject ? `Сменить проект ${selectedProject.name}` : "Выбрать проект"}
+          >
+            {selectedProject && (
+              <span className={`${quickProjectDotCls} shrink-0 rounded-full ${PROJECT_DOT_CLS[selectedProject.accent]}`} />
+            )}
+            <span className="min-w-0 flex-1 truncate text-left">{selectedProject?.name ?? noneLabel}</span>
+            <span className="shrink-0 text-zinc-500">▾</span>
+          </button>
+        ) : usesQuickProjects ? (
           <div className={quickProjectsWrapCls}>
             {visibleQuickProjects.map((project) => {
               const isActive = value === project.id;
@@ -275,32 +300,38 @@ export function ProjectSelectManager({
           </select>
         )}
 
-        <button
-          type="button"
-          onClick={openCreate}
-          className={iconBtnCls}
-          title="Создать новый проект"
-          aria-label="Создать новый проект"
-        >
-          ＋
-        </button>
-        <button
-          type="button"
-          onClick={openRename}
-          disabled={!selectedProject}
-          className={`${iconBtnCls} disabled:cursor-not-allowed disabled:opacity-35`}
-          title={selectedProject ? `Переименовать ${selectedProject.name}` : "Сначала выбери проект"}
-          aria-label="Переименовать выбранный проект"
-        >
-          ✎
-        </button>
+        {!compactValueOnly && (
+          <>
+            <button
+              type="button"
+              onClick={openCreate}
+              className={iconBtnCls}
+              title="Создать новый проект"
+              aria-label="Создать новый проект"
+            >
+              ＋
+            </button>
+            <button
+              type="button"
+              onClick={openRename}
+              disabled={!selectedProject}
+              className={`${iconBtnCls} disabled:cursor-not-allowed disabled:opacity-35`}
+              title={selectedProject ? `Переименовать ${selectedProject.name}` : "Сначала выбери проект"}
+              aria-label="Переименовать выбранный проект"
+            >
+              ✎
+            </button>
+          </>
+        )}
       </div>
 
-      {usesQuickProjects && showAllProjects && (
+      {(usesQuickProjects || usesCompactValueTrigger) && showAllProjects && (
         <div className={`absolute ${panelAlignCls} top-full z-30 mt-2 w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_14px_48px_rgba(0,0,0,0.38)] backdrop-blur`}>
           <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Все проекты</p>
           <p className="mt-1 text-sm font-medium text-zinc-100">
-            Если нужного нет среди быстрых кнопок — он ждёт здесь.
+            {usesCompactValueTrigger
+              ? "Нажми на проект, если нужно быстро перекинуть задачу в другой список."
+              : "Если нужного нет среди быстрых кнопок — он ждёт здесь."}
           </p>
 
           <div className="mt-3 flex flex-wrap gap-2">

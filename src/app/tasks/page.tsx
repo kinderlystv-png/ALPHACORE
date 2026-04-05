@@ -858,6 +858,7 @@ export default function TasksPage() {
                     const focus = getTaskFocusTotal(task);
                     const taskProjectId = getTaskProjectId(task);
                     const showQuickProjects = task.status !== "done" && !taskProjectId;
+                    const showAssignedProjectTrigger = task.status !== "done" && !!taskProjectId;
 
                     return (
                       <div
@@ -931,11 +932,12 @@ export default function TasksPage() {
                                     className="scheme-dark w-30 shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
                                   />
 
-                                  <div className={showQuickProjects ? "min-w-0 flex-1" : "min-w-34 max-w-52 flex-1"}>
+                                  <div className={showQuickProjects ? "min-w-0 flex-1" : showAssignedProjectTrigger ? "min-w-24 max-w-44 flex-1" : "min-w-34 max-w-52 flex-1"}>
                                     <ProjectSelectManager
                                       value={taskProjectId}
                                       projects={projects}
                                       quickProjects={showQuickProjects ? popularProjects : undefined}
+                                      compactValueOnly={showAssignedProjectTrigger}
                                       desktopSingleRow={showQuickProjects}
                                       onChange={(projectId) => handleSetProject(task.id, projectId)}
                                       onProjectsMutate={() => reload()}
