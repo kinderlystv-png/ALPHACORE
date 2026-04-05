@@ -1,4 +1,5 @@
 import { timeToMinutes, type ScheduleSlot } from "./schedule";
+import type { CalendarDayPressure } from "./calendar-day-pressure";
 import type { DayModeId } from "./heys-day-mode";
 
 export type CalendarSlotSupportNoteTone = "amber" | "sky" | "emerald" | "violet" | "rose";
@@ -8,6 +9,7 @@ export type CalendarSlotSupportNote = {
   badge: string;
   timingLabel?: string;
   sequenceLabel?: string;
+  pressureLabel?: string;
   title: string;
   summary: string;
   detail?: string;
@@ -18,10 +20,26 @@ export type CalendarSlotSupportNote = {
 
 type SupportSlotInput = Pick<ScheduleSlot, "tone" | "tags" | "title" | "source" | "start" | "end">;
 
+type SupportPressureInput = Pick<
+  CalendarDayPressure,
+  | "level"
+  | "badge"
+  | "summary"
+  | "detail"
+  | "parties"
+  | "cleanup"
+  | "family"
+  | "planningWindows"
+  | "recoveryWindows"
+  | "isWeekend"
+  | "slotsCount"
+>;
+
 type SupportNoteContext = {
   dayModeId?: DayModeId | null;
   previousSlot?: SupportSlotInput | null;
   nextSlot?: SupportSlotInput | null;
+  pressure?: SupportPressureInput | null;
 };
 
 type SlotDayPart = "morning" | "day" | "evening" | "late-evening";
@@ -275,6 +293,148 @@ function applySequenceContext(
           "Качество техники важнее объёма.",
           "Связка работает только если между окнами остаётся нервная ёмкость.",
         ],
+      };
+    }
+  }
+
+  return note;
+}
+
+function appendSentence(base: string, addition: string): string {
+  if (!base) return addition;
+  return /[.!?…]$/u.test(base) ? `${base} ${addition}` : `${base}. ${addition}`;
+}
+
+function mergePoints(primary: string[], secondary?: string[]): string[] {
+  const merged = [...primary, ...(secondary ?? [])];
+  return merged.filter((point, index) => merged.indexOf(point) === index).slice(0, 4);
+}
+
+function applyPressureContext(
+  note: CalendarSlotSupportNote,
+  context?: SupportNoteContext,
+): CalendarSlotSupportNote {
+  const pressure = context?.pressure;
+  if (!pressure) return note;
+
+  if (pressure.level === "overloaded") {
+    if (note.id === "recovery") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: "rose",
+        title: note.sequenceLabel ? note.title : "На перегрузе это recovery-окно неприкосновенно",
+        summary: note.sequenceLabel
+          ? appendSentence(note.summary, `День уже в статусе «${pressure.badge}», так что окно лучше считать обязательной частью конструкции дня.`)
+          : `Календарь уже говорит «${pressure.badge}» и «${pressure.summary}», поэтому recovery здесь — не бонус, а часть плана.`,
+        detail: `${pressure.detail}. ${note.detail ?? "Если срезать именно это окно, день почти наверняка расползётся дальше."}`,
+        points: mergePoints([
+          "Новые хвосты на перегрузе почти всегда берутся в долг у завтра.",
+          "Если режешь что-то — режь объём, а не recovery.",
+        ], note.points),
+      };
+    }
+
+    if (note.id === "load-fuel") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: "rose",
+        title: note.sequenceLabel ? note.title : "Перегруз уже в календаре — объём нужно удешевить заранее",
+        summary: appendSentence(note.summary, `Сегодня день уже ${pressure.summary}, так что heroic-version этого слота почти наверняка дороже пользы.`),
+        detail: `${pressure.detail}. ${note.detail ?? "Главная задача — не дать этому окну разорвать остаток дня."}`,
+        points: mergePoints([
+          "Оставь только обязательное ядро слота.",
+          "Сразу планируй финиш, а не бесконечный хвост работы после него.",
+        ], note.points),
+      };
+    }
+
+    if (note.id === "base-stack") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: "rose",
+        title: note.sequenceLabel ? note.title : "На перегрузе база должна упрощать день, а не плодить стек",
+        summary: appendSentence(note.summary, `При статусе «${pressure.badge}» база нужна как floor, а не как повод открыть ещё один протокол спасения.`),
+        detail: `${pressure.detail}. ${note.detail ?? "Сон, еда и вода здесь всё равно дадут больший ROI, чем новая банка."}`,
+        points: mergePoints([
+          "Не расширяй стек на тревоге.",
+          "База должна уменьшать хаос, а не создавать новый ritual backlog.",
+        ], note.points),
+      };
+    }
+
+    if (note.id === "strength-base") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: "rose",
+        title: note.sequenceLabel ? note.title : "На перегрузе силовой слот лучше удешевить",
+        summary: appendSentence(note.summary, `Календарь уже перегрет, поэтому сегодня силовой смысл — в сохранении формы сигнала, а не в объёме.`),
+        detail: `${pressure.detail}. ${note.detail ?? "Техника, мобильность и запас сейчас ценнее амбиции."}`,
+        points: mergePoints([
+          "Оставь запас нервной ёмкости на остальной день.",
+          "Если сомневаешься — сократи объём раньше, чем словишь каскад усталости.",
+        ], note.points),
+      };
+    }
+  }
+
+  if (pressure.level === "loaded") {
+    if (note.id === "recovery") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: note.tone === "rose" ? note.tone : "amber",
+        summary: appendSentence(note.summary, `День уже «${pressure.badge}», так что это окно лучше не дробить и не распылять.`),
+        detail: `${pressure.detail}. ${note.detail ?? "Чем плотнее день, тем ценнее одно честное quiet-окно."}`,
+      };
+    }
+
+    if (note.id === "load-fuel") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: note.tone === "rose" ? note.tone : "amber",
+        summary: appendSentence(note.summary, `На плотном дне особенно важен чёткий stop после нагрузки, чтобы не раздувать хвост.`),
+        detail: `${pressure.detail}. ${note.detail ?? "Плотный день хуже переносит лишние героические 30–60 минут."}`,
+      };
+    }
+
+    if (note.id === "base-stack") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: note.tone === "rose" ? note.tone : "amber",
+        summary: appendSentence(note.summary, `Плотный день любит простую базу без хвоста, а не длинный ritual list.`),
+        detail: `${pressure.detail}. ${note.detail ?? "Смысл — быстро закрыть floor и не возвращаться к теме ещё пять раз."}`,
+      };
+    }
+
+    if (note.id === "strength-base") {
+      return {
+        ...note,
+        pressureLabel: pressure.badge,
+        tone: note.tone === "rose" ? note.tone : "amber",
+        summary: appendSentence(note.summary, `Плотный день — аргумент за технику и короткий формат, а не за лишний объём.`),
+        detail: `${pressure.detail}. ${note.detail ?? "Оставь себе ресурс на следующие окна."}`,
+      };
+    }
+  }
+
+  if (pressure.level === "calm") {
+    if (note.id === "base-stack" && (pressure.badge === "под задачу" || pressure.badge === "окно" || pressure.badge === "ровно")) {
+      return {
+        ...note,
+        summary: appendSentence(note.summary, "День ещё достаточно гибкий, так что базу можно закрыть одним чистым ходом без спешки и каскада напоминаний."),
+      };
+    }
+
+    if (note.id === "strength-base" && (pressure.badge === "под задачу" || pressure.badge === "окно" || pressure.badge === "ровно")) {
+      return {
+        ...note,
+        summary: appendSentence(note.summary, "Фон дня ещё позволяет сделать техничный слот без эффекта домино на всё остальное расписание."),
       };
     }
   }
@@ -796,5 +956,8 @@ export function getCalendarSlotSupportNote(
     note = buildBaseStackNote(dayModeId, dayPart);
   }
 
-  return note ? applySequenceContext(note, slot, context) : null;
+  if (!note) return null;
+
+  const sequenceAwareNote = applySequenceContext(note, slot, context);
+  return applyPressureContext(sequenceAwareNote, context);
 }

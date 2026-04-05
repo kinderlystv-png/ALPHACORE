@@ -620,7 +620,7 @@ function getDesktopSlotHintContent(params: {
 function toSupportDesktopHintContent(
   note: CalendarSlotSupportNote,
 ): DesktopSlotHintContent {
-  const eyebrow = [note.badge, note.timingLabel, note.sequenceLabel]
+  const eyebrow = [note.badge, note.timingLabel, note.sequenceLabel, note.pressureLabel]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
 
@@ -2262,6 +2262,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
                     dayModeId: heysDayMode?.id,
                     previousSlot: previousContextSlot,
                     nextSlot: nextContextSlot,
+                    pressure: col.pressure,
                   });
                   const supportHintKey = `${slotInstanceKey}:support`;
                   const supportHintContent = supportNote
