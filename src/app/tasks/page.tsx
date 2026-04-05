@@ -418,6 +418,18 @@ function toInputDateValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function quickDueButtonCls(isActive: boolean, size: "sm" | "md"): string {
+  if (size === "md") {
+    return isActive
+      ? "rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-xs font-medium text-amber-200 transition"
+      : "rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs font-medium text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
+  }
+
+  return isActive
+    ? "rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-200 transition"
+    : "rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[10px] font-medium text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
+}
+
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -505,8 +517,8 @@ export default function TasksPage() {
       .slice(0, 4);
   }, [getTaskProjectId, projects, tasks]);
 
-  const composerToday = useMemo(() => toInputDateValue(new Date()), []);
-  const composerTomorrow = useMemo(() => {
+  const todayDateValue = useMemo(() => toInputDateValue(new Date()), []);
+  const tomorrowDateValue = useMemo(() => {
     const next = new Date();
     next.setDate(next.getDate() + 1);
     return toInputDateValue(next);
@@ -759,26 +771,18 @@ export default function TasksPage() {
             <div className="flex w-full gap-2 lg:w-auto lg:shrink-0">
               <button
                 type="button"
-                onClick={() => setDueDate(composerToday)}
-                aria-pressed={dueDate === composerToday}
-                className={`rounded-xl border px-3 py-3 text-xs font-medium transition ${
-                  dueDate === composerToday
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-                    : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
-                }`}
+                onClick={() => setDueDate(todayDateValue)}
+                aria-pressed={dueDate === todayDateValue}
+                className={quickDueButtonCls(dueDate === todayDateValue, "md")}
               >
                 Сегодня
               </button>
 
               <button
                 type="button"
-                onClick={() => setDueDate(composerTomorrow)}
-                aria-pressed={dueDate === composerTomorrow}
-                className={`rounded-xl border px-3 py-3 text-xs font-medium transition ${
-                  dueDate === composerTomorrow
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-                    : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
-                }`}
+                onClick={() => setDueDate(tomorrowDateValue)}
+                aria-pressed={dueDate === tomorrowDateValue}
+                className={quickDueButtonCls(dueDate === tomorrowDateValue, "md")}
               >
                 Завтра
               </button>
@@ -967,12 +971,32 @@ export default function TasksPage() {
 
                               {task.status !== "done" && (
                                 <>
-                                  <input
-                                    type="date"
-                                    value={task.dueDate ?? ""}
-                                    onChange={(event) => handleSetDue(task.id, event.target.value)}
-                                    className="scheme-dark w-30 shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
-                                  />
+                                  <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 px-1 py-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetDue(task.id, todayDateValue)}
+                                      aria-pressed={task.dueDate === todayDateValue}
+                                      className={quickDueButtonCls(task.dueDate === todayDateValue, "sm")}
+                                    >
+                                      Сегодня
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetDue(task.id, tomorrowDateValue)}
+                                      aria-pressed={task.dueDate === tomorrowDateValue}
+                                      className={quickDueButtonCls(task.dueDate === tomorrowDateValue, "sm")}
+                                    >
+                                      Завтра
+                                    </button>
+
+                                    <input
+                                      type="date"
+                                      value={task.dueDate ?? ""}
+                                      onChange={(event) => handleSetDue(task.id, event.target.value)}
+                                      className="scheme-dark w-30 rounded-md border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
+                                    />
+                                  </div>
 
                                   <div className={showQuickProjects ? "min-w-0 flex-1" : showAssignedProjectTrigger ? "min-w-24 max-w-44 flex-1" : "min-w-34 max-w-52 flex-1"}>
                                     <ProjectSelectManager
