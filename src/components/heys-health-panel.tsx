@@ -2222,6 +2222,7 @@ export function HeysHealthPanel() {
   const { signals: h, snapshot, loading, error, lastSynced, refresh } = useHeysSync();
   const [selectedMetricKey, setSelectedMetricKey] = useState<MetricKey | null>(null);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
+  const [analysisExpanded, setAnalysisExpanded] = useState(false);
   const bundleContext = buildBundleContextProfile();
   const fallbackMetricKey = h ? getDefaultMetricKey(h) : "sleep";
   const previewDayMode = h
@@ -2851,6 +2852,44 @@ export function HeysHealthPanel() {
     snapshot.profile?.weightGoal,
   );
   const traceSummary = summarizeTraceImpact(traceItems);
+  const summaryReasons = [...new Set([...(intradaySignal?.reasons ?? []), ...dayMode.reasons])].slice(0, 3);
+  const topRescheduleHint = intradayRescheduleHints[0] ?? null;
+  const resolvedTopSlot = effectiveTopRecommendation === "slot"
+    ? resolveAutopilotSlot(topMetric.key, topActionPlan)
+    : null;
+  const summaryModeBadge = dayMode.preferBundle
+    ? "compound-first"
+    : dayMode.forceActionKind === "slot"
+      ? "windows-first"
+      : "execution-safe";
+  const summarySupportText = recommendedBundleLearning
+    ? `Опора: связка уже давала эффект ${recommendedBundleLearning.improved}/${recommendedBundleLearning.resolved} · ${getConfidenceLabel(recommendedBundleLearning.confidence)}.`
+    : topMetricLearning
+      ? `Опора: по ${getMetricLabel(topMetric.key).toLowerCase()} лучше заходят ${getActionKindLabel(topMetricLearning.actionKind)} — ${topMetricLearning.improved}/${topMetricLearning.resolved}.`
+      : "Опора: в основном текущий сигнал HEYS и календарный контекст — личной истории ещё мало.";
+  const summaryNextTitle = topRescheduleHint
+    ? topRescheduleHint.title
+    : shouldBiasToBundle && recommendedBundle
+      ? `Связка «${recommendedBundle.label}»`
+      : effectiveTopRecommendation === "slot"
+        ? resolvedTopSlot
+          ? `${topActionPlan.slot.title} · ${formatDateLabel(resolvedTopSlot.date)} ${resolvedTopSlot.start}`
+          : topActionPlan.slot.title
+        : topActionPlan.task.title;
+  const summaryNextDetail = topRescheduleHint
+    ? shortenLabel(topRescheduleHint.detail, 150)
+    : shouldBiasToBundle && recommendedBundle
+      ? shortenLabel(recommendedBundle.summary, 150)
+      : effectiveTopRecommendation === "slot"
+        ? resolvedTopSlot
+          ? `Автопилот уже нашёл тихое окно и не будет пихать ещё один случайный слот.`
+          : `Автопилот подберёт ближайшее окно с минимальным конфликтом по нагрузке.`
+        : `Автопилот поставит одну конкретную задачу вместо длинного разбора.`;
+
+  function handleSelectMetric(metricKey: MetricKey): void {
+    setSelectedMetricKey(metricKey);
+    setAnalysisExpanded(true);
+  }
 
   function ensureTaskFromPlan(
     plan: MetricActionPlan,
@@ -3011,6 +3050,7 @@ export function HeysHealthPanel() {
   function handleTraceItemFocus(metricKey: MetricKey | null): void {
     if (!metricKey) return;
     setSelectedMetricKey(metricKey);
+    setAnalysisExpanded(true);
   }
 
   function handleApplyIntradayHint(hint: IntradayRescheduleHint): void {
@@ -3188,6 +3228,103 @@ export function HeysHealthPanel() {
       <div className={`mb-3 rounded-xl border px-3 py-3 ${actionToneClass}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">HEYS · кратко</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h4 className="text-sm font-semibold text-zinc-100">{dayMode.label}</h4>
+              <span className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(dayMode.tone)}`}>
+                фокус: {getMetricEmoji(topMetric.key)} {getMetricLabel(topMetric.key)}
+              </span>
+              <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-400">
+                {summaryModeBadge}
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-zinc-100">{shortenLabel(actionState.detail, 170)}</p>
+            <div className="mt-3 grid gap-2 lg:grid-cols-3">
+              <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/25 p-3">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Сейчас</p>
+                <p className="mt-1 text-sm font-medium text-zinc-100">{actionState.title}</p>
+                <p className="mt-1 text-[12px] leading-5 text-zinc-400">{shortenLabel(dayMode.summary, 110)}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/25 p-3">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Почему</p>
+                <p className="mt-1 text-sm font-medium text-zinc-100">
+                  {summaryReasons.length > 0 ? summaryReasons.join(" · ") : "Сигнал пока без жёстких флагов"}
+                </p>
+                <p className="mt-1 text-[12px] leading-5 text-zinc-400">{shortenLabel(summarySupportText, 130)}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/25 p-3">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Следующий ход</p>
+                <p className="mt-1 text-sm font-medium text-zinc-100">{summaryNextTitle}</p>
+                <p className="mt-1 text-[12px] leading-5 text-zinc-400">{summaryNextDetail}</p>
+              </div>
+            </div>
+            {summaryReasons.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {summaryReasons.map((reason) => (
+                  <span
+                    key={reason}
+                    className={`rounded-full border px-2 py-1 text-[10px] ${toneBadgeClass(dayMode.tone)}`}
+                  >
+                    {reason}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex max-w-sm flex-col items-start gap-2">
+            <button
+              type="button"
+              onClick={handleApplyRecommendation}
+              className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                actionState.tone === "critical"
+                  ? "border-rose-400/35 bg-rose-500/15 text-rose-100 hover:border-rose-300/60"
+                  : actionState.tone === "watch"
+                    ? "border-amber-400/35 bg-amber-500/15 text-amber-100 hover:border-amber-300/60"
+                    : "border-emerald-400/35 bg-emerald-500/15 text-emerald-100 hover:border-emerald-300/60"
+              }`}
+            >
+              ✨ Применить рекомендацию
+            </button>
+            {recommendedBundle && (
+              <button
+                type="button"
+                onClick={() => handleApplyCompoundBundle(recommendedBundle)}
+                className="rounded-lg border border-sky-400/25 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:border-sky-300/50"
+              >
+                🧩 Применить связку
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setAnalysisExpanded((current) => !current)}
+              className="rounded-lg border border-zinc-700 bg-zinc-900/50 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-zinc-600 hover:text-zinc-50"
+            >
+              {analysisExpanded ? "Свернуть анализ" : "Развернуть анализ"}
+            </button>
+            <p className="text-[11px] leading-5 text-zinc-400">
+              Здесь оставлен только вывод, причины и ближайший ход; длинный разбор открывается по кнопке.
+            </p>
+            {actionFeedback && (
+              <span
+                className={`inline-flex rounded-full border px-2 py-1 text-[10px] ${
+                  actionFeedback.tone === "success"
+                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                    : "border-zinc-700 bg-zinc-900/50 text-zinc-300"
+                }`}
+              >
+                {actionFeedback.text}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {analysisExpanded && (
+        <>
+      <div className={`mb-3 rounded-xl border px-3 py-3 ${actionToneClass}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <p className={`text-[10px] uppercase tracking-[0.18em] ${actionTextClass}`}>
               {actionState.title}
             </p>
@@ -3258,17 +3395,6 @@ export function HeysHealthPanel() {
                   ? ` Почему сейчас: ${recommendedBundleChoice.reasons.join(" · ")}.`
                   : ""}
               </p>
-            )}
-            {actionFeedback && (
-              <span
-                className={`inline-flex rounded-full border px-2 py-1 text-[10px] ${
-                  actionFeedback.tone === "success"
-                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
-                    : "border-zinc-700 bg-zinc-900/50 text-zinc-300"
-                }`}
-              >
-                {actionFeedback.text}
-              </span>
             )}
           </div>
         </div>
@@ -3491,6 +3617,8 @@ export function HeysHealthPanel() {
           </div>
         </div>
       )}
+        </>
+      )}
 
       {/* Metrics grid */}
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -3507,7 +3635,7 @@ export function HeysHealthPanel() {
             goal={metric.goal}
             status={metric.status}
             active={selectedMetric.key === metric.key}
-            onClick={() => setSelectedMetricKey(metric.key)}
+            onClick={() => handleSelectMetric(metric.key)}
           />
         ))}
       </div>
@@ -3516,7 +3644,7 @@ export function HeysHealthPanel() {
       {h.stressAvg != null && (
         <button
           type="button"
-          onClick={() => setSelectedMetricKey("stress")}
+          onClick={() => handleSelectMetric("stress")}
           className={`mt-2 flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition ${
             selectedMetric.key === "stress"
               ? "border-zinc-600 bg-zinc-900/50 ring-1 ring-sky-400/15"
@@ -3534,6 +3662,8 @@ export function HeysHealthPanel() {
         </button>
       )}
 
+      {analysisExpanded && (
+        <>
       {correlationInsights.length > 0 && (
         <div className="mt-3 rounded-2xl border border-zinc-800/60 bg-zinc-900/20 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3553,7 +3683,7 @@ export function HeysHealthPanel() {
               <button
                 key={insight.id}
                 type="button"
-                onClick={() => setSelectedMetricKey(insight.metricKey)}
+                onClick={() => handleSelectMetric(insight.metricKey)}
                 className={`rounded-xl border p-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900/40 ${toneCardClass(insight.tone)}`}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -3591,7 +3721,7 @@ export function HeysHealthPanel() {
               <button
                 key={stat.id}
                 type="button"
-                onClick={() => setSelectedMetricKey(stat.metricKey)}
+                onClick={() => handleSelectMetric(stat.metricKey)}
                 className="rounded-xl border border-zinc-800/60 bg-zinc-950/30 p-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900/40"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -3818,6 +3948,8 @@ export function HeysHealthPanel() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }
