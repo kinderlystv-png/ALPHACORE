@@ -279,6 +279,7 @@ export function Pomodoro() {
         <button
           type="button"
           onClick={() => reset("focus")}
+          aria-label="Сбросить таймер"
           className="rounded-xl border border-zinc-800 px-4 py-2.5 text-sm text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
         >
           ↺

@@ -28,7 +28,17 @@ export async function GET(request: NextRequest) {
   try {
     const mode = request.nextUrl.searchParams.get("mode");
     const cloudSnapshot = await getCloudSnapshot();
-    const raw = extractRawData(cloudSnapshot.items);
+
+    let raw;
+    try {
+      raw = extractRawData(cloudSnapshot.items);
+    } catch (extractError) {
+      console.error("[ALPHACORE] extractRawData failed:", extractError);
+      return noStoreJson(
+        { error: "data_extraction_failed", message: extractError instanceof Error ? extractError.message : "Unknown" },
+        { status: 500 },
+      );
+    }
 
     // Fetch HEYS health signals (best-effort — don't block snapshot on failure)
     let heysSignals = null;
@@ -39,7 +49,16 @@ export async function GET(request: NextRequest) {
       // HEYS unavailable — continue with ALPHACORE-only data
     }
 
-    const snapshot = getServerSnapshot(raw, heysSignals);
+    let snapshot;
+    try {
+      snapshot = getServerSnapshot(raw, heysSignals);
+    } catch (snapshotError) {
+      console.error("[ALPHACORE] getServerSnapshot failed:", snapshotError);
+      return noStoreJson(
+        { error: "snapshot_build_failed", message: snapshotError instanceof Error ? snapshotError.message : "Unknown" },
+        { status: 500 },
+      );
+    }
 
     if (mode === "brief") {
       return noStoreJson({ ...snapshot, brief: generateMorningBrief(snapshot), heysSignals });

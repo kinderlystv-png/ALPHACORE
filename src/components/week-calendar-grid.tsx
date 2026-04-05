@@ -1928,6 +1928,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           <button
             type="button"
             onClick={() => shiftWeek(-1)}
+            aria-label="Предыдущая неделя"
             className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
           >
             ←
@@ -1942,6 +1943,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           <button
             type="button"
             onClick={() => shiftWeek(1)}
+            aria-label="Следующая неделя"
             className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
           >
             →

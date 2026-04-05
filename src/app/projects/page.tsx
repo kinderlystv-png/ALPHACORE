@@ -59,8 +59,8 @@ type ProjectDraft = {
 };
 
 type EditorState =
-  | { mode: "create"; draft: ProjectDraft }
-  | { mode: "edit"; projectId: string; draft: ProjectDraft }
+  | { mode: "create"; draft: ProjectDraft; isDirty: boolean }
+  | { mode: "edit"; projectId: string; draft: ProjectDraft; isDirty: boolean }
   | null;
 
 function rowId(): string {
@@ -374,6 +374,16 @@ function ProjectsPageContent() {
     if (requestedOpen) setOpenId(requestedOpen);
   }, [searchParams]);
 
+  // Warn on browser close with unsaved editor changes
+  useEffect(() => {
+    if (!editor?.isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [editor?.isDirty]);
+
   const attentionCount = useMemo(() => attentionProjects(projects).length, [projects]);
 
   const handleSaveEditor = useCallback(() => {
@@ -409,7 +419,7 @@ function ProjectsPageContent() {
           </div>
           <button
             type="button"
-            onClick={() => setEditor({ mode: "create", draft: createDraft() })}
+            onClick={() => setEditor({ mode: "create", draft: createDraft(), isDirty: false })}
             className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
           >
             + Проект
@@ -419,9 +429,12 @@ function ProjectsPageContent() {
         {editor && (
           <ProjectEditor
             state={editor}
-            onChange={(draft) => setEditor((prev) => (prev ? { ...prev, draft } : prev))}
+            onChange={(draft) => setEditor((prev) => (prev ? { ...prev, draft, isDirty: true } : prev))}
             onSave={handleSaveEditor}
-            onCancel={() => setEditor(null)}
+            onCancel={() => {
+              if (editor.isDirty && !window.confirm("Есть несохранённые изменения. Закрыть без сохранения?")) return;
+              setEditor(null);
+            }}
           />
         )}
 
@@ -517,7 +530,7 @@ function ProjectsPageContent() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project) })}
+                      onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project), isDirty: false })}
                       className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
                     >
                       ✎
@@ -585,7 +598,7 @@ function ProjectsPageContent() {
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project) })}
+                        onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project), isDirty: false })}
                         className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
                       >
                         Редактировать

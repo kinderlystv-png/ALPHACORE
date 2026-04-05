@@ -8,6 +8,7 @@ import {
   upsertCloudItems,
 } from "@/lib/cloud-store-server";
 import { MAX_PAYLOAD_BYTES } from "@/lib/validation";
+import { checkRateLimit, getRateLimitKey } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +47,18 @@ class PayloadTooLargeError extends Error {
   }
 }
 
+function applyRateLimit(request: NextRequest): Response | null {
+  const key = getRateLimitKey(request.headers);
+  const result = checkRateLimit(key, { windowMs: 60_000, maxRequests: 120 });
+  if (!result.allowed) {
+    return noStoreJson(
+      { error: "rate_limited", retryAfterMs: result.retryAfterMs },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)) } },
+    ) as unknown as Response;
+  }
+  return null;
+}
+
 export async function GET() {
   try {
     return noStoreJson(await getCloudSnapshot());
@@ -58,6 +71,8 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  const rateLimited = applyRateLimit(request);
+  if (rateLimited) return rateLimited;
   try {
     const body = await safeJsonBody(request);
     const obj = body as Record<string, unknown> | null;
@@ -80,6 +95,8 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimited = applyRateLimit(request);
+  if (rateLimited) return rateLimited;
   try {
     const body = await safeJsonBody(request);
     const obj = body as Record<string, unknown> | null;
@@ -107,6 +124,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const rateLimited = applyRateLimit(request);
+  if (rateLimited) return rateLimited;
   try {
     let key = parseStorageKey(request.nextUrl.searchParams.get("key"));
 
