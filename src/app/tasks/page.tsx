@@ -330,7 +330,7 @@ function QuickProjectFilterBar({
             aria-expanded={showAll}
             className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
           >
-            {showAll ? "Скрыть список" : "Показать все"}
+            {showAll ? "Скрыть список" : "Все"}
           </button>
         )}
       </div>
@@ -853,125 +853,130 @@ export default function TasksPage() {
                 </div>
 
                 <div className="mt-3 space-y-2">
-                  {group.tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className={`flex items-start gap-3 rounded-2xl border px-4 py-3 transition ${
-                        task.status === "done"
-                          ? "border-zinc-800/50 bg-zinc-950/20"
-                          : "border-zinc-800/70 bg-zinc-950/35"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleToggle(task.id)}
-                        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
+                  {group.tasks.map((task) => {
+                    const badge = dueBadge(task.dueDate);
+                    const focus = getTaskFocusTotal(task);
+
+                    return (
+                      <div
+                        key={task.id}
+                        className={`flex items-start gap-3 rounded-2xl border px-4 py-3 transition ${
                           task.status === "done"
-                            ? "border-emerald-400 bg-emerald-400 text-zinc-950"
-                            : "border-zinc-600 hover:border-zinc-400"
+                            ? "border-zinc-800/50 bg-zinc-950/20"
+                            : "border-zinc-800/70 bg-zinc-950/35"
                         }`}
                       >
-                        {task.status === "done" && (
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                            <path
-                              d="M2 6L5 9L10 3"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        )}
-                      </button>
-
-                      <div className="min-w-0 flex-1">
-                        <p
-                          className={`text-sm ${
-                            task.status === "done"
-                              ? "text-zinc-500 line-through"
-                              : "text-zinc-100"
-                          }`}
-                        >
-                          {task.title}
-                        </p>
-
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          <span
-                            className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${PRIO_CLS[task.priority]}`}
-                          >
-                            {task.priority.toUpperCase()}
-                          </span>
-                          <span
-                            className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[task.status]}`}
-                          >
-                            {task.status}
-                          </span>
-                          {(() => {
-                            const badge = dueBadge(task.dueDate);
-                            return badge ? (
-                              <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>
-                                📅 {badge.label}
-                              </span>
-                            ) : null;
-                          })()}
-                          {(() => {
-                            const focus = getTaskFocusTotal(task);
-                            return focus.sessions > 0 ? (
-                              <span className="rounded-md border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
-                                🍅 {focus.sessions} · {focus.minutes}м
-                              </span>
-                            ) : null;
-                          })()}
-                        </div>
-
-                        {task.status !== "done" && (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <input
-                              type="date"
-                              value={task.dueDate ?? ""}
-                              onChange={(event) => handleSetDue(task.id, event.target.value)}
-                              className="scheme-dark rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
-                            />
-                            <ProjectSelectManager
-                              value={getTaskProjectId(task)}
-                              projects={projects}
-                              onChange={(projectId) => handleSetProject(task.id, projectId)}
-                              onProjectsMutate={() => reload()}
-                              creationContextLabel="редактирования задачи"
-                              suggestedAccent="violet"
-                              size="sm"
-                            />
-                            <PrioritySwitch
-                              value={task.priority}
-                              onChange={(priority) => handleSetPriority(task.id, priority)}
-                              size="sm"
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex shrink-0 gap-1">
-                        {task.status === "inbox" && (
-                          <button
-                            type="button"
-                            onClick={() => handleActivate(task.id)}
-                            className="rounded-lg border border-emerald-500/20 px-2 py-1 text-[10px] text-emerald-400 transition hover:bg-emerald-500/10"
-                            title="В работу"
-                          >
-                            ▶
-                          </button>
-                        )}
                         <button
                           type="button"
-                          onClick={() => handleDelete(task.id)}
-                          className="rounded-lg border border-rose-500/20 px-2 py-1 text-[10px] text-rose-400 transition hover:bg-rose-500/10"
-                          title="Удалить"
+                          onClick={() => handleToggle(task.id)}
+                          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
+                            task.status === "done"
+                              ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                              : "border-zinc-600 hover:border-zinc-400"
+                          }`}
                         >
-                          ✕
+                          {task.status === "done" && (
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path
+                                d="M2 6L5 9L10 3"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          )}
                         </button>
+
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className={`truncate text-sm ${
+                              task.status === "done"
+                                ? "text-zinc-500 line-through"
+                                : "text-zinc-100"
+                            }`}
+                            title={task.title}
+                          >
+                            {task.title}
+                          </p>
+
+                          <div className="mt-2 flex min-w-0 items-center gap-2">
+                            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                              <span
+                                className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[task.status]}`}
+                              >
+                                {task.status}
+                              </span>
+
+                              {badge && (
+                                <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>
+                                  📅 {badge.label}
+                                </span>
+                              )}
+
+                              {focus.sessions > 0 && (
+                                <span className="shrink-0 rounded-md border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                                  🍅 {focus.sessions} · {focus.minutes}м
+                                </span>
+                              )}
+
+                              {task.status !== "done" && (
+                                <>
+                                  <input
+                                    type="date"
+                                    value={task.dueDate ?? ""}
+                                    onChange={(event) => handleSetDue(task.id, event.target.value)}
+                                    className="scheme-dark w-30 shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-[10px] text-zinc-500 outline-none"
+                                  />
+
+                                  <div className="min-w-34 max-w-52 flex-1">
+                                    <ProjectSelectManager
+                                      value={getTaskProjectId(task)}
+                                      projects={projects}
+                                      onChange={(projectId) => handleSetProject(task.id, projectId)}
+                                      onProjectsMutate={() => reload()}
+                                      creationContextLabel="редактирования задачи"
+                                      suggestedAccent="violet"
+                                      size="sm"
+                                    />
+                                  </div>
+
+                                  <div className="shrink-0">
+                                    <PrioritySwitch
+                                      value={task.priority}
+                                      onChange={(priority) => handleSetPriority(task.id, priority)}
+                                      size="sm"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-1">
+                              {task.status === "inbox" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleActivate(task.id)}
+                                  className="rounded-lg border border-emerald-500/20 px-2 py-1 text-[10px] text-emerald-400 transition hover:bg-emerald-500/10"
+                                  title="В работу"
+                                >
+                                  ▶
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(task.id)}
+                                className="rounded-lg border border-rose-500/20 px-2 py-1 text-[10px] text-rose-400 transition hover:bg-rose-500/10"
+                                title="Удалить"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             );
