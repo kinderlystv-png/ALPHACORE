@@ -16,6 +16,9 @@ import {
   attentionProjects,
   cycleProjectStatus,
   deleteProject,
+  getChildProjects,
+  getProjectDisplayName,
+  getProjectRootId,
   getProjects,
   moveProject,
   projectProgress,
@@ -106,6 +109,160 @@ function toInput(draft: ProjectDraft): ProjectInput {
   };
 }
 
+function pluralizeSubprojects(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+
+  if (mod10 === 1 && mod100 !== 11) return "подпроект";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "подпроекта";
+  return "подпроектов";
+}
+
+function buildDeletePrompt(project: Project, directChildrenCount: number): string {
+  if (directChildrenCount === 0) {
+    return `Удалить проект «${project.name}»?`;
+  }
+
+  return `Удалить проект «${project.name}»? ${directChildrenCount} ${pluralizeSubprojects(directChildrenCount)} не пропадут: они поднимутся на уровень выше.`;
+}
+
+function SubprojectTree({
+  parentId,
+  projects,
+  highlightedId,
+  depth = 1,
+  onEdit,
+  onDelete,
+}: {
+  parentId: string;
+  projects: Project[];
+  highlightedId: string | null;
+  depth?: number;
+  onEdit: (project: Project) => void;
+  onDelete: (project: Project, directChildrenCount: number) => void;
+}) {
+  const children = getChildProjects(parentId, projects);
+
+  if (children.length === 0) return null;
+
+  return (
+    <div className={depth === 1 ? "space-y-3" : "mt-3 space-y-3 border-l border-zinc-800/70 pl-4"}>
+      {children.map((project) => {
+        const pct = projectProgress(project);
+        const displayName = getProjectDisplayName(project, projects);
+        const nestedChildren = getChildProjects(project.id, projects);
+        const isHighlighted = highlightedId === project.id;
+
+        return (
+          <article
+            key={project.id}
+            className={`rounded-2xl border p-4 shadow-lg shadow-black/10 ${PROJECT_ACCENT_CLS[project.accent]} ${
+              isHighlighted ? "ring-1 ring-sky-400/40" : ""
+            }`}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                  {depth === 1 ? "Подпроект" : `Уровень ${depth + 1}`}
+                </p>
+                <h3 className="mt-1 text-sm font-semibold text-zinc-100">{project.name}</h3>
+                <p className="mt-1 text-xs text-zinc-500">{displayName}</p>
+                <p className="mt-2 text-xs text-zinc-400">{project.description}</p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                  {pct}%
+                </span>
+                {nestedChildren.length > 0 && (
+                  <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                    {nestedChildren.length} {pluralizeSubprojects(nestedChildren.length)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => cycleProjectStatus(project.id)}
+                  className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500"
+                >
+                  <span className={`h-2 w-2 rounded-full ${STATUS_DOT[project.status]}`} />
+                  {STATUS_LABEL[project.status]}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onEdit(project)}
+                  className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(project, nestedChildren.length)}
+                  className="rounded-full border border-rose-500/20 px-2 py-1 text-[10px] text-rose-300 transition hover:bg-rose-500/10"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 h-1.5 rounded-full bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-emerald-400 transition-all duration-500"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+
+            {project.deliverables.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                {project.deliverables.slice(0, 3).map((item) => (
+                  <div
+                    key={item.id}
+                    className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
+                      item.done
+                        ? "border-emerald-500/20 bg-emerald-500/5 text-zinc-500"
+                        : "border-zinc-800/60 bg-zinc-900/20 text-zinc-300"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                        item.done ? "border-emerald-400 bg-emerald-400 text-zinc-950" : "border-zinc-700"
+                      }`}
+                    >
+                      {item.done ? "✓" : ""}
+                    </span>
+                    <span className={item.done ? "line-through" : ""}>{item.text}</span>
+                  </div>
+                ))}
+
+                {project.deliverables.length > 3 && (
+                  <p className="text-[11px] text-zinc-500">
+                    Ещё {project.deliverables.length - 3} пунктов внутри подпроекта.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="mt-3 rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3">
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Следующий шаг</p>
+              <p className="mt-1.5 text-sm font-medium text-zinc-200">
+                {project.nextStep || "Зафиксировать следующий шаг"}
+              </p>
+            </div>
+
+            <SubprojectTree
+              parentId={project.id}
+              projects={projects}
+              highlightedId={highlightedId}
+              depth={depth + 1}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function ProjectEditor({
   state,
   onChange,
@@ -142,7 +299,7 @@ function ProjectEditor({
   );
 
   return (
-    <section className="rounded-[2rem] border border-zinc-800 bg-zinc-900/40 p-5 shadow-2xl shadow-black/20">
+    <section className="rounded-4xl border border-zinc-800 bg-zinc-900/40 p-5 shadow-2xl shadow-black/20">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-zinc-50">
@@ -384,7 +541,16 @@ function ProjectsPageContent() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [editor?.isDirty]);
 
+  const topLevelProjects = useMemo(
+    () => projects.filter((project) => !project.parentProjectId),
+    [projects],
+  );
+  const subprojectCount = projects.length - topLevelProjects.length;
   const attentionCount = useMemo(() => attentionProjects(projects).length, [projects]);
+  const openRootId = useMemo(
+    () => (openId ? getProjectRootId(openId, projects) : null),
+    [openId, projects],
+  );
 
   const handleSaveEditor = useCallback(() => {
     if (!editor) return;
@@ -407,6 +573,27 @@ function ProjectsPageContent() {
     [reload],
   );
 
+  const handleEditProject = useCallback((project: Project) => {
+    setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project), isDirty: false });
+  }, []);
+
+  const handleDeleteProject = useCallback(
+    (project: Project, directChildrenCount: number) => {
+      if (!window.confirm(buildDeletePrompt(project, directChildrenCount))) return;
+
+      deleteProject(project.id);
+
+      if (openId === project.id) {
+        setOpenId(project.parentProjectId ?? null);
+      } else if (openRootId === project.id) {
+        setOpenId(null);
+      }
+
+      reload();
+    },
+    [openId, openRootId, reload],
+  );
+
   return (
     <AppShell>
       <div className="space-y-5 py-2">
@@ -414,7 +601,7 @@ function ProjectsPageContent() {
           <div>
             <h1 className="text-2xl font-bold">📁 Проекты</h1>
             <p className="mt-1 text-sm text-zinc-500">
-              {projects.length} проектов · {attentionCount} требуют внимания
+              {topLevelProjects.length} проектов · {subprojectCount} подпроектов · {attentionCount} требуют внимания
             </p>
           </div>
           <button
@@ -439,15 +626,16 @@ function ProjectsPageContent() {
         )}
 
         <div className="space-y-4">
-          {projects.length === 0 && (
-            <div className="rounded-[2rem] border border-zinc-800 bg-zinc-900/30 p-8 text-center">
+          {topLevelProjects.length === 0 && (
+            <div className="rounded-4xl border border-zinc-800 bg-zinc-900/30 p-8 text-center">
               <p className="text-sm text-zinc-500">Проектов пока нет</p>
             </div>
           )}
 
-          {projects.map((project, index) => {
-            const isOpen = openId === project.id;
+          {topLevelProjects.map((project, index) => {
+            const isOpen = openRootId === project.id;
             const pct = projectProgress(project);
+            const childProjects = getChildProjects(project.id, projects);
 
             return (
               <article
@@ -459,7 +647,7 @@ function ProjectsPageContent() {
                   }
                   setDraggedId(null);
                 }}
-                className={`rounded-[2rem] border p-5 shadow-2xl shadow-black/20 ${PROJECT_ACCENT_CLS[project.accent]} ${
+                className={`rounded-4xl border p-5 shadow-2xl shadow-black/20 ${PROJECT_ACCENT_CLS[project.accent]} ${
                   draggedId === project.id ? "opacity-60" : "opacity-100"
                 }`}
               >
@@ -475,6 +663,11 @@ function ProjectsPageContent() {
                         <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
                           {project.kpis.length} KPI
                         </span>
+                        {childProjects.length > 0 && (
+                          <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                            {childProjects.length} {pluralizeSubprojects(childProjects.length)}
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1 line-clamp-2 text-sm text-zinc-400">{project.description}</p>
                     </div>
@@ -514,7 +707,7 @@ function ProjectsPageContent() {
                         moveProject(project.id, 1);
                         reload();
                       }}
-                      disabled={index === projects.length - 1}
+                      disabled={index === topLevelProjects.length - 1}
                       className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
                       title="Опустить ниже"
                     >
@@ -530,7 +723,7 @@ function ProjectsPageContent() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project), isDirty: false })}
+                      onClick={() => handleEditProject(project)}
                       className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
                     >
                       ✎
@@ -547,6 +740,25 @@ function ProjectsPageContent() {
 
                 {isOpen && (
                   <div className="mt-5 space-y-4">
+                    {childProjects.length > 0 && (
+                      <section>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <p className="text-[11px] uppercase tracking-widest text-zinc-500">Подпроекты</p>
+                          <span className="text-[10px] text-zinc-500">
+                            {childProjects.length} {pluralizeSubprojects(childProjects.length)}
+                          </span>
+                        </div>
+
+                        <SubprojectTree
+                          parentId={project.id}
+                          projects={projects}
+                          highlightedId={openId}
+                          onEdit={handleEditProject}
+                          onDelete={handleDeleteProject}
+                        />
+                      </section>
+                    )}
+
                     <div className="grid gap-2 sm:grid-cols-3">
                       {project.kpis.map((kpi) => (
                         <div
@@ -598,19 +810,14 @@ function ProjectsPageContent() {
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() => setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project), isDirty: false })}
+                        onClick={() => handleEditProject(project)}
                         className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
                       >
                         Редактировать
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (!confirm(`Удалить проект «${project.name}»?`)) return;
-                          deleteProject(project.id);
-                          if (openId === project.id) setOpenId(null);
-                          reload();
-                        }}
+                        onClick={() => handleDeleteProject(project, childProjects.length)}
                         className="rounded-xl border border-rose-500/20 px-3 py-2 text-xs text-rose-300 transition hover:bg-rose-500/10"
                       >
                         Удалить

@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { ProjectSelectManager } from "@/components/project-select-manager";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import {
   PROJECT_ACCENT_CLS,
+  convertTaskToSubproject,
+  findProjectBySourceTaskId,
+  getProjectDisplayName,
   type Project,
   type ProjectAccent,
   getProjects,
@@ -14,6 +18,8 @@ import {
 import {
   addCompletedFactSlot,
   deleteTaskWithScheduledSlot,
+  getScheduledTaskSlot,
+  updateCustomEvent,
   type ScheduleTone,
 } from "@/lib/schedule";
 import { subscribeAppDataChange } from "@/lib/storage";
@@ -23,6 +29,7 @@ import {
   activateTask,
   addTask,
   compareTasksByAttention,
+  deleteTask,
   getTaskFocusTotal,
   getTasks,
   toggleDone,
@@ -255,6 +262,13 @@ function QuickProjectFilterBar({
   onChange,
 }: QuickProjectFilterBarProps) {
   const [showAll, setShowAll] = useState(false);
+  const projectLabelById = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [project.id, getProjectDisplayName(project, projects)]),
+      ),
+    [projects],
+  );
 
   const visibleQuickProjects = useMemo(() => {
     const seen = new Set<string>();
@@ -307,6 +321,7 @@ function QuickProjectFilterBar({
 
         {visibleQuickProjects.map((project) => {
           const isActive = value === project.id;
+          const label = projectLabelById.get(project.id) ?? project.name;
 
           return (
             <button
@@ -314,6 +329,7 @@ function QuickProjectFilterBar({
               type="button"
               onClick={() => onChange(project.id)}
               aria-pressed={isActive}
+              title={label}
               className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
                 isActive
                   ? "border-zinc-100 bg-zinc-100 text-zinc-950"
@@ -321,7 +337,7 @@ function QuickProjectFilterBar({
               }`}
             >
               <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
-              <span className="truncate">{project.name}</span>
+              <span className="truncate">{label}</span>
             </button>
           );
         })}
@@ -342,6 +358,7 @@ function QuickProjectFilterBar({
         <div className="flex flex-wrap gap-2 rounded-2xl border border-zinc-800/70 bg-zinc-950/30 p-2.5">
           {projects.map((project) => {
             const isActive = value === project.id;
+            const label = projectLabelById.get(project.id) ?? project.name;
 
             return (
               <button
@@ -352,6 +369,7 @@ function QuickProjectFilterBar({
                   setShowAll(false);
                 }}
                 aria-pressed={isActive}
+                title={label}
                 className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
                   isActive
                     ? "border-zinc-100 bg-zinc-100 text-zinc-950"
@@ -359,7 +377,7 @@ function QuickProjectFilterBar({
                 }`}
               >
                 <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
-                <span className="truncate">{project.name}</span>
+                <span className="truncate">{label}</span>
               </button>
             );
           })}
@@ -434,6 +452,7 @@ function quickDueButtonCls(isActive: boolean, size: "sm" | "md"): string {
 }
 
 export default function TasksPage() {
+  const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [filter, setFilter] = useState<TaskStatus | "all">("all");
@@ -465,15 +484,33 @@ export default function TasksPage() {
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects],
   );
+  const projectDisplayNameById = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [project.id, getProjectDisplayName(project, projects)]),
+      ),
+    [projects],
+  );
+  const subprojectBySourceTaskId = useMemo(() => {
+    const map = new Map<string, Project>();
+
+    for (const project of projects) {
+      if (project.sourceTaskId) {
+        map.set(project.sourceTaskId, project);
+      }
+    }
+
+    return map;
+  }, [projects]);
 
   const getTaskProjectLabel = useCallback(
     (task: Task) => {
       if (task.projectId) {
-        return projectNameById.get(task.projectId) ?? task.project;
+        return projectDisplayNameById.get(task.projectId) ?? projectNameById.get(task.projectId) ?? task.project;
       }
       return task.project;
     },
-    [projectNameById],
+    [projectDisplayNameById, projectNameById],
   );
 
   const getTaskProjectId = useCallback(
@@ -535,9 +572,13 @@ export default function TasksPage() {
       const label = getTaskProjectLabel(task);
       if (projectFilter === "all") return true;
       if (projectFilter === "none") return !label;
-      return task.projectId === projectFilter || label === projectNameById.get(projectFilter);
+      return (
+        task.projectId === projectFilter ||
+        label === projectDisplayNameById.get(projectFilter) ||
+        label === projectNameById.get(projectFilter)
+      );
     },
-    [getTaskProjectLabel, projectFilter, projectNameById],
+    [getTaskProjectLabel, projectDisplayNameById, projectFilter, projectNameById],
   );
 
   const resetComposer = useCallback(() => {
@@ -626,6 +667,37 @@ export default function TasksPage() {
       reload();
     },
     [reload],
+  );
+
+  const handleConvertToSubproject = useCallback(
+    (task: Task) => {
+      const parentProjectId = getTaskProjectId(task);
+      if (!parentProjectId) return;
+
+      const created = convertTaskToSubproject({
+        task,
+        parentProjectId,
+      });
+
+      if (!created) return;
+
+      const linkedSlot = getScheduledTaskSlot(task.id);
+
+      if (linkedSlot) {
+        updateCustomEvent(linkedSlot.id, {
+          kind: "event",
+          taskId: null,
+          projectId: created.id,
+          project: created.name,
+        });
+      } else {
+        deleteTask(task.id);
+      }
+
+      reload();
+      router.push(`/projects?open=${created.id}`);
+    },
+    [getTaskProjectId, reload, router],
   );
 
   const visible = tasks.filter(
@@ -918,8 +990,10 @@ export default function TasksPage() {
                     const badge = dueBadge(task.dueDate);
                     const focus = getTaskFocusTotal(task);
                     const taskProjectId = getTaskProjectId(task);
+                    const taskSubproject = subprojectBySourceTaskId.get(task.id) ?? findProjectBySourceTaskId(task.id, projects);
                     const showQuickProjects = task.status !== "done" && !taskProjectId;
                     const showAssignedProjectTrigger = task.status !== "done" && !!taskProjectId;
+                    const canConvertToSubproject = task.status !== "done" && !!taskProjectId;
 
                     return (
                       <div
@@ -1049,6 +1123,16 @@ export default function TasksPage() {
                             </div>
 
                             <div className="flex shrink-0 items-center gap-1">
+                              {canConvertToSubproject && !taskSubproject && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleConvertToSubproject(task)}
+                                  className="rounded-lg border border-sky-500/20 px-2 py-1 text-[10px] text-sky-300 transition hover:bg-sky-500/10"
+                                  title="Превратить задачу в подпроект и открыть его на странице проектов"
+                                >
+                                  ↳📁
+                                </button>
+                              )}
                               {task.status === "inbox" && (
                                 <button
                                   type="button"

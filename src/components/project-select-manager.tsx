@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   addProject,
+  getProjectDisplayName,
+  isSubproject,
   updateProject,
   type Project,
   type ProjectAccent,
@@ -66,6 +68,13 @@ export function ProjectSelectManager({
     () => projects.find((project) => project.id === value) ?? null,
     [projects, value],
   );
+  const projectLabelById = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [project.id, getProjectDisplayName(project, projects)]),
+      ),
+    [projects],
+  );
   const visibleQuickProjects = useMemo(() => {
     if (!quickProjects?.length) return [];
 
@@ -85,6 +94,17 @@ export function ProjectSelectManager({
   const usesQuickProjects = visibleQuickProjects.length > 0;
   const usesCompactValueTrigger = compactValueOnly && !!selectedProject;
   const isOverlayOpen = mode !== null || showAllProjects;
+  const selectedProjectLabel = selectedProject
+    ? projectLabelById.get(selectedProject.id) ?? selectedProject.name
+    : noneLabel;
+
+  function getQuickProjectLabel(project: Project): string {
+    return isSubproject(project) ? `↳ ${project.name}` : project.name;
+  }
+
+  function getFullProjectLabel(project: Project): string {
+    return projectLabelById.get(project.id) ?? project.name;
+  }
 
   useEffect(() => {
     if (!mode) return;
@@ -245,7 +265,7 @@ export function ProjectSelectManager({
             {selectedProject && (
               <span className={`${quickProjectDotCls} shrink-0 rounded-full ${PROJECT_DOT_CLS[selectedProject.accent]}`} />
             )}
-            <span className="min-w-0 flex-1 truncate text-left">{selectedProject?.name ?? noneLabel}</span>
+            <span className="min-w-0 flex-1 truncate text-left">{selectedProjectLabel}</span>
             <span className="shrink-0 text-zinc-500">▾</span>
           </button>
         ) : usesQuickProjects ? (
@@ -259,7 +279,7 @@ export function ProjectSelectManager({
                   type="button"
                   onClick={() => onChange(isActive ? "" : project.id)}
                   aria-pressed={isActive}
-                  title={isActive ? `Снять проект ${project.name}` : `Выбрать проект ${project.name}`}
+                  title={isActive ? `Снять проект ${getFullProjectLabel(project)}` : `Выбрать проект ${getFullProjectLabel(project)}`}
                   className={`${quickProjectBtnCls} ${
                     isActive
                       ? "border-zinc-100 bg-zinc-100 text-zinc-950 shadow-[0_8px_24px_rgba(255,255,255,0.08)]"
@@ -267,7 +287,7 @@ export function ProjectSelectManager({
                   }`}
                 >
                   <span className={`${quickProjectDotCls} shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
-                  <span className="min-w-0 truncate">{project.name}</span>
+                  <span className="min-w-0 truncate">{getQuickProjectLabel(project)}</span>
                 </button>
               );
             })}
@@ -294,7 +314,7 @@ export function ProjectSelectManager({
             <option value="">{noneLabel}</option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
-                {project.name}
+                {getFullProjectLabel(project)}
               </option>
             ))}
           </select>
@@ -370,7 +390,7 @@ export function ProjectSelectManager({
                   }`}
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
-                  <span className="truncate">{project.name}</span>
+                  <span className="truncate">{getFullProjectLabel(project)}</span>
                 </button>
               );
             })}

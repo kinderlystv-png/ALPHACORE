@@ -1,4 +1,5 @@
 import { lsGet, lsSet, uid } from "./storage";
+import type { Task } from "./tasks";
 
 export type StatusTone = "green" | "yellow" | "red";
 export type ProjectAccent = "sky" | "orange" | "violet" | "teal" | "rose";
@@ -25,22 +26,56 @@ export type Project = {
   kpis: ProjectKpi[];
   deliverables: ProjectDeliverable[];
   nextStep: string;
+  parentProjectId?: string;
+  sourceTaskId?: string;
   createdAt: string;
   updatedAt: string;
 };
 
 export type ProjectInput = Pick<
   Project,
-  "name" | "description" | "status" | "accent" | "nextStep"
+  "name" | "description" | "status" | "accent" | "nextStep" | "parentProjectId" | "sourceTaskId"
 > & {
   kpis: Array<Pick<ProjectKpi, "label" | "value">>;
   deliverables: Array<Pick<ProjectDeliverable, "text" | "done">>;
 };
 
+export type TaskToSubprojectSource = Pick<
+  Task,
+  "id" | "title" | "dueDate" | "project" | "projectId"
+>;
+
 const KEY = "alphacore_projects";
 
+function normalizeName(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function sanitizeOptionalId(value?: string): string | undefined {
+  const next = value?.trim();
+  return next ? next : undefined;
+}
+
+function createProjectMap(projects: Project[]): Map<string, Project> {
+  return new Map(projects.map((project) => [project.id, project]));
+}
+
 function normalizeProjects(projects: Project[]): Project[] {
+  const projectById = createProjectMap(projects);
+
   return [...projects]
+    .map((project) => {
+      const parentProjectId = sanitizeOptionalId(project.parentProjectId);
+
+      return {
+        ...project,
+        parentProjectId:
+          parentProjectId && parentProjectId !== project.id && projectById.has(parentProjectId)
+            ? parentProjectId
+            : undefined,
+        sourceTaskId: sanitizeOptionalId(project.sourceTaskId),
+      };
+    })
     .sort((a, b) => {
       return (
         (a.order ?? Number.MAX_SAFE_INTEGER) -
@@ -56,6 +91,18 @@ function normalizeProjects(projects: Project[]): Project[] {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function formatShortDate(dateKey?: string): string | null {
+  if (!dateKey) return null;
+
+  const parsed = new Date(`${dateKey}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "short",
+  }).format(parsed);
 }
 
 function mapKpis(kpis: Array<Pick<ProjectKpi, "label" | "value">>): ProjectKpi[] {
@@ -78,6 +125,112 @@ function mapDeliverables(
       text: d.text.trim(),
       done: d.done,
     }));
+}
+
+function buildChildrenByParentId(projects: Project[]): Map<string, Project[]> {
+  const childrenByParentId = new Map<string, Project[]>();
+
+  for (const project of projects) {
+    if (!project.parentProjectId) continue;
+
+    const siblings = childrenByParentId.get(project.parentProjectId) ?? [];
+    siblings.push(project);
+    childrenByParentId.set(project.parentProjectId, siblings);
+  }
+
+  for (const children of childrenByParentId.values()) {
+    children.sort(
+      (left, right) =>
+        left.order - right.order || left.createdAt.localeCompare(right.createdAt),
+    );
+  }
+
+  return childrenByParentId;
+}
+
+function collectProjectTreeIds(projectId: string, projects: Project[]): Set<string> {
+  const childrenByParentId = buildChildrenByParentId(projects);
+  const ids = new Set<string>();
+
+  const visit = (currentId: string) => {
+    if (ids.has(currentId)) return;
+    ids.add(currentId);
+
+    for (const child of childrenByParentId.get(currentId) ?? []) {
+      visit(child.id);
+    }
+  };
+
+  visit(projectId);
+  return ids;
+}
+
+function moveProjectBlock(
+  projects: Project[],
+  activeId: string,
+  targetId: string,
+  placement: "before" | "after",
+): Project[] {
+  const activeProject = projects.find((project) => project.id === activeId);
+  const targetProject = projects.find((project) => project.id === targetId);
+
+  if (!activeProject || !targetProject) return projects;
+  if ((activeProject.parentProjectId ?? "") !== (targetProject.parentProjectId ?? "")) {
+    return projects;
+  }
+
+  const activeBlockIds = collectProjectTreeIds(activeId, projects);
+  if (activeBlockIds.has(targetId)) return projects;
+
+  const targetBlockIds = collectProjectTreeIds(targetId, projects);
+  const activeBlock = projects.filter((project) => activeBlockIds.has(project.id));
+  const remainder = projects.filter((project) => !activeBlockIds.has(project.id));
+
+  const insertIndex =
+    placement === "before"
+      ? remainder.findIndex((project) => project.id === targetId)
+      : (() => {
+          let lastTargetIndex = -1;
+
+          remainder.forEach((project, index) => {
+            if (targetBlockIds.has(project.id)) {
+              lastTargetIndex = index;
+            }
+          });
+
+          return lastTargetIndex >= 0 ? lastTargetIndex + 1 : -1;
+        })();
+
+  if (insertIndex < 0) return projects;
+
+  const next = [...remainder];
+  next.splice(insertIndex, 0, ...activeBlock);
+  return next;
+}
+
+function resolveParentProject(
+  task: TaskToSubprojectSource,
+  projects: Project[],
+  explicitParentProjectId?: string,
+): Project | null {
+  const projectById = createProjectMap(projects);
+
+  if (explicitParentProjectId) {
+    return projectById.get(explicitParentProjectId) ?? null;
+  }
+
+  if (task.projectId) {
+    return projectById.get(task.projectId) ?? null;
+  }
+
+  const normalizedTaskProject = normalizeName(task.project ?? "").toLowerCase();
+  if (!normalizedTaskProject) return null;
+
+  return (
+    projects.find(
+      (project) => normalizeName(project.name).toLowerCase() === normalizedTaskProject,
+    ) ?? null
+  );
 }
 
 const DEFAULT_PROJECTS: Project[] = [
@@ -165,6 +318,89 @@ export function getProjects(): Project[] {
   return normalizeProjects(lsGet<Project[]>(KEY, DEFAULT_PROJECTS));
 }
 
+export function getProjectById(
+  projectId: string,
+  projects: Project[] = getProjects(),
+): Project | null {
+  return projects.find((project) => project.id === projectId) ?? null;
+}
+
+export function isSubproject(project: Pick<Project, "parentProjectId">): boolean {
+  return Boolean(project.parentProjectId);
+}
+
+export function getProjectParent(
+  project: Pick<Project, "parentProjectId">,
+  projects: Project[] = getProjects(),
+): Project | null {
+  if (!project.parentProjectId) return null;
+  return getProjectById(project.parentProjectId, projects);
+}
+
+export function getProjectLineage(
+  project: Project,
+  projects: Project[] = getProjects(),
+): Project[] {
+  const projectById = createProjectMap(projects);
+  const lineage: Project[] = [];
+  const seen = new Set<string>();
+
+  let current: Project | null = project;
+
+  while (current && !seen.has(current.id)) {
+    lineage.unshift(current);
+    seen.add(current.id);
+    current = current.parentProjectId ? projectById.get(current.parentProjectId) ?? null : null;
+  }
+
+  return lineage;
+}
+
+export function getProjectDisplayName(
+  project: Project,
+  projects: Project[] = getProjects(),
+): string {
+  return getProjectLineage(project, projects)
+    .map((item) => item.name)
+    .join(" / ");
+}
+
+export function getProjectRootId(
+  projectId: string,
+  projects: Project[] = getProjects(),
+): string {
+  const projectById = createProjectMap(projects);
+  const seen = new Set<string>();
+
+  let current = projectById.get(projectId) ?? null;
+
+  while (current?.parentProjectId && !seen.has(current.parentProjectId)) {
+    seen.add(current.id);
+    current = projectById.get(current.parentProjectId) ?? current;
+  }
+
+  return current?.id ?? projectId;
+}
+
+export function getChildProjects(
+  parentProjectId: string,
+  projects: Project[] = getProjects(),
+): Project[] {
+  return projects
+    .filter((project) => project.parentProjectId === parentProjectId)
+    .sort(
+      (left, right) =>
+        left.order - right.order || left.createdAt.localeCompare(right.createdAt),
+    );
+}
+
+export function findProjectBySourceTaskId(
+  taskId: string,
+  projects: Project[] = getProjects(),
+): Project | null {
+  return projects.find((project) => project.sourceTaskId === taskId) ?? null;
+}
+
 function save(projects: Project[]): void {
   lsSet(KEY, normalizeProjects(projects));
 }
@@ -175,18 +411,26 @@ export function addProject(input: ProjectInput): Project {
   const project: Project = {
     id: uid(),
     order: projects.length,
-    name: input.name.trim(),
+    name: normalizeName(input.name),
     description: input.description.trim(),
     status: input.status,
     accent: input.accent,
     kpis: mapKpis(input.kpis),
     deliverables: mapDeliverables(input.deliverables),
     nextStep: input.nextStep.trim(),
+    parentProjectId: sanitizeOptionalId(input.parentProjectId),
+    sourceTaskId: sanitizeOptionalId(input.sourceTaskId),
     createdAt: now,
     updatedAt: now,
   };
-  projects.unshift(project);
-  save(projects);
+
+  const next = [...projects];
+  const insertIndex = project.parentProjectId
+    ? Math.max(0, next.findIndex((item) => item.id === project.parentProjectId) + 1)
+    : 0;
+
+  next.splice(insertIndex, 0, project);
+  save(next);
   return project;
 }
 
@@ -195,11 +439,17 @@ export function updateProject(id: string, patch: Partial<ProjectInput>): void {
     if (project.id !== id) return project;
     return {
       ...project,
-      ...(patch.name != null ? { name: patch.name.trim() } : {}),
+      ...(patch.name != null ? { name: normalizeName(patch.name) } : {}),
       ...(patch.description != null ? { description: patch.description.trim() } : {}),
       ...(patch.status != null ? { status: patch.status } : {}),
       ...(patch.accent != null ? { accent: patch.accent } : {}),
       ...(patch.nextStep != null ? { nextStep: patch.nextStep.trim() } : {}),
+      ...("parentProjectId" in patch
+        ? { parentProjectId: sanitizeOptionalId(patch.parentProjectId) }
+        : {}),
+      ...("sourceTaskId" in patch
+        ? { sourceTaskId: sanitizeOptionalId(patch.sourceTaskId) }
+        : {}),
       ...(patch.kpis != null ? { kpis: mapKpis(patch.kpis) } : {}),
       ...(patch.deliverables != null ? { deliverables: mapDeliverables(patch.deliverables) } : {}),
       updatedAt: nowIso(),
@@ -209,7 +459,23 @@ export function updateProject(id: string, patch: Partial<ProjectInput>): void {
 }
 
 export function deleteProject(id: string): void {
-  save(getProjects().filter((project) => project.id !== id));
+  const projects = getProjects();
+  const target = projects.find((project) => project.id === id) ?? null;
+  const fallbackParentId = target?.parentProjectId;
+
+  save(
+    projects
+      .filter((project) => project.id !== id)
+      .map((project) =>
+        project.parentProjectId === id
+          ? {
+              ...project,
+              parentProjectId: fallbackParentId,
+              updatedAt: nowIso(),
+            }
+          : project,
+      ),
+  );
 }
 
 export function toggleDeliverable(projectId: string, deliverableId: string): void {
@@ -247,30 +513,86 @@ export function attentionProjects(projects: Project[] = getProjects()): Project[
   return [...projects].filter((project) => project.status !== "green");
 }
 
+export function convertTaskToSubproject(input: {
+  task: TaskToSubprojectSource;
+  parentProjectId?: string;
+}): Project | null {
+  const title = normalizeName(input.task.title);
+  if (!title) return null;
+
+  const projects = getProjects();
+  const parentProject = resolveParentProject(input.task, projects, input.parentProjectId);
+
+  if (!parentProject) return null;
+
+  const existingFromTask = findProjectBySourceTaskId(input.task.id, projects);
+  if (existingFromTask) return existingFromTask;
+
+  const existingSibling = projects.find(
+    (project) =>
+      project.parentProjectId === parentProject.id &&
+      normalizeName(project.name).toLowerCase() === title.toLowerCase(),
+  );
+
+  if (existingSibling) {
+    updateProject(existingSibling.id, { sourceTaskId: input.task.id });
+    return getProjectById(existingSibling.id);
+  }
+
+  const dueLabel = formatShortDate(input.task.dueDate);
+
+  return addProject({
+    name: title,
+    description: `Выделено из проекта «${parentProject.name}». Исходная задача выросла до отдельного подпроекта.${dueLabel ? ` Исходный срок: ${dueLabel}.` : ""}`,
+    status: parentProject.status === "red" ? "red" : "yellow",
+    accent: parentProject.accent,
+    nextStep: dueLabel
+      ? `Разбить подпроект на дочерние задачи до ${dueLabel}`
+      : "Разбить подпроект на первые дочерние задачи",
+    kpis: [],
+    deliverables: [{ text: "Разбить подпроект на 2–5 конкретных задач", done: false }],
+    parentProjectId: parentProject.id,
+    sourceTaskId: input.task.id,
+  });
+}
+
 export function reorderProjects(activeId: string, targetId: string): void {
   if (activeId === targetId) return;
 
   const projects = getProjects();
-  const from = projects.findIndex((project) => project.id === activeId);
-  const to = projects.findIndex((project) => project.id === targetId);
-
-  if (from < 0 || to < 0) return;
-
-  const next = [...projects];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved);
+  const next = moveProjectBlock(projects, activeId, targetId, "before");
+  if (next === projects) return;
   save(next);
 }
 
 export function moveProject(projectId: string, direction: -1 | 1): void {
   const projects = getProjects();
-  const index = projects.findIndex((project) => project.id === projectId);
-  const target = index + direction;
 
-  if (index < 0 || target < 0 || target >= projects.length) return;
+  const currentProject = projects.find((project) => project.id === projectId);
+  if (!currentProject) return;
 
-  const next = [...projects];
-  const [moved] = next.splice(index, 1);
-  next.splice(target, 0, moved);
+  const siblingProjects = projects
+    .filter(
+      (project) =>
+        (project.parentProjectId ?? "") === (currentProject.parentProjectId ?? ""),
+    )
+    .sort(
+      (left, right) =>
+        left.order - right.order || left.createdAt.localeCompare(right.createdAt),
+    );
+
+  const index = siblingProjects.findIndex((project) => project.id === projectId);
+  const targetProject = siblingProjects[index + direction];
+
+  if (index < 0 || !targetProject) return;
+
+  const next = moveProjectBlock(
+    projects,
+    projectId,
+    targetProject.id,
+    direction === -1 ? "before" : "after",
+  );
+
+  if (next === projects) return;
   save(next);
 }
