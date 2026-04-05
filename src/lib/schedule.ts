@@ -1079,12 +1079,13 @@ function normalizeCustomEvents(events: CustomEvent[]): {
   events: CustomEvent[];
   changed: boolean;
 } {
+  const existingTaskIds = new Set(getTasks().map((task) => task.id));
   const seenEventIds = new Set<string>();
   const seenTaskIds = new Set<string>();
   const duplicateCounts = new Map<string, number>();
   let changed = false;
 
-  const normalizedEvents = events.map((event) => {
+  const normalizedEvents = events.flatMap((event) => {
     const originalId = event.id?.trim() ?? "";
     const occurrence = duplicateCounts.get(originalId) ?? 0;
     duplicateCounts.set(originalId, occurrence + 1);
@@ -1105,7 +1106,7 @@ function normalizeCustomEvents(events: CustomEvent[]): {
     seenEventIds.add(nextEvent.id);
 
     if (!isTaskLikeCustomEvent(nextEvent)) {
-      return nextEvent;
+      return [nextEvent];
     }
 
     const originalTaskId = nextEvent.taskId?.trim() ?? "";
@@ -1121,8 +1122,23 @@ function normalizeCustomEvents(events: CustomEvent[]): {
       nextEvent.taskId = nextTaskId;
     }
 
+    const fallbackTaskId = originalTaskId || originalId;
+    const canRecoverViaLegacyTaskId =
+      fallbackTaskId.length > 0 &&
+      fallbackTaskId !== nextTaskId &&
+      existingTaskIds.has(fallbackTaskId);
+
+    if (!existingTaskIds.has(nextTaskId) && !canRecoverViaLegacyTaskId) {
+      changed = true;
+      if (originalId) {
+        clearStoredScheduleApproval({ id: originalId });
+      }
+      clearStoredScheduleApproval({ id: nextEvent.id });
+      return [];
+    }
+
     seenTaskIds.add(nextTaskId);
-    return nextEvent;
+    return [nextEvent];
   });
 
   return {
@@ -1220,6 +1236,20 @@ export function getScheduledTaskSlot(taskId: string): CustomEvent | null {
       (event) => isTaskLikeCustomEvent(event) && event.taskId === taskId,
     ) ?? null
   );
+}
+
+export function deleteTaskWithScheduledSlot(taskId: string): boolean {
+  const linkedSlot = getScheduledTaskSlot(taskId);
+
+  if (linkedSlot) {
+    return removeCustomEvent(linkedSlot.id);
+  }
+
+  const taskExists = getTasks().some((task) => task.id === taskId);
+  if (!taskExists) return false;
+
+  deleteTask(taskId);
+  return true;
 }
 
 export function upsertTaskSlot(input: {

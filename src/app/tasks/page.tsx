@@ -11,7 +11,11 @@ import {
   type ProjectAccent,
   getProjects,
 } from "@/lib/projects";
-import { addCompletedFactSlot, type ScheduleTone } from "@/lib/schedule";
+import {
+  addCompletedFactSlot,
+  deleteTaskWithScheduledSlot,
+  type ScheduleTone,
+} from "@/lib/schedule";
 import { subscribeAppDataChange } from "@/lib/storage";
 import {
   type Task,
@@ -19,7 +23,6 @@ import {
   activateTask,
   addTask,
   compareTasksByAttention,
-  deleteTask,
   getTaskFocusTotal,
   getTasks,
   toggleDone,
@@ -616,7 +619,7 @@ export default function TasksPage() {
 
   const handleDelete = useCallback(
     (id: string) => {
-      deleteTask(id);
+      deleteTaskWithScheduledSlot(id);
       reload();
     },
     [reload],
