@@ -19,6 +19,7 @@ export type Task = {
   title: string;
   project?: string;
   projectId?: string;
+  parentTaskId?: string;
   priority: TaskPriority;
   status: TaskStatus;
   dueDate?: string;
@@ -34,18 +35,86 @@ export type Task = {
 type AddTaskOptions = Partial<
   Pick<
     Task,
-    "id" | "project" | "projectId" | "priority" | "dueDate" | "status" | "origin" | "completedAt"
+    | "id"
+    | "project"
+    | "projectId"
+    | "parentTaskId"
+    | "priority"
+    | "dueDate"
+    | "status"
+    | "origin"
+    | "completedAt"
   >
 >;
 
 const KEY = "alphacore_tasks";
 
+function sanitizeOptionalId(value?: string | null): string | undefined {
+  const next = value?.trim();
+  return next ? next : undefined;
+}
+
+function normalizeTasks(tasks: Task[]): Task[] {
+  const prepared = tasks.map((task) => ({
+    ...task,
+    parentTaskId: sanitizeOptionalId(task.parentTaskId),
+  }));
+  const taskIds = new Set(prepared.map((task) => task.id));
+  const taskById = new Map(prepared.map((task) => [task.id, task]));
+
+  return prepared.map((task) => {
+    const parentTaskId = task.parentTaskId;
+
+    if (!parentTaskId || parentTaskId === task.id || !taskIds.has(parentTaskId)) {
+      return {
+        ...task,
+        parentTaskId: undefined,
+      };
+    }
+
+    const seen = new Set<string>([task.id]);
+    let cursor: string | undefined = parentTaskId;
+
+    while (cursor) {
+      if (seen.has(cursor)) {
+        return {
+          ...task,
+          parentTaskId: undefined,
+        };
+      }
+
+      seen.add(cursor);
+      cursor = taskById.get(cursor)?.parentTaskId;
+    }
+
+    return task;
+  });
+}
+
+function buildChildrenByParentId(tasks: Task[]): Map<string, Task[]> {
+  const childrenByParentId = new Map<string, Task[]>();
+
+  for (const task of tasks) {
+    if (!task.parentTaskId) continue;
+
+    const children = childrenByParentId.get(task.parentTaskId) ?? [];
+    children.push(task);
+    childrenByParentId.set(task.parentTaskId, children);
+  }
+
+  for (const children of childrenByParentId.values()) {
+    children.sort((left, right) => compareTasksByAttention(left, right));
+  }
+
+  return childrenByParentId;
+}
+
 export function getTasks(): Task[] {
-  return lsGet<Task[]>(KEY, []);
+  return normalizeTasks(lsGet<Task[]>(KEY, []));
 }
 
 function save(tasks: Task[]): void {
-  lsSet(KEY, tasks);
+  lsSet(KEY, normalizeTasks(tasks));
 }
 
 function ds(d: Date): string {
@@ -112,6 +181,7 @@ export function addTask(
     title,
     project: opts?.project,
     projectId: opts?.projectId,
+    parentTaskId: opts?.parentTaskId,
     priority: opts?.priority ?? "p2",
     status,
     dueDate: opts?.dueDate,
@@ -127,6 +197,157 @@ export function addTask(
 export function updateTask(id: string, patch: Partial<Task>): void {
   const tasks = getTasks().map((t) => (t.id === id ? { ...t, ...patch } : t));
   save(tasks);
+}
+
+export function getTaskById(id: string, tasks: Task[] = getTasks()): Task | null {
+  return tasks.find((task) => task.id === id) ?? null;
+}
+
+export function isSubtask(task: Pick<Task, "parentTaskId">): boolean {
+  return Boolean(task.parentTaskId);
+}
+
+export function getTaskChildren(parentTaskId: string, tasks: Task[] = getTasks()): Task[] {
+  return tasks
+    .filter((task) => task.parentTaskId === parentTaskId)
+    .sort((left, right) => compareTasksByAttention(left, right));
+}
+
+export function getTaskTreeIds(taskId: string, tasks: Task[] = getTasks()): string[] {
+  const childrenByParentId = buildChildrenByParentId(tasks);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+
+  const visit = (currentId: string) => {
+    if (seen.has(currentId)) return;
+    seen.add(currentId);
+    ids.push(currentId);
+
+    for (const child of childrenByParentId.get(currentId) ?? []) {
+      visit(child.id);
+    }
+  };
+
+  visit(taskId);
+  return ids;
+}
+
+export function getTaskLineage(task: Task, tasks: Task[] = getTasks()): Task[] {
+  const taskById = new Map(tasks.map((item) => [item.id, item]));
+  const lineage: Task[] = [];
+  const seen = new Set<string>();
+
+  let current: Task | null = task;
+
+  while (current && !seen.has(current.id)) {
+    lineage.unshift(current);
+    seen.add(current.id);
+    current = current.parentTaskId ? taskById.get(current.parentTaskId) ?? null : null;
+  }
+
+  return lineage;
+}
+
+export function getTaskDepth(task: Task, tasks: Task[] = getTasks()): number {
+  return Math.max(0, getTaskLineage(task, tasks).length - 1);
+}
+
+export function canAssignTaskParent(
+  taskId: string,
+  parentTaskId?: string | null,
+  tasks: Task[] = getTasks(),
+): boolean {
+  const nextParentTaskId = sanitizeOptionalId(parentTaskId);
+
+  if (!nextParentTaskId) return Boolean(getTaskById(taskId, tasks));
+  if (taskId === nextParentTaskId) return false;
+
+  const task = getTaskById(taskId, tasks);
+  const parentTask = getTaskById(nextParentTaskId, tasks);
+  if (!task || !parentTask) return false;
+
+  return !new Set(getTaskTreeIds(taskId, tasks)).has(nextParentTaskId);
+}
+
+export function assignTaskParent(
+  taskId: string,
+  parentTaskId?: string | null,
+): Task[] {
+  const tasks = getTasks();
+  const nextParentTaskId = sanitizeOptionalId(parentTaskId);
+
+  if (!canAssignTaskParent(taskId, nextParentTaskId, tasks)) return [];
+
+  const task = getTaskById(taskId, tasks);
+  if (!task) return [];
+
+  if ((task.parentTaskId ?? undefined) === nextParentTaskId) {
+    return [task];
+  }
+
+  const parentTask = nextParentTaskId ? getTaskById(nextParentTaskId, tasks) : null;
+  const treeIds = new Set(getTaskTreeIds(taskId, tasks));
+
+  const nextTasks = tasks.map((item) => {
+    if (!treeIds.has(item.id)) return item;
+
+    if (item.id === taskId) {
+      return {
+        ...item,
+        parentTaskId: nextParentTaskId,
+        ...(parentTask
+          ? {
+              projectId: parentTask.projectId,
+              project: parentTask.project,
+            }
+          : {}),
+      };
+    }
+
+    if (!parentTask) return item;
+
+    return {
+      ...item,
+      projectId: parentTask.projectId,
+      project: parentTask.project,
+    };
+  });
+
+  save(nextTasks);
+  return nextTasks.filter((item) => treeIds.has(item.id));
+}
+
+export function moveTaskTreeToProject(
+  taskId: string,
+  projectId?: string,
+  project?: string,
+): Task[] {
+  const tasks = getTasks();
+  const task = getTaskById(taskId, tasks);
+  if (!task) return [];
+
+  const normalizedProjectId = sanitizeOptionalId(projectId);
+  const normalizedProject = project?.trim() || undefined;
+  const currentParent = task.parentTaskId ? getTaskById(task.parentTaskId, tasks) : null;
+  const shouldDetachFromParent =
+    Boolean(currentParent) &&
+    ((currentParent?.projectId ?? "") !== (normalizedProjectId ?? "") ||
+      (currentParent?.project ?? "") !== (normalizedProject ?? ""));
+
+  const treeIds = new Set(getTaskTreeIds(taskId, tasks));
+  const nextTasks = tasks.map((item) => {
+    if (!treeIds.has(item.id)) return item;
+
+    return {
+      ...item,
+      projectId: normalizedProjectId,
+      project: normalizedProject,
+      ...(item.id === taskId && shouldDetachFromParent ? { parentTaskId: undefined } : {}),
+    };
+  });
+
+  save(nextTasks);
+  return nextTasks.filter((item) => treeIds.has(item.id));
 }
 
 export function toggleDone(id: string): Task | undefined {
@@ -145,7 +366,22 @@ export function toggleDone(id: string): Task | undefined {
 }
 
 export function deleteTask(id: string): void {
-  save(getTasks().filter((t) => t.id !== id));
+  const tasks = getTasks();
+  const target = tasks.find((task) => task.id === id) ?? null;
+  const fallbackParentTaskId = target?.parentTaskId;
+
+  save(
+    tasks
+      .filter((task) => task.id !== id)
+      .map((task) =>
+        task.parentTaskId === id
+          ? {
+              ...task,
+              parentTaskId: fallbackParentTaskId,
+            }
+          : task,
+      ),
+  );
 }
 
 export function activateTask(id: string): void {
