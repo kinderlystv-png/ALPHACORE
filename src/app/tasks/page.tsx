@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { ProjectSelectManager } from "@/components/project-select-manager";
+import { TaskGanttChart, type GanttGroup } from "@/components/task-gantt-chart";
 import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import {
@@ -104,7 +105,8 @@ type TaskGroup = {
   project: Project | null;
   area: LifeArea | null;
   tasks: Task[];
-  rootTasks: TaskTreeNode[];
+  nonDoneRootTasks: TaskTreeNode[];
+  doneRootTasks: TaskTreeNode[];
   priorityLoad: number;
   priorityCounts: Record<Task["priority"], number>;
   openCount: number;
@@ -134,6 +136,47 @@ type QuickProjectFilterBarProps = {
   onChange: (value: string) => void;
 };
 
+type QuickEffortOption = {
+  label: string;
+  shortLabel: string;
+  minutes: number;
+};
+
+type QuickEffortPickerProps = {
+  value: number | null;
+  onChange: (minutes: number | null) => void;
+  size?: "sm" | "md";
+};
+
+type TaskComposerModalState = {
+  kind: "subtask" | "group";
+  heading: string;
+  subtitle: string;
+  parentTaskId?: string;
+  projectId: string;
+  fallbackProjectLabel?: string;
+  defaultStatus: "inbox" | "active";
+  initialPriority: Task["priority"];
+};
+
+const QUICK_EFFORT_OPTIONS: QuickEffortOption[] = [
+  { label: "15 мин", shortLabel: "15м", minutes: 15 },
+  { label: "30 мин", shortLabel: "30м", minutes: 30 },
+  { label: "1 час", shortLabel: "1ч", minutes: 60 },
+  { label: "3 часа", shortLabel: "3ч", minutes: 180 },
+  { label: "8 часов", shortLabel: "8ч", minutes: 480 },
+  { label: "2 дня", shortLabel: "2д", minutes: 960 },
+  { label: "3 дня", shortLabel: "3д", minutes: 1440 },
+  { label: "5 дней", shortLabel: "5д", minutes: 2400 },
+  { label: "Неделя", shortLabel: "1н", minutes: 3360 },
+  { label: "2 недели", shortLabel: "2н", minutes: 6720 },
+  { label: "Месяц", shortLabel: "1мес", minutes: 14400 },
+];
+
+const QUICK_EFFORT_LABEL_BY_MINUTES = new Map(
+  QUICK_EFFORT_OPTIONS.map((option) => [option.minutes, option]),
+);
+
 function pluralizeTasks(count: number): string {
   const mod10 = count % 10;
   const mod100 = count % 100;
@@ -145,6 +188,30 @@ function pluralizeTasks(count: number): string {
 
 function normalizeGroupKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function formatPlannedMinutesLabel(
+  minutes?: number,
+  mode: "full" | "short" = "full",
+): string | null {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) return null;
+
+  const preset = QUICK_EFFORT_LABEL_BY_MINUTES.get(minutes);
+  if (preset) return mode === "short" ? preset.shortLabel : preset.label;
+
+  if (minutes < 60) return mode === "short" ? `${minutes}м` : `${minutes} мин`;
+
+  if (minutes % (8 * 60) === 0) {
+    const days = minutes / (8 * 60);
+    return mode === "short" ? `${days}д` : `${days} д`;
+  }
+
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return mode === "short" ? `${hours}ч` : `${hours} ч`;
+  }
+
+  return mode === "short" ? `${Math.round(minutes / 60)}ч` : `${Math.round(minutes / 60)} ч`;
 }
 
 function buildTaskTree(tasks: Task[]): TaskTreeNode[] {
@@ -493,6 +560,39 @@ function quickDueButtonCls(isActive: boolean, size: "sm" | "md"): string {
     : "whitespace-nowrap rounded-md border border-zinc-800 bg-zinc-900/40 px-1.5 py-1 text-[10px] font-medium text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
 }
 
+function QuickEffortPicker({ value, onChange, size = "md" }: QuickEffortPickerProps) {
+  const buttonCls = size === "sm"
+    ? "rounded-md px-1.5 py-0.5 text-[10px]"
+    : "rounded-lg px-2.5 py-1.5 text-[11px]";
+  const containerCls = size === "sm" ? "gap-0.5 pb-0" : "gap-1 pb-1";
+
+  return (
+    <div className="min-w-0 overflow-x-auto">
+      <div className={`flex min-w-max items-center ${containerCls}`}>
+        {QUICK_EFFORT_OPTIONS.map((option) => {
+          const isActive = value === option.minutes;
+
+          return (
+            <button
+              key={`${option.label}-${option.minutes}`}
+              type="button"
+              onClick={() => onChange(isActive ? null : option.minutes)}
+              aria-pressed={isActive}
+              className={`whitespace-nowrap border font-medium transition ${buttonCls} ${
+                isActive
+                  ? "border-violet-400/30 bg-violet-500/12 text-violet-100"
+                  : "border-zinc-800 bg-zinc-900/35 text-zinc-500 hover:border-zinc-700 hover:text-zinc-200"
+              }`}
+            >
+              {size === "sm" ? option.shortLabel : option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -501,13 +601,22 @@ export default function TasksPage() {
   const [input, setInput] = useState("");
   const [prio, setPrio] = useState<"p1" | "p2" | "p3">("p2");
   const [dueDate, setDueDate] = useState("");
+  const [plannedMinutes, setPlannedMinutes] = useState<number | null>(null);
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedCompletedGroups, setExpandedCompletedGroups] = useState<Set<string>>(new Set());
+  const [ganttExpanded, setGanttExpanded] = useState(true);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [nestDropTargetId, setNestDropTargetId] = useState<string | null>(null);
-  const [subtaskDraftParentId, setSubtaskDraftParentId] = useState<string | null>(null);
-  const [subtaskDraftTitle, setSubtaskDraftTitle] = useState("");
+  const [taskComposerModal, setTaskComposerModal] = useState<TaskComposerModalState | null>(null);
+  const [taskComposerTitle, setTaskComposerTitle] = useState("");
+  const [taskComposerPrio, setTaskComposerPrio] = useState<Task["priority"]>("p2");
+  const [taskComposerDueDate, setTaskComposerDueDate] = useState("");
+  const [taskComposerPlannedMinutes, setTaskComposerPlannedMinutes] = useState<number | null>(null);
+  const [taskComposerProjectId, setTaskComposerProjectId] = useState("");
+  const [taskComposerProjectTouched, setTaskComposerProjectTouched] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const composerModalInputRef = useRef<HTMLInputElement>(null);
 
   const TASKS_PER_GROUP = 15;
 
@@ -601,6 +710,46 @@ export default function TasksPage() {
     return toInputDateValue(next);
   }, []);
 
+  const closeTaskComposerModal = useCallback(() => {
+    setTaskComposerModal(null);
+    setTaskComposerTitle("");
+    setTaskComposerPrio("p2");
+    setTaskComposerDueDate("");
+    setTaskComposerPlannedMinutes(null);
+    setTaskComposerProjectId("");
+    setTaskComposerProjectTouched(false);
+  }, []);
+
+  const openTaskComposerModal = useCallback((config: TaskComposerModalState) => {
+    setTaskComposerModal(config);
+    setTaskComposerTitle("");
+    setTaskComposerPrio(config.initialPriority);
+    setTaskComposerDueDate("");
+    setTaskComposerPlannedMinutes(null);
+    setTaskComposerProjectId(config.projectId);
+    setTaskComposerProjectTouched(false);
+  }, []);
+
+  useEffect(() => {
+    if (!taskComposerModal) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      composerModalInputRef.current?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeTaskComposerModal();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeTaskComposerModal, taskComposerModal]);
+
   const matchesProjectFilter = useCallback(
     (task: Task) => {
       const label = getTaskProjectLabel(task);
@@ -615,10 +764,35 @@ export default function TasksPage() {
     [getTaskProjectLabel, projectDisplayNameById, projectFilter, projectNameById],
   );
 
+  const handleTaskComposerProjectChange = useCallback((projectId: string) => {
+    setTaskComposerProjectTouched(true);
+    setTaskComposerProjectId(projectId);
+  }, []);
+
+  const resolveTaskComposerProject = useCallback((): { projectId?: string; project?: string } => {
+    const selectedProject = projects.find((item) => item.id === taskComposerProjectId);
+
+    if (selectedProject) {
+      return {
+        projectId: selectedProject.id,
+        project: selectedProject.name,
+      };
+    }
+
+    if (!taskComposerProjectTouched && taskComposerModal?.fallbackProjectLabel) {
+      return {
+        project: taskComposerModal.fallbackProjectLabel,
+      };
+    }
+
+    return {};
+  }, [projects, taskComposerModal, taskComposerProjectId, taskComposerProjectTouched]);
+
   const resetComposer = useCallback(() => {
     setInput("");
     setPrio("p2");
     setDueDate("");
+    setPlannedMinutes(null);
     setNewTaskProjectId("");
   }, []);
 
@@ -641,6 +815,7 @@ export default function TasksPage() {
       addTask(title, {
         priority: prio,
         dueDate: dueDate || undefined,
+        plannedMinutes: plannedMinutes ?? undefined,
         projectId: project?.id,
         project: project?.name,
       });
@@ -649,7 +824,38 @@ export default function TasksPage() {
     resetComposer();
     reload();
     inputRef.current?.focus();
-  }, [dueDate, input, newTaskProjectId, prio, reload, resetComposer]);
+  }, [dueDate, input, newTaskProjectId, plannedMinutes, prio, reload, resetComposer]);
+
+  const handleCreateTaskFromModal = useCallback(
+    (mode: "planned" | "done" = "planned") => {
+      if (!taskComposerModal) return;
+
+      const title = taskComposerTitle.trim();
+      if (!title) return;
+
+      addTask(title, {
+        parentTaskId: taskComposerModal.parentTaskId,
+        priority: taskComposerPrio,
+        dueDate: taskComposerDueDate || undefined,
+        plannedMinutes: taskComposerPlannedMinutes ?? undefined,
+        status: mode === "done" ? "done" : taskComposerModal.defaultStatus,
+        ...resolveTaskComposerProject(),
+      });
+
+      closeTaskComposerModal();
+      reload();
+    },
+    [
+      closeTaskComposerModal,
+      reload,
+      resolveTaskComposerProject,
+      taskComposerDueDate,
+      taskComposerModal,
+      taskComposerPlannedMinutes,
+      taskComposerPrio,
+      taskComposerTitle,
+    ],
+  );
 
   const handleSetDue = useCallback(
     (id: string, date: string) => {
@@ -687,6 +893,14 @@ export default function TasksPage() {
     [reload],
   );
 
+  const handleSetPlannedMinutes = useCallback(
+    (id: string, minutes: number | null) => {
+      updateTask(id, { plannedMinutes: minutes ?? undefined });
+      reload();
+    },
+    [reload],
+  );
+
   const handleToggle = useCallback(
     (id: string) => {
       toggleDone(id);
@@ -705,47 +919,57 @@ export default function TasksPage() {
 
   const handleDelete = useCallback(
     (id: string) => {
-      const shouldCloseSubtaskComposer = subtaskDraftParentId === id;
+      const shouldCloseTaskComposer = taskComposerModal?.kind === "subtask" && taskComposerModal.parentTaskId === id;
 
       deleteTaskWithScheduledSlot(id);
 
-      if (shouldCloseSubtaskComposer) {
-        setSubtaskDraftParentId(null);
-        setSubtaskDraftTitle("");
+      if (shouldCloseTaskComposer) {
+        closeTaskComposerModal();
       }
 
       reload();
     },
-    [reload, subtaskDraftParentId],
+    [closeTaskComposerModal, reload, taskComposerModal],
   );
 
-  const handleOpenSubtaskComposer = useCallback((taskId: string) => {
-    setSubtaskDraftParentId(taskId);
-    setSubtaskDraftTitle("");
-  }, []);
+  const handleOpenSubtaskTaskModal = useCallback(
+    (task: Task) => {
+      const projectId = getTaskProjectId(task);
+      const fallbackProjectLabel = projectId ? undefined : getTaskProjectLabel(task)?.trim();
 
-  const handleCloseSubtaskComposer = useCallback(() => {
-    setSubtaskDraftParentId(null);
-    setSubtaskDraftTitle("");
-  }, []);
-
-  const handleAddSubtask = useCallback(
-    (parentTask: Task) => {
-      const title = subtaskDraftTitle.trim();
-      if (!title) return;
-
-      addTask(title, {
-        parentTaskId: parentTask.id,
-        projectId: parentTask.projectId,
-        project: parentTask.project,
-        priority: parentTask.priority,
-        status: parentTask.status === "active" ? "active" : "inbox",
+      openTaskComposerModal({
+        kind: "subtask",
+        heading: "Новая подзадача",
+        subtitle: `Внутри «${task.title}»`,
+        parentTaskId: task.id,
+        projectId,
+        fallbackProjectLabel,
+        defaultStatus: task.status === "active" ? "active" : "inbox",
+        initialPriority: task.priority,
       });
-
-      handleCloseSubtaskComposer();
-      reload();
     },
-    [handleCloseSubtaskComposer, reload, subtaskDraftTitle],
+    [getTaskProjectId, getTaskProjectLabel, openTaskComposerModal],
+  );
+
+  const handleOpenGroupTaskModal = useCallback(
+    (group: TaskGroup) => {
+      const fallbackProjectLabel = group.project ? undefined : group.label === "Без проекта" ? undefined : group.label;
+
+      openTaskComposerModal({
+        kind: "group",
+        heading: group.project ? "Новая задача в проекте" : fallbackProjectLabel ? "Новая задача в категории" : "Новая задача",
+        subtitle: group.project
+          ? `Сразу в «${group.label}»`
+          : fallbackProjectLabel
+            ? `Сразу в категории «${group.label}»`
+            : "Без проекта — можно оставить так или выбрать проект",
+        projectId: group.project?.id ?? "",
+        fallbackProjectLabel,
+        defaultStatus: "inbox",
+        initialPriority: "p2",
+      });
+    },
+    [openTaskComposerModal],
   );
 
   const syncTaskTreeSlots = useCallback((updatedTasks: Task[]) => {
@@ -852,7 +1076,8 @@ export default function TasksPage() {
         project: resolvedProject,
         area: projectLabel ? inferGroupArea(projectLabel) : null,
         tasks: [],
-        rootTasks: [],
+        nonDoneRootTasks: [],
+        doneRootTasks: [],
         priorityLoad: 0,
         priorityCounts: { p1: 0, p2: 0, p3: 0 },
         openCount: 0,
@@ -887,11 +1112,18 @@ export default function TasksPage() {
     }
 
     return [...groups.values()]
-      .map((group) => ({
-        ...group,
-        tasks: [...group.tasks].sort((left, right) => compareTasksByAttention(left, right)),
-        rootTasks: buildTaskTree(group.tasks),
-      }))
+      .map((group) => {
+        const sortedTasks = [...group.tasks].sort((left, right) => compareTasksByAttention(left, right));
+        const nonDoneTasks = sortedTasks.filter((task) => task.status !== "done");
+        const doneTasks = sortedTasks.filter((task) => task.status === "done");
+
+        return {
+          ...group,
+          tasks: sortedTasks,
+          nonDoneRootTasks: buildTaskTree(nonDoneTasks),
+          doneRootTasks: buildTaskTree(doneTasks),
+        };
+      })
       .sort((left, right) => {
         const leftOrder = left.project?.order ?? (left.area ? 100 + AREA_GROUP_ORDER[left.area] : 999);
         const rightOrder = right.project?.order ?? (right.area ? 100 + AREA_GROUP_ORDER[right.area] : 999);
@@ -916,10 +1148,23 @@ export default function TasksPage() {
     archived: tasks.filter((task) => task.status === "archived").length,
   };
 
-  const renderTaskNode = useCallback(
-    (node: TaskTreeNode): React.ReactNode => {
+  const ganttGroups: GanttGroup[] = useMemo(
+    () =>
+      visibleGroups.map((group) => ({
+        id: group.id,
+        label: group.label,
+        project: group.project,
+        area: group.area,
+        nodes: group.nonDoneRootTasks,
+        openCount: group.openCount,
+      })),
+    [visibleGroups],
+  );
+
+  function renderTaskNode(node: TaskTreeNode): React.ReactNode {
       const task = node.task;
       const badge = dueBadge(task.dueDate);
+      const plannedLabel = formatPlannedMinutesLabel(task.plannedMinutes, "short");
       const focus = getTaskFocusTotal(task);
       const taskProjectId = getTaskProjectId(task);
       const showQuickProjects = task.status !== "done" && !taskProjectId;
@@ -935,11 +1180,12 @@ export default function TasksPage() {
         task.status === "done"
           ? "Готовые задачи не вкладываем — пусть наслаждаются пенсией"
           : "Перетащи задачу сюда, чтобы сделать её подзадачей";
-      const isSubtaskComposerOpen = subtaskDraftParentId === task.id;
+      const isActiveSubtaskModal = taskComposerModal?.kind === "subtask" && taskComposerModal.parentTaskId === task.id;
 
-      return (
+    return (
         <div
           key={task.id}
+          id={`task-card-${task.id}`}
           className={`${isSubtask ? "ml-5 border-l border-zinc-800/80 pl-3" : ""}`}
         >
           <div
@@ -995,8 +1241,12 @@ export default function TasksPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       {isSubtask && (
-                        <span className="shrink-0 rounded-md border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-200">
-                          ↳ подзадача
+                        <span
+                          className="shrink-0 rounded-md border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-200"
+                          title="Подзадача"
+                          aria-label="Подзадача"
+                        >
+                          ↳
                         </span>
                       )}
                       {node.children.length > 0 && (
@@ -1004,14 +1254,27 @@ export default function TasksPage() {
                           {node.children.length} подзадач
                         </span>
                       )}
-                      <p
-                        className={`min-w-0 flex-1 truncate text-sm ${
-                          task.status === "done" ? "text-zinc-500 line-through" : "text-zinc-100"
-                        }`}
-                        title={task.title}
-                      >
-                        {task.title}
-                      </p>
+
+                      <div className="min-w-0 flex flex-1 items-center gap-2">
+                        <p
+                          className={`min-w-0 flex-1 truncate text-sm ${
+                            task.status === "done" ? "text-zinc-500 line-through" : "text-zinc-100"
+                          }`}
+                          title={task.title}
+                        >
+                          {task.title}
+                        </p>
+
+                        {task.status !== "done" && (
+                          <div className="min-w-0 max-w-full">
+                            <QuickEffortPicker
+                              value={task.plannedMinutes ?? null}
+                              onChange={(minutes) => handleSetPlannedMinutes(task.id, minutes)}
+                              size="sm"
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-2 flex min-w-0 items-center gap-2">
@@ -1025,6 +1288,12 @@ export default function TasksPage() {
                         {badge && (
                           <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>
                             📅 {badge.label}
+                          </span>
+                        )}
+
+                        {task.status === "done" && plannedLabel && (
+                          <span className="shrink-0 rounded-md border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-200">
+                            ⏱ {plannedLabel}
                           </span>
                         )}
 
@@ -1099,24 +1368,19 @@ export default function TasksPage() {
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1">
-                        {task.status !== "done" && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              isSubtaskComposerOpen
-                                ? handleCloseSubtaskComposer()
-                                : handleOpenSubtaskComposer(task.id)
-                            }
-                            className={`rounded-lg border px-2 py-1 text-[10px] transition ${
-                              isSubtaskComposerOpen
-                                ? "border-sky-400/30 bg-sky-500/10 text-sky-200"
-                                : "border-sky-500/20 text-sky-300 hover:bg-sky-500/10"
-                            }`}
-                            title="Добавить явную подзадачу без drag-and-drop"
-                          >
-                            ↳＋
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSubtaskTaskModal(task)}
+                          className={`rounded-lg border px-2 py-1 text-[10px] transition ${
+                            isActiveSubtaskModal
+                              ? "border-sky-400/30 bg-sky-500/10 text-sky-200"
+                              : "border-sky-500/20 text-sky-300 hover:bg-sky-500/10"
+                          }`}
+                          title="Создать подзадачу с полным composer"
+                          aria-haspopup="dialog"
+                        >
+                          ↳＋
+                        </button>
                         {task.parentTaskId && task.status !== "done" && (
                           <button
                             type="button"
@@ -1156,54 +1420,6 @@ export default function TasksPage() {
                   </div>
                 )}
 
-                {isSubtaskComposerOpen && (
-                  <div className="mt-3 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-3">
-                    <p className="mb-2 text-[11px] text-sky-200/90">
-                      Новая подзадача внутри «{task.title}»
-                    </p>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <input
-                        autoFocus
-                        value={subtaskDraftTitle}
-                        onChange={(event) => setSubtaskDraftTitle(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            handleAddSubtask(task);
-                          }
-
-                          if (event.key === "Escape") {
-                            event.preventDefault();
-                            handleCloseSubtaskComposer();
-                          }
-                        }}
-                        placeholder="Название подзадачи…"
-                        className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-sky-500/40"
-                      />
-                      <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleAddSubtask(task)}
-                          disabled={!subtaskDraftTitle.trim()}
-                          className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Создать подзадачу
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleCloseSubtaskComposer}
-                          className="rounded-xl border border-zinc-800 px-3 py-2 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
-                        >
-                          Отмена
-                        </button>
-                      </div>
-                    </div>
-                    <p className="mt-2 text-[10px] text-zinc-500">
-                      Подзадача унаследует проект и появится прямо внутри этой ветки.
-                    </p>
-                  </div>
-                )}
-
                 {node.children.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {node.children.map((child) => renderTaskNode(child))}
@@ -1213,37 +1429,8 @@ export default function TasksPage() {
             </div>
           </div>
         </div>
-      );
-    },
-    [
-      draggedTaskId,
-      getTaskProjectId,
-      handleActivate,
-      handleAddSubtask,
-      handleCloseSubtaskComposer,
-      handleDelete,
-      handleDetachSubtask,
-      handleOpenSubtaskComposer,
-      handleSetDue,
-      handleSetPriority,
-      handleSetProject,
-      handleTaskDragEnd,
-      handleTaskDragLeave,
-      handleTaskDragOver,
-      handleTaskDragStart,
-      handleTaskDrop,
-      handleToggle,
-      nestDropTargetId,
-      popularProjects,
-      projects,
-      reload,
-      subtaskDraftParentId,
-      subtaskDraftTitle,
-      tasks,
-      todayDateValue,
-      tomorrowDateValue,
-    ],
-  );
+    );
+  }
 
   return (
     <AppShell>
@@ -1267,14 +1454,18 @@ export default function TasksPage() {
         </div>
 
         <div className="space-y-2">
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => event.key === "Enter" && handleAdd()}
-            placeholder="Новая задача…"
-            className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600"
-          />
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && handleAdd()}
+              placeholder="Новая задача…"
+              className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600 xl:flex-1"
+            />
+
+            <QuickEffortPicker value={plannedMinutes} onChange={setPlannedMinutes} />
+          </div>
 
           <div className="flex flex-col gap-2 lg:flex-row lg:flex-nowrap lg:items-start">
             <div className="min-w-0 lg:flex-1">
@@ -1384,6 +1575,29 @@ export default function TasksPage() {
           />
         </div>
 
+        {ganttGroups.some((group) => group.nodes.length > 0) && (
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setGanttExpanded((v) => !v)}
+              className="flex items-center gap-2 text-xs text-zinc-400 transition hover:text-zinc-200"
+            >
+              <span>{ganttExpanded ? "▾" : "▸"}</span>
+              <span className="font-medium">Диаграмма Ганта</span>
+              <span className="text-zinc-600">
+                ({ganttGroups.reduce((s, g) => s + g.openCount, 0)} задач)
+              </span>
+            </button>
+            {ganttExpanded && (
+              <TaskGanttChart
+                groups={ganttGroups}
+                onTaskDueDateChange={handleSetDue}
+                onTaskPlannedMinutesChange={handleSetPlannedMinutes}
+              />
+            )}
+          </div>
+        )}
+
         <div className="space-y-3">
           {visible.length === 0 && (
             <p className="py-8 text-center text-sm text-zinc-600">
@@ -1395,6 +1609,14 @@ export default function TasksPage() {
 
           {visibleGroups.map((group) => {
             const tone = getGroupShellTone(group);
+            const primaryRootTasks = filter === "done" ? group.doneRootTasks : group.nonDoneRootTasks;
+            const isPrimaryExpanded = expandedGroups.has(group.id);
+            const visiblePrimaryTasks = isPrimaryExpanded
+              ? primaryRootTasks
+              : primaryRootTasks.slice(0, TASKS_PER_GROUP);
+            const hasMorePrimaryTasks = primaryRootTasks.length > TASKS_PER_GROUP;
+            const hasCompletedSection = filter !== "done" && group.doneRootTasks.length > 0;
+            const isCompletedExpanded = expandedCompletedGroups.has(group.id);
 
             return (
               <section
@@ -1419,6 +1641,13 @@ export default function TasksPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenGroupTaskModal(group)}
+                      className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-100 transition hover:border-sky-400/30 hover:bg-sky-500/15"
+                    >
+                      ＋ задача
+                    </button>
                     {(["p1", "p2", "p3"] as const).map((priority) =>
                       group.priorityCounts[priority] > 0 ? (
                         <span
@@ -1437,23 +1666,202 @@ export default function TasksPage() {
                   </div>
                 </div>
 
-                <div className="mt-3 space-y-2">
-                  {(expandedGroups.has(group.id) ? group.rootTasks : group.rootTasks.slice(0, TASKS_PER_GROUP)).map((node) => renderTaskNode(node))}
+                {primaryRootTasks.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {visiblePrimaryTasks.map((node) => renderTaskNode(node))}
 
-                  {!expandedGroups.has(group.id) && group.rootTasks.length > TASKS_PER_GROUP && (
-                    <button
-                      type="button"
-                      onClick={() => setExpandedGroups((s) => new Set(s).add(group.id))}
-                      className="w-full rounded-xl border border-zinc-800 py-2 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
-                    >
-                      Показать ещё {group.rootTasks.length - TASKS_PER_GROUP}
-                    </button>
-                  )}
-                </div>
+                    {!isPrimaryExpanded && hasMorePrimaryTasks && (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedGroups((s) => new Set(s).add(group.id))}
+                        className="w-full rounded-xl border border-zinc-800 py-2 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
+                      >
+                        Показать ещё {primaryRootTasks.length - TASKS_PER_GROUP}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {hasCompletedSection && (
+                  <div className={`mt-3 ${primaryRootTasks.length > 0 ? "border-t border-zinc-800/70 pt-3" : ""}`}>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        aria-expanded={isCompletedExpanded}
+                        onClick={() =>
+                          setExpandedCompletedGroups((current) => {
+                            const next = new Set(current);
+                            if (next.has(group.id)) {
+                              next.delete(group.id);
+                            } else {
+                              next.add(group.id);
+                            }
+                            return next;
+                          })
+                        }
+                        className={`inline-flex items-center justify-center rounded-full border px-3 py-1.5 text-[11px] font-medium transition ${
+                          isCompletedExpanded
+                            ? "border-zinc-700 bg-zinc-900/50 text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"
+                            : "border-zinc-800 bg-zinc-950/25 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
+                        }`}
+                      >
+                        {isCompletedExpanded
+                          ? `Скрыть выполненные задачи (${group.doneRootTasks.length})`
+                          : `Посмотреть выполненные задачи (${group.doneRootTasks.length})`}
+                      </button>
+                    </div>
+
+                    {isCompletedExpanded && (
+                      <div className="mt-2 space-y-2">
+                        {group.doneRootTasks.map((node) => renderTaskNode(node))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </section>
             );
           })}
         </div>
+
+        {taskComposerModal && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 px-4 py-10 backdrop-blur-sm sm:py-16">
+            <button
+              type="button"
+              onClick={closeTaskComposerModal}
+              aria-label="Закрыть создание задачи"
+              className="absolute inset-0"
+            />
+
+            <div className="relative w-full max-w-6xl rounded-4xl border border-zinc-800 bg-zinc-950/95 p-4 shadow-2xl shadow-black/50 sm:p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                    {taskComposerModal.kind === "subtask" ? "Подзадача" : "Задача в категории"}
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-zinc-50">{taskComposerModal.heading}</h3>
+                  <p className="mt-1 text-sm text-zinc-500">{taskComposerModal.subtitle}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeTaskComposerModal}
+                  className="rounded-xl border border-zinc-800 px-3 py-2 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
+                >
+                  Esc
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+                  <input
+                    ref={composerModalInputRef}
+                    value={taskComposerTitle}
+                    onChange={(event) => setTaskComposerTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleCreateTaskFromModal();
+                      }
+                    }}
+                    placeholder={taskComposerModal.kind === "subtask" ? "Новая подзадача…" : "Новая задача…"}
+                    className="w-full min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-zinc-600 xl:flex-1"
+                  />
+
+                  <QuickEffortPicker value={taskComposerPlannedMinutes} onChange={setTaskComposerPlannedMinutes} />
+                </div>
+
+                <div className="flex flex-col gap-2 xl:flex-row xl:flex-nowrap xl:items-start">
+                  <div className="min-w-0 xl:flex-1">
+                    <ProjectSelectManager
+                      value={taskComposerProjectId}
+                      projects={projects}
+                      quickProjects={popularProjects}
+                      desktopSingleRow
+                      onChange={handleTaskComposerProjectChange}
+                      onProjectsMutate={(projectId) => {
+                        reload();
+                        setTaskComposerProjectTouched(true);
+                        setTaskComposerProjectId(projectId);
+                      }}
+                      creationContextLabel={
+                        taskComposerModal.kind === "subtask"
+                          ? "создания подзадачи"
+                          : "создания задачи в категории"
+                      }
+                      suggestedAccent="violet"
+                      size="md"
+                    />
+
+                    {!taskComposerProjectTouched && !taskComposerProjectId && taskComposerModal.fallbackProjectLabel && (
+                      <p className="mt-2 text-[11px] text-zinc-500">
+                        Если проект не менять, задача попадёт в категорию «{taskComposerModal.fallbackProjectLabel}».
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="xl:shrink-0">
+                    <PrioritySwitch value={taskComposerPrio} onChange={setTaskComposerPrio} size="md" />
+                  </div>
+
+                  <div className="flex w-full gap-2 xl:w-auto xl:shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setTaskComposerDueDate(todayDateValue)}
+                      aria-pressed={taskComposerDueDate === todayDateValue}
+                      className={quickDueButtonCls(taskComposerDueDate === todayDateValue, "md")}
+                    >
+                      Сегодня
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setTaskComposerDueDate(tomorrowDateValue)}
+                      aria-pressed={taskComposerDueDate === tomorrowDateValue}
+                      className={quickDueButtonCls(taskComposerDueDate === tomorrowDateValue, "md")}
+                    >
+                      Завтра
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setTaskComposerDueDate("")}
+                      aria-pressed={taskComposerDueDate === ""}
+                      className={quickDueButtonCls(taskComposerDueDate === "", "md")}
+                    >
+                      Без даты
+                    </button>
+
+                    <input
+                      type="date"
+                      value={taskComposerDueDate}
+                      onChange={(event) => setTaskComposerDueDate(event.target.value)}
+                      className="scheme-dark min-h-10 w-full rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none xl:w-44 xl:shrink-0"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-stretch gap-2 xl:ml-auto xl:shrink-0 xl:flex-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => handleCreateTaskFromModal()}
+                      disabled={!taskComposerTitle.trim()}
+                      className="rounded-xl bg-zinc-50 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Создать задачу
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCreateTaskFromModal("done")}
+                      disabled={!taskComposerTitle.trim()}
+                      className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200 transition hover:border-amber-400/40 hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Создать сразу в выполненных"
+                    >
+                      +⚡
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   );

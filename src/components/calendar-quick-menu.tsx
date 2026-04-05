@@ -94,26 +94,6 @@ function QuickMenuMetaChip({ label, className }: QuickMenuMetaChipProps) {
   );
 }
 
-type QuickMenuSectionProps = {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-};
-
-function QuickMenuSection({ title, hint, children }: QuickMenuSectionProps) {
-  return (
-    <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-2.5">
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">{title}</p>
-          {hint ? <p className="mt-0.5 text-[11px] text-zinc-500">{hint}</p> : null}
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
-
 type QuickActionButtonProps = {
   label: string;
   meta: string;
@@ -192,6 +172,9 @@ export function CalendarQuickMenu({
       ? completionLabel ?? "Подтверждено"
       : "Ждёт чека"
     : kindLabel;
+  const showUnscheduleAsGridButton = Boolean(slot.taskId) && !shouldShowCarryoverDecision && !requiresApproval;
+  const showUnscheduleBelowGrid = Boolean(slot.taskId) && !shouldShowCarryoverDecision && requiresApproval;
+  const hasMiddlePrimaryAction = requiresApproval || showUnscheduleAsGridButton;
 
   return (
     <div
@@ -234,8 +217,8 @@ export function CalendarQuickMenu({
           </button>
         </div>
 
-        <div className="mt-2.5 space-y-2.5">
-          <QuickMenuSection title="Основное" hint="Только ключевые поля — без длинной простыни.">
+        <div className="mt-2.5 space-y-2">
+          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-2.5">
             <div className="space-y-2.5">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">
@@ -312,33 +295,7 @@ export function CalendarQuickMenu({
                 </div>
               )}
             </div>
-          </QuickMenuSection>
-
-          {requiresApproval && (
-            <QuickMenuSection
-              title="Подтверждение"
-              hint={isCompletedSlot ? "Слот уже отмечен — можно снять отметку." : "Плановый слот нужно подтвердить вручную."}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className={`text-sm font-semibold ${isCompletedSlot ? "text-emerald-100" : "text-zinc-100"}`}>
-                    {isCompletedSlot ? (completionLabel ?? "подтверждено") : "ожидает подтверждения"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onToggleApproval(slot)}
-                  className={`shrink-0 rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
-                    isCompletedSlot
-                      ? "border-emerald-500/30 bg-emerald-950/30 text-emerald-100 hover:border-emerald-400/50 hover:bg-emerald-950/45"
-                      : "border-sky-500/30 bg-sky-950/30 text-sky-100 hover:border-sky-400/50 hover:bg-sky-950/45"
-                  }`}
-                >
-                  {isCompletedSlot ? "Снять" : "Подтвердить"}
-                </button>
-              </div>
-            </QuickMenuSection>
-          )}
+          </div>
 
           {shouldShowCarryoverDecision && (
             <SlotCarryoverDecision
@@ -347,6 +304,7 @@ export function CalendarQuickMenu({
               requiresApproval={requiresApproval}
               isCompleted={isCompletedSlot}
               compact
+              terse
               className="mb-0"
               onApplied={() => {
                 onVersionBump();
@@ -355,26 +313,25 @@ export function CalendarQuickMenu({
             />
           )}
 
-          {shouldShowQuickReschedule && (
-            <QuickMenuSection title="Перенос" hint="Быстрые варианты для сегодняшнего слота.">
-              <SlotQuickRescheduleActions
-                slot={slot}
-                todayKey={today}
-                compact
-                showLabel={false}
-                className="space-y-0"
-                onApplied={() => {
-                  onVersionBump();
-                  onClose();
-                }}
-              />
-            </QuickMenuSection>
-          )}
-
-          <QuickMenuSection title="Когда и размер" hint="Частые правки сгруппированы отдельно, чтобы глаз не спотыкался.">
+          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-2.5">
             <div className="space-y-2.5">
               <div>
                 <p className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-600">Положение</p>
+                {shouldShowQuickReschedule && (
+                  <div className="mb-1.5">
+                    <SlotQuickRescheduleActions
+                      slot={slot}
+                      todayKey={today}
+                      compact
+                      showLabel={false}
+                      className="space-y-0"
+                      onApplied={() => {
+                        onVersionBump();
+                        onClose();
+                      }}
+                    />
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-1.5">
                   <QuickActionButton
                     label="Раньше"
@@ -439,7 +396,7 @@ export function CalendarQuickMenu({
                 </div>
               </div>
             </div>
-          </QuickMenuSection>
+          </div>
 
           <div className="sticky bottom-0 -mx-2.5 border-t border-zinc-800/80 bg-linear-to-t from-zinc-950 via-zinc-950/98 to-zinc-950/82 px-2.5 pt-2.5">
             <div className="grid grid-cols-2 gap-1.5">
@@ -458,10 +415,20 @@ export function CalendarQuickMenu({
               >
                 Дублировать
               </button>
-            </div>
 
-            <div className={`mt-1.5 grid gap-1.5 ${slot.taskId && !shouldShowCarryoverDecision ? "grid-cols-2" : "grid-cols-1"}`}>
-              {slot.taskId && !shouldShowCarryoverDecision && (
+              {requiresApproval ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleApproval(slot)}
+                  className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
+                    isCompletedSlot
+                      ? "border-emerald-500/30 bg-emerald-950/30 text-emerald-100 hover:border-emerald-400/50 hover:bg-emerald-950/45"
+                      : "border-sky-500/30 bg-sky-950/30 text-sky-100 hover:border-sky-400/50 hover:bg-sky-950/45"
+                  }`}
+                >
+                  {isCompletedSlot ? "Снять" : "Подтвердить"}
+                </button>
+              ) : showUnscheduleAsGridButton ? (
                 <button
                   type="button"
                   onClick={() => onUnschedule(slot)}
@@ -469,21 +436,25 @@ export function CalendarQuickMenu({
                 >
                   Убрать слот
                 </button>
-              )}
+              ) : null}
 
               <button
                 type="button"
                 onClick={() => onDelete(slot)}
-                className="rounded-2xl border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:border-rose-400/50 hover:bg-rose-950/50"
+                className={`rounded-2xl border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:border-rose-400/50 hover:bg-rose-950/50 ${hasMiddlePrimaryAction ? "" : "col-span-2"}`}
               >
                 Удалить
               </button>
             </div>
 
-            {slot.taskId && !shouldShowCarryoverDecision && (
-              <p className="mt-1.5 pb-0.5 text-[10px] text-zinc-500">
-                Задача останется в списке, даже если убрать её слот из календаря.
-              </p>
+            {showUnscheduleBelowGrid && (
+              <button
+                type="button"
+                onClick={() => onUnschedule(slot)}
+                className="mt-1.5 w-full rounded-2xl border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-sm font-semibold text-amber-100 transition hover:border-amber-400/50 hover:bg-amber-950/35"
+              >
+                Убрать слот
+              </button>
             )}
           </div>
         </div>

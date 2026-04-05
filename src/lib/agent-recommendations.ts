@@ -1280,6 +1280,10 @@ function daysBetweenDateKeys(from: string, to: string): number {
 }
 
 function estimateTaskMinutes(task: Task): number {
+	if (typeof task.plannedMinutes === "number" && task.plannedMinutes > 0) {
+		return task.plannedMinutes;
+	}
+
 	const lower = task.title.toLowerCase();
 
 	if (/купить|заказать|позвонить|написать|проверить|follow-up|чеклист|швабр|тряпк/u.test(lower)) {

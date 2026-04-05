@@ -23,6 +23,7 @@ export type Task = {
   priority: TaskPriority;
   status: TaskStatus;
   dueDate?: string;
+  plannedMinutes?: number;
   createdAt: string;
   origin?: AutomationOrigin;
   completedAt?: string;
@@ -41,6 +42,7 @@ type AddTaskOptions = Partial<
     | "parentTaskId"
     | "priority"
     | "dueDate"
+    | "plannedMinutes"
     | "status"
     | "origin"
     | "completedAt"
@@ -54,10 +56,18 @@ function sanitizeOptionalId(value?: string | null): string | undefined {
   return next ? next : undefined;
 }
 
+function sanitizePlannedMinutes(value?: number | null): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+
+  const rounded = Math.round(value);
+  return rounded > 0 ? rounded : undefined;
+}
+
 function normalizeTasks(tasks: Task[]): Task[] {
   const prepared = tasks.map((task) => ({
     ...task,
     parentTaskId: sanitizeOptionalId(task.parentTaskId),
+    plannedMinutes: sanitizePlannedMinutes(task.plannedMinutes),
   }));
   const taskIds = new Set(prepared.map((task) => task.id));
   const taskById = new Map(prepared.map((task) => [task.id, task]));
@@ -185,6 +195,7 @@ export function addTask(
     priority: opts?.priority ?? "p2",
     status,
     dueDate: opts?.dueDate,
+    plannedMinutes: sanitizePlannedMinutes(opts?.plannedMinutes),
     createdAt: new Date().toISOString(),
     origin: opts?.origin,
     completedAt: status === "done" ? (opts?.completedAt ?? new Date().toISOString()) : undefined,
@@ -195,7 +206,14 @@ export function addTask(
 }
 
 export function updateTask(id: string, patch: Partial<Task>): void {
-  const tasks = getTasks().map((t) => (t.id === id ? { ...t, ...patch } : t));
+  const nextPatch = "plannedMinutes" in patch
+    ? {
+        ...patch,
+        plannedMinutes: sanitizePlannedMinutes(patch.plannedMinutes),
+      }
+    : patch;
+
+  const tasks = getTasks().map((t) => (t.id === id ? { ...t, ...nextPatch } : t));
   save(tasks);
 }
 

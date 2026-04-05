@@ -18,6 +18,7 @@ type SlotCarryoverDecisionProps = {
   isCompleted: boolean;
   onApplied?: () => void;
   compact?: boolean;
+  terse?: boolean;
   className?: string;
 };
 
@@ -28,6 +29,7 @@ export function SlotCarryoverDecision({
   isCompleted,
   onApplied,
   compact = false,
+  terse = false,
   className,
 }: SlotCarryoverDecisionProps) {
   const decision = getSlotCarryoverDecision({
@@ -99,12 +101,12 @@ export function SlotCarryoverDecision({
       <div className={surfaceClassName}>
         <div className="flex flex-wrap items-center gap-2">
           <span className={badgeClassName}>{decision.badge}</span>
-          <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">лучший ход</span>
+          {!terse && <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">лучший ход</span>}
         </div>
         <p className={`mt-2 ${titleClassName}`}>{decision.title}</p>
-        <p className={`mt-1 ${summaryClassName}`}>{decision.summary}</p>
+        {!terse && <p className={`mt-1 ${summaryClassName}`}>{decision.summary}</p>}
 
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className={`${terse ? "mt-2" : "mt-3"} flex flex-wrap gap-1.5`}>
           {actions.map((action) => {
             const toneClassName = action.priority === "primary"
               ? decision.tone === "rose"
@@ -151,7 +153,7 @@ export function SlotCarryoverDecision({
           })}
         </div>
 
-        {primaryAction?.hint && (
+        {!terse && primaryAction?.hint && (
           <p className={`mt-2 ${hintClassName}`}>{primaryAction.hint}</p>
         )}
       </div>
