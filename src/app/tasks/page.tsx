@@ -424,13 +424,13 @@ function toInputDateValue(date: Date): string {
 function quickDueButtonCls(isActive: boolean, size: "sm" | "md"): string {
   if (size === "md") {
     return isActive
-      ? "rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-xs font-medium text-amber-200 transition"
-      : "rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs font-medium text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
+      ? "whitespace-nowrap rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-xs font-medium text-amber-200 transition"
+      : "whitespace-nowrap rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-xs font-medium text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
   }
 
   return isActive
-    ? "rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-200 transition"
-    : "rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[10px] font-medium text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
+    ? "whitespace-nowrap rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-1 text-[10px] font-medium text-amber-200 transition"
+    : "whitespace-nowrap rounded-md border border-zinc-800 bg-zinc-900/40 px-1.5 py-1 text-[10px] font-medium text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100";
 }
 
 export default function TasksPage() {
@@ -790,6 +790,15 @@ export default function TasksPage() {
                 Завтра
               </button>
 
+              <button
+                type="button"
+                onClick={() => setDueDate("")}
+                aria-pressed={dueDate === ""}
+                className={quickDueButtonCls(dueDate === "", "md")}
+              >
+                Без даты
+              </button>
+
               <input
                 type="date"
                 value={dueDate}
@@ -991,6 +1000,15 @@ export default function TasksPage() {
                                       className={quickDueButtonCls(task.dueDate === tomorrowDateValue, "sm")}
                                     >
                                       Завтра
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetDue(task.id, "")}
+                                      aria-pressed={!task.dueDate}
+                                      className={quickDueButtonCls(!task.dueDate, "sm")}
+                                    >
+                                      Без даты
                                     </button>
 
                                     <input
