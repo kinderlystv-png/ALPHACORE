@@ -411,6 +411,13 @@ function inferComposerFactTone(project: Project | undefined): ScheduleTone {
   return "work";
 }
 
+function toInputDateValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -497,6 +504,13 @@ export default function TasksPage() {
       })
       .slice(0, 4);
   }, [getTaskProjectId, projects, tasks]);
+
+  const composerToday = useMemo(() => toInputDateValue(new Date()), []);
+  const composerTomorrow = useMemo(() => {
+    const next = new Date();
+    next.setDate(next.getDate() + 1);
+    return toInputDateValue(next);
+  }, []);
 
   const matchesProjectFilter = useCallback(
     (task: Task) => {
@@ -742,12 +756,40 @@ export default function TasksPage() {
               <PrioritySwitch value={prio} onChange={(priority) => setPrio(priority)} size="md" />
             </div>
 
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(event) => setDueDate(event.target.value)}
-              className="scheme-dark min-h-10 w-full rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none lg:w-44 lg:shrink-0"
-            />
+            <div className="flex w-full gap-2 lg:w-auto lg:shrink-0">
+              <button
+                type="button"
+                onClick={() => setDueDate(composerToday)}
+                aria-pressed={dueDate === composerToday}
+                className={`rounded-xl border px-3 py-3 text-xs font-medium transition ${
+                  dueDate === composerToday
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                    : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+                }`}
+              >
+                Сегодня
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDueDate(composerTomorrow)}
+                aria-pressed={dueDate === composerTomorrow}
+                className={`rounded-xl border px-3 py-3 text-xs font-medium transition ${
+                  dueDate === composerTomorrow
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                    : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+                }`}
+              >
+                Завтра
+              </button>
+
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(event) => setDueDate(event.target.value)}
+                className="scheme-dark min-h-10 w-full rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-300 outline-none lg:w-44 lg:shrink-0"
+              />
+            </div>
 
             <div className="flex flex-wrap items-stretch gap-2 lg:ml-auto lg:shrink-0 lg:flex-nowrap">
               <button
