@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ProjectSelectManager } from "@/components/project-select-manager";
 import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
-import { SlotCarryoverDecision } from "@/components/slot-carryover-decision";
-import { SlotQuickRescheduleActions } from "@/components/slot-quick-reschedule-actions";
+import { CalendarDesktopHint } from "@/components/calendar-desktop-hint";
+import { CalendarQuickMenu } from "@/components/calendar-quick-menu";
+
 import {
   getSlotCarryoverActions,
   getSlotCarryoverDecision,
@@ -2809,307 +2809,27 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         )}
       </div>
 
-      {quickMenu && (() => {
-        const slot = quickMenu.slot;
-        const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
-        const currentProjectId = getSlotProjectId(slot, linkedTask, projects);
-        const projectLabel = getSlotProjectLabel(slot, linkedTask, projectNameById);
-        const draftProjectLabel = quickMenu.draftProjectId
-          ? projectNameById.get(quickMenu.draftProjectId) ?? projectLabel
-          : null;
-        const isCustomSlot = slot.id.startsWith("custom-");
-        const approvalState = getScheduleSlotApprovalState(slot);
-        const requiresApproval = approvalState.requiresApproval;
-        const isCompletedSlot = approvalState.isCompleted;
-        const completionLabel = formatCompletionLabel(approvalState.completedAt);
-        const startMin = timeToMinutes(slot.start);
-        const endMin = timeToMinutes(slot.end);
-        const durationMin = endMin - startMin;
-        const draftTitle = quickMenu.draftTitle.trim();
-        const saveDisabled =
-          !draftTitle ||
-          (draftTitle === slot.title &&
-            quickMenu.draftTone === slot.tone &&
-            quickMenu.draftKind === (slot.kind === "event" ? "event" : "task") &&
-            quickMenu.draftProjectId === currentProjectId);
-        const earlierDisabled = startMin <= HOUR_START * 60;
-        const laterDisabled = endMin >= HOUR_END * 60;
-        const shorterDisabled = durationMin <= MIN_SLOT_MIN;
-        const longerDisabled = endMin + STEP_MIN > HOUR_END * 60;
-        const dayIndex = columns.findIndex((column) => column.key === slot.date);
-        const prevDay = dayIndex > 0 ? columns[dayIndex - 1]?.key : null;
-        const nextDay = dayIndex >= 0 && dayIndex < columns.length - 1 ? columns[dayIndex + 1]?.key : null;
-        const shouldShowCarryoverDecision = !isCompletedSlot && slot.date < today;
-        const shouldShowQuickReschedule = !isCompletedSlot && slot.date === today;
+      {quickMenu && (
+        <CalendarQuickMenu
+          menuRef={quickMenuRef}
+          quickMenu={quickMenu}
+          linkedTasksById={linkedTasksById}
+          projects={projects}
+          projectNameById={projectNameById}
+          columns={columns}
+          today={today}
+          onClose={closeQuickMenu}
+          onUpdateDraft={updateQuickMenuDraft}
+          onSaveDraft={saveQuickMenuDraft}
+          onDuplicate={duplicateQuickSlot}
+          onApplyPatch={applyQuickSlotPatch}
+          onDelete={deleteQuickSlot}
+          onUnschedule={unscheduleQuickSlot}
+          onToggleApproval={toggleQuickSlotApproval}
+          onVersionBump={() => setVersion((v) => v + 1)}
+        />
+      )}
 
-        const actionBtnCls =
-          "rounded-2xl border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-left text-[12px] font-medium text-zinc-200 transition hover:border-zinc-600 hover:text-zinc-50 disabled:cursor-not-allowed disabled:opacity-40";
-
-        return (
-          <div
-            ref={quickMenuRef}
-            className={quickMenu.mobile ? "fixed bottom-20 left-1/2 z-50 w-[min(22rem,calc(100vw-1rem))] -translate-x-1/2" : "fixed z-50 w-[min(24rem,calc(100vw-1.5rem))] -translate-x-1/2"}
-            style={quickMenu.mobile ? undefined : { top: quickMenu.top, left: quickMenu.left }}
-          >
-            <div className={`overflow-y-auto overscroll-contain rounded-3xl border border-zinc-800 bg-zinc-950/95 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur ${quickMenu.mobile ? "max-h-[min(70vh,34rem)] p-3" : "max-h-[min(72vh,38rem)] p-3"}`}>
-              <div className="mb-3 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-[11px] uppercase tracking-[0.16em] text-zinc-500">Быстрые команды</p>
-                  <p className="truncate text-sm font-semibold text-zinc-100">{slot.title}</p>
-                  <p className="mt-0.5 text-[11px] text-zinc-400">{formatScheduleTimeRange(slot.start, slot.end)}</p>
-                  {draftProjectLabel && (
-                    <p className="mt-1 inline-flex rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-200">
-                      {draftProjectLabel}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={closeQuickMenu}
-                  className="rounded-full border border-zinc-800 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-100"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="mb-3 space-y-2">
-                <label className="block text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">
-                  Название
-                </label>
-                <input
-                  value={quickMenu.draftTitle}
-                  onChange={(event) => updateQuickMenuDraft({ draftTitle: event.target.value })}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      saveQuickMenuDraft();
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      closeQuickMenu();
-                    }
-                  }}
-                  className="w-full rounded-2xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-zinc-600"
-                  placeholder="Название слота"
-                />
-              </div>
-
-              <div className="mb-3 space-y-2">
-                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Тон</p>
-                <div className="flex flex-wrap gap-2">
-                  {QUICK_TONE_OPTIONS.map((option) => {
-                    const tone = toneColor(option.value);
-                    const active = quickMenu.draftTone === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => updateQuickMenuDraft({ draftTone: option.value })}
-                        className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
-                          active
-                            ? `${tone.border} ${tone.bg} ${tone.text}`
-                            : "border-zinc-800 bg-zinc-900/60 text-zinc-500 hover:border-zinc-600 hover:text-zinc-200"
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {isCustomSlot && (
-                <div className="mb-3 space-y-2">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Проект</p>
-                  <ProjectSelectManager
-                    value={quickMenu.draftProjectId}
-                    projects={projects}
-                    onChange={(projectId) => updateQuickMenuDraft({ draftProjectId: projectId })}
-                    onProjectsMutate={(projectId) => {
-                      setVersion((value) => value + 1);
-                      updateQuickMenuDraft({ draftProjectId: projectId });
-                    }}
-                    creationContextLabel="выбора проекта в календарном слоте"
-                    suggestedAccent={
-                      quickMenu.draftTone === "heys"
-                        ? "orange"
-                        : quickMenu.draftTone === "health"
-                          ? "teal"
-                          : quickMenu.draftTone === "cleanup"
-                            ? "rose"
-                            : quickMenu.draftTone === "personal" || quickMenu.draftTone === "review" || quickMenu.draftTone === "family"
-                              ? "violet"
-                              : "sky"
-                    }
-                    size="sm"
-                    align="right"
-                  />
-                </div>
-              )}
-
-              {requiresApproval && (
-                <div className="mb-3 rounded-2xl border border-zinc-800 bg-zinc-900/55 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500">Подтверждение</p>
-                      <p className={`mt-1 text-sm font-semibold ${isCompletedSlot ? "text-emerald-100" : "text-zinc-100"}`}>
-                        {isCompletedSlot ? (completionLabel ?? "подтверждено") : "ожидает подтверждения"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => toggleQuickSlotApproval(slot)}
-                      className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
-                        isCompletedSlot
-                          ? "border-emerald-500/30 bg-emerald-950/30 text-emerald-100 hover:border-emerald-400/50 hover:bg-emerald-950/45"
-                          : "border-sky-500/30 bg-sky-950/30 text-sky-100 hover:border-sky-400/50 hover:bg-sky-950/45"
-                      }`}
-                    >
-                      {isCompletedSlot ? "Снять отметку" : "Подтвердить"}
-                    </button>
-                  </div>
-                  <p className="mt-2 text-[11px] text-zinc-500">
-                    Любой плановый слот подтверждается вручную. Фиксированные окна без чека живут отдельно и не требуют одобрения.
-                  </p>
-                </div>
-              )}
-
-              {shouldShowCarryoverDecision && (
-                <SlotCarryoverDecision
-                  slot={slot}
-                  todayKey={today}
-                  requiresApproval={requiresApproval}
-                  isCompleted={isCompletedSlot}
-                  className="mb-3"
-                  onApplied={() => {
-                    setVersion((value) => value + 1);
-                    setQuickMenu(null);
-                  }}
-                />
-              )}
-
-              {shouldShowQuickReschedule && (
-                <SlotQuickRescheduleActions
-                  slot={slot}
-                  todayKey={today}
-                  className="mb-3"
-                  onApplied={() => {
-                    setVersion((value) => value + 1);
-                    setQuickMenu(null);
-                  }}
-                />
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  className={actionBtnCls}
-                  disabled={earlierDisabled}
-                  onClick={() =>
-                    applyQuickSlotPatch(slot, {
-                      start: minutesToCalendarTime(startMin - STEP_MIN),
-                      end: minutesToCalendarTime(endMin - STEP_MIN),
-                    })
-                  }
-                >
-                  ↑ раньше 30м
-                </button>
-                <button
-                  type="button"
-                  className={actionBtnCls}
-                  disabled={laterDisabled}
-                  onClick={() =>
-                    applyQuickSlotPatch(slot, {
-                      start: minutesToCalendarTime(startMin + STEP_MIN),
-                      end: minutesToCalendarTime(endMin + STEP_MIN),
-                    })
-                  }
-                >
-                  ↓ позже 30м
-                </button>
-
-                <button
-                  type="button"
-                  className={actionBtnCls}
-                  disabled={!prevDay}
-                  onClick={() => prevDay && applyQuickSlotPatch(slot, { date: prevDay })}
-                >
-                  ← на день
-                </button>
-                <button
-                  type="button"
-                  className={actionBtnCls}
-                  disabled={!nextDay}
-                  onClick={() => nextDay && applyQuickSlotPatch(slot, { date: nextDay })}
-                >
-                  → на день
-                </button>
-
-                <button
-                  type="button"
-                  className={actionBtnCls}
-                  disabled={shorterDisabled}
-                  onClick={() =>
-                    applyQuickSlotPatch(slot, {
-                      end: minutesToCalendarTime(endMin - STEP_MIN),
-                    })
-                  }
-                >
-                  − длительность
-                </button>
-                <button
-                  type="button"
-                  className={actionBtnCls}
-                  disabled={longerDisabled}
-                  onClick={() =>
-                    applyQuickSlotPatch(slot, {
-                      end: minutesToCalendarTime(endMin + STEP_MIN),
-                    })
-                  }
-                >
-                  + длительность
-                </button>
-              </div>
-
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={saveQuickMenuDraft}
-                  disabled={saveDisabled}
-                  className="rounded-2xl border border-sky-500/30 bg-sky-950/30 px-3 py-2 text-sm font-semibold text-sky-200 transition hover:border-sky-400/50 hover:bg-sky-950/50 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Сохранить
-                </button>
-                <button
-                  type="button"
-                  onClick={duplicateQuickSlot}
-                  className="rounded-2xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500 hover:bg-zinc-900"
-                >
-                  Дублировать
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => deleteQuickSlot(slot)}
-                className="mt-3 w-full rounded-2xl border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-sm font-semibold text-rose-200 transition hover:border-rose-400/50 hover:bg-rose-950/50"
-              >
-                Удалить
-              </button>
-
-              {slot.taskId && !shouldShowCarryoverDecision && (
-                <button
-                  type="button"
-                  onClick={() => unscheduleQuickSlot(slot)}
-                  className="mt-3 w-full rounded-2xl border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-sm font-semibold text-amber-100 transition hover:border-amber-400/50 hover:bg-amber-950/35"
-                >
-                  Убрать слот, оставить задачу
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })()}
 
       {activeEdit && (() => {
         const startTop = slotTop(activeEdit.draft.start);
@@ -3182,93 +2902,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
         );
       })()}
 
-      {desktopSlotHint && (() => {
-        const toneClass = desktopSlotHint.tone === "rose"
-          ? "border-rose-400/45 bg-rose-950/94 text-rose-50"
-          : desktopSlotHint.tone === "amber"
-            ? "border-amber-400/45 bg-amber-950/94 text-amber-50"
-            : desktopSlotHint.tone === "emerald"
-              ? "border-emerald-400/45 bg-emerald-950/94 text-emerald-50"
-              : desktopSlotHint.tone === "violet"
-                ? "border-violet-400/45 bg-violet-950/94 text-violet-50"
-            : desktopSlotHint.tone === "sky"
-              ? "border-sky-400/40 bg-zinc-950/94 text-zinc-50"
-              : "border-zinc-700/80 bg-zinc-950/94 text-zinc-50";
-        const eyebrowClass = desktopSlotHint.tone === "rose"
-          ? "text-rose-200/90"
-          : desktopSlotHint.tone === "amber"
-            ? "text-amber-200/90"
-            : desktopSlotHint.tone === "emerald"
-              ? "text-emerald-200/90"
-              : desktopSlotHint.tone === "violet"
-                ? "text-violet-200/90"
-            : desktopSlotHint.tone === "sky"
-              ? "text-sky-300/90"
-              : "text-zinc-400";
-        const summaryClass = desktopSlotHint.tone === "rose"
-          ? "text-rose-100/78"
-          : desktopSlotHint.tone === "amber"
-            ? "text-amber-100/78"
-            : desktopSlotHint.tone === "emerald"
-              ? "text-emerald-100/82"
-              : desktopSlotHint.tone === "violet"
-                ? "text-violet-100/82"
-            : "text-zinc-200/80";
-        const detailClass = desktopSlotHint.tone === "rose"
-          ? "text-rose-200/78"
-          : desktopSlotHint.tone === "amber"
-            ? "text-amber-200/78"
-            : desktopSlotHint.tone === "emerald"
-              ? "text-emerald-200/78"
-              : desktopSlotHint.tone === "violet"
-                ? "text-violet-200/78"
-            : desktopSlotHint.tone === "sky"
-              ? "text-sky-200/78"
-              : "text-zinc-400";
-
-        return (
-          <div
-            className="pointer-events-none fixed z-40"
-            style={{ left: desktopSlotHint.left, top: desktopSlotHint.top, width: DESKTOP_SLOT_HINT_WIDTH }}
-          >
-            <div className={`rounded-2xl border px-3 py-3 shadow-[0_18px_40px_rgba(0,0,0,0.35)] backdrop-blur ${toneClass}`}>
-              <div className="flex items-start gap-2">
-                {desktopSlotHint.icon && (
-                  <span className="mt-0.5 text-base" aria-hidden="true">
-                    {desktopSlotHint.icon}
-                  </span>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className={`text-[10px] font-medium uppercase tracking-[0.16em] ${eyebrowClass}`}>
-                    {desktopSlotHint.eyebrow}
-                  </p>
-                  <p className="mt-1 text-[13px] font-semibold leading-5">
-                    {desktopSlotHint.title}
-                  </p>
-                </div>
-              </div>
-              <p className={`mt-1 text-[11px] leading-5 ${summaryClass}`}>
-                {desktopSlotHint.summary}
-              </p>
-              {desktopSlotHint.points && desktopSlotHint.points.length > 0 && (
-                <ul className={`mt-2 space-y-1 text-[10px] leading-4 ${detailClass}`}>
-                  {desktopSlotHint.points.map((point) => (
-                    <li key={point} className="flex items-start gap-2">
-                      <span className="mt-0.5 text-[8px]">●</span>
-                      <span>{point}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {desktopSlotHint.detail && (
-                <p className={`mt-2 text-[10px] leading-4 ${detailClass}`}>
-                  {desktopSlotHint.detail}
-                </p>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+      {desktopSlotHint && <CalendarDesktopHint hint={desktopSlotHint} />}
     </section>
   );
 }
