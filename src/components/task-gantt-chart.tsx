@@ -760,13 +760,11 @@ function buildDependencyPath(fromX: number, fromY: number, toX: number, toY: num
     ? fromY + Math.max(14, Math.min(30, (toY - fromY) / 2))
     : fromY + 14;
 
-  if (toY >= fromY || toX >= fromX) {
-    return `M ${fromX} ${fromY} V ${elbowY} H ${toX} V ${toY}`;
-  }
+  const approachX = toX >= fromX
+    ? Math.max(fromX + 14, toX - Math.min(28, Math.max((toX - fromX) / 3, 14)))
+    : Math.max(toX - 18, 0);
 
-  const elbowX = fromX + 18;
-
-  return `M ${fromX} ${fromY} V ${elbowY} H ${elbowX} V ${toY} H ${toX}`;
+  return `M ${fromX} ${fromY} V ${elbowY} H ${approachX} V ${toY} H ${toX}`;
 }
 
 function sortNodesByDependencies(nodes: GanttTaskNode[]): GanttTaskNode[] {
@@ -3781,7 +3779,7 @@ export function TaskGanttChart({
         {onTaskPlannedMinutesChange && <span>Правый край — финиш или длительность</span>}
         <span>Пунктир — сводный rollup родителя</span>
         <span>Серый ghost — baseline до первого сдвига</span>
-        <span>Точка слева у слота/бара — потяни к другому бару, чтобы создать зависимость</span>
+        <span>Точка снизу у бара/слота — потяни к другому бару, чтобы создать зависимость</span>
         <span>Стрелка — dependency finish → start, клик по ней снимает связь</span>
         <span>Кнопка «Риски / цепочка» — фокус на slip и blocker tasks</span>
         <span>Фуксия — critical chain вокруг risky узлов</span>
