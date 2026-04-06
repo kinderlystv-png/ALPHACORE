@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ProjectSelectManager } from "@/components/project-select-manager";
 import { TaskGanttChart, type GanttDependencyLink, type GanttGroup, type GanttScheduledSlot, type GanttTaskProgress } from "@/components/task-gantt-chart";
-import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
+import { clearTaskDragData, readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import {
   PROJECT_ACCENT_CLS,
@@ -1434,6 +1434,7 @@ export default function TasksPage() {
   }, []);
 
   const handleTaskDragEnd = useCallback(() => {
+    clearTaskDragData();
     setDraggedTaskId(null);
     setNestDropTargetId(null);
     setGroupDropTargetId(null);
@@ -1465,6 +1466,7 @@ export default function TasksPage() {
 
       event.preventDefault();
       event.stopPropagation();
+      clearTaskDragData();
       setDraggedTaskId(null);
       setNestDropTargetId(null);
       setGroupDropTargetId(null);
@@ -1505,6 +1507,7 @@ export default function TasksPage() {
 
       event.preventDefault();
       event.stopPropagation();
+      clearTaskDragData();
       setDraggedTaskId(null);
       setNestDropTargetId(null);
       setGroupDropTargetId(null);
@@ -1518,6 +1521,28 @@ export default function TasksPage() {
       );
     },
     [draggedTaskId, handleSetProject],
+  );
+
+  const canNestTaskInGantt = useCallback(
+    (taskId: string, parentTaskId: string) => {
+      const targetTask = taskById.get(parentTaskId);
+      if (!targetTask || targetTask.status === "done") return false;
+      return canAssignTaskParent(taskId, parentTaskId, tasks);
+    },
+    [taskById, tasks],
+  );
+
+  const handleNestTaskInGantt = useCallback(
+    (taskId: string, parentTaskId: string) => {
+      const targetTask = taskById.get(parentTaskId);
+      if (!targetTask || targetTask.status === "done") return;
+      if (!canAssignTaskParent(taskId, parentTaskId, tasks)) return;
+
+      const updatedTasks = assignTaskParent(taskId, parentTaskId);
+      syncTaskTreeSlots(updatedTasks);
+      reload();
+    },
+    [reload, syncTaskTreeSlots, taskById, tasks],
   );
 
   const visible = tasks.filter(
@@ -2165,6 +2190,9 @@ export default function TasksPage() {
                 progressByTaskId={ganttProgressByTaskId}
                 dependencyLinks={ganttDependencyLinks}
                 dependencyTargetsByTaskId={dependencyTargetIdsByTaskId}
+                onTaskProjectDrop={handleSetProject}
+                onTaskParentDrop={handleNestTaskInGantt}
+                canTaskParentDrop={canNestTaskInGantt}
                 onTaskRangeChange={handleSetRange}
                 onDependencyLinkCreate={handleAddBlocker}
                 onDependencyLinkRemove={handleRemoveBlocker}

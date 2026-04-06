@@ -14,7 +14,7 @@ import {
   type EditableSlotDraft,
   type DragState,
 } from "@/components/calendar-grid-types";
-import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
+import { clearTaskDragData, readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { taskArea } from "@/lib/life-areas";
 import {
   upsertTaskSlot,
@@ -154,6 +154,7 @@ export function useCalendarTaskDragAndDrop({
       event.preventDefault();
       setDropTarget(null);
       const taskId = readTaskDragId(event.dataTransfer) ?? drag?.taskId ?? null;
+      clearTaskDragData();
       if (!taskId) return;
 
       moveTaskToDay(taskId, targetDay);
@@ -167,6 +168,7 @@ export function useCalendarTaskDragAndDrop({
       event.preventDefault();
       setDropTarget(null);
       const taskId = readTaskDragId(event.dataTransfer) ?? drag?.taskId ?? null;
+      clearTaskDragData();
       if (!taskId) return;
 
       const startMinutes = getTaskDropStartMinutes(event, hour);
@@ -177,6 +179,7 @@ export function useCalendarTaskDragAndDrop({
   );
 
   const endTaskDrag = useCallback(() => {
+    clearTaskDragData();
     setDrag(null);
     setDropTarget(null);
   }, []);

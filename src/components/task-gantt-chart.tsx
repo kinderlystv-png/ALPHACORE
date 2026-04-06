@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { writeTaskDragData } from "@/lib/dashboard-events";
+import { clearTaskDragData, readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import type { ScheduleTone } from "@/lib/schedule";
 import { lsGet, lsSet } from "@/lib/storage";
@@ -49,6 +49,9 @@ export type TaskGanttChartProps = {
   progressByTaskId?: Record<string, GanttTaskProgress>;
   dependencyLinks?: GanttDependencyLink[];
   dependencyTargetsByTaskId?: Record<string, string[]>;
+  onTaskProjectDrop?: (taskId: string, projectId: string, fallbackProjectLabel?: string) => void;
+  onTaskParentDrop?: (taskId: string, parentTaskId: string) => void;
+  canTaskParentDrop?: (taskId: string, parentTaskId: string) => boolean;
   onTaskRangeChange: (taskId: string, patch: { startDate?: string; dueDate?: string }) => void;
   onDependencyLinkCreate?: (taskId: string, blockerId: string) => void;
   onDependencyLinkRemove?: (taskId: string, blockerId: string) => void;
@@ -1000,6 +1003,9 @@ export function TaskGanttChart({
   progressByTaskId = {},
   dependencyLinks = [],
   dependencyTargetsByTaskId = {},
+  onTaskProjectDrop,
+  onTaskParentDrop,
+  canTaskParentDrop,
   onTaskRangeChange,
   onDependencyLinkCreate,
   onDependencyLinkRemove,
@@ -1054,6 +1060,8 @@ export function TaskGanttChart({
   });
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
   const [dependencyDraft, setDependencyDraft] = useState<DependencyDraftState | null>(null);
+  const [externalDropGroupId, setExternalDropGroupId] = useState<string | null>(null);
+  const [externalDropTaskId, setExternalDropTaskId] = useState<string | null>(null);
 
   const today = useMemo(() => d0(new Date()), []);
   const timelineStart = useMemo(() => addDays(today, -PAST_DAYS), [today]);
@@ -2430,15 +2438,140 @@ export function TaskGanttChart({
     writeTaskDragData(event.dataTransfer, taskId);
     event.dataTransfer.effectAllowed = "move";
     suppressClickRef.current = taskId;
+    setExternalDropGroupId(null);
+    setExternalDropTaskId(null);
   }, []);
 
   const handleTaskExternalDragEnd = useCallback((taskId: string) => {
+    clearTaskDragData();
+    setExternalDropGroupId(null);
+    setExternalDropTaskId(null);
     window.setTimeout(() => {
       if (suppressClickRef.current === taskId) {
         suppressClickRef.current = null;
       }
     }, 180);
   }, []);
+
+  useEffect(() => {
+    if (!externalDropGroupId && !externalDropTaskId) return;
+
+    const clearDragState = () => {
+      setExternalDropGroupId(null);
+      setExternalDropTaskId(null);
+    };
+
+    window.addEventListener("dragend", clearDragState);
+    window.addEventListener("drop", clearDragState);
+
+    return () => {
+      window.removeEventListener("dragend", clearDragState);
+      window.removeEventListener("drop", clearDragState);
+    };
+  }, [externalDropGroupId, externalDropTaskId]);
+
+  const handleGroupProjectDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>, group: GanttGroup) => {
+      if (!onTaskProjectDrop) return;
+
+      const taskId = readTaskDragId(event.dataTransfer);
+      if (!taskId) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      setExternalDropGroupId(group.id);
+      setExternalDropTaskId(null);
+    },
+    [onTaskProjectDrop],
+  );
+
+  const handleGroupProjectDragLeave = useCallback((event: React.DragEvent<HTMLElement>, groupId: string) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setExternalDropGroupId((current) => (current === groupId ? null : current));
+  }, []);
+
+  const handleTaskParentDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>, task: Task) => {
+      if (!onTaskParentDrop) return;
+
+      const taskId = readTaskDragId(event.dataTransfer);
+      if (!taskId) return;
+
+      const canDrop = canTaskParentDrop
+        ? canTaskParentDrop(taskId, task.id)
+        : taskId !== task.id && task.status !== "done";
+
+      if (!canDrop) {
+        setExternalDropTaskId((current) => (current === task.id ? null : current));
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      setExternalDropGroupId(null);
+      setExternalDropTaskId(task.id);
+    },
+    [canTaskParentDrop, onTaskParentDrop],
+  );
+
+  const handleTaskParentDragLeave = useCallback((event: React.DragEvent<HTMLElement>, taskId: string) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setExternalDropTaskId((current) => (current === taskId ? null : current));
+  }, []);
+
+  const handleTaskParentDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>, task: Task) => {
+      if (!onTaskParentDrop) return;
+
+      const taskId = readTaskDragId(event.dataTransfer);
+      if (!taskId) return;
+
+      const canDrop = canTaskParentDrop
+        ? canTaskParentDrop(taskId, task.id)
+        : taskId !== task.id && task.status !== "done";
+
+      if (!canDrop) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      clearTaskDragData();
+      setExternalDropGroupId(null);
+      setExternalDropTaskId(null);
+      onTaskParentDrop(taskId, task.id);
+    },
+    [canTaskParentDrop, onTaskParentDrop],
+  );
+
+  const handleGroupProjectDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>, group: GanttGroup) => {
+      if (!onTaskProjectDrop) return;
+
+      const taskId = readTaskDragId(event.dataTransfer);
+      if (!taskId) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      clearTaskDragData();
+      setExternalDropGroupId(null);
+      setExternalDropTaskId(null);
+      onTaskProjectDrop(
+        taskId,
+        group.project?.id ?? "",
+        group.project ? undefined : group.label === "Без группы" ? undefined : group.label,
+      );
+    },
+    [onTaskProjectDrop],
+  );
 
   const totalOpenTasks = useMemo(
     () => displayGroups.reduce((sum, group) => sum + group.openCount, 0),
@@ -2962,14 +3095,28 @@ export function TaskGanttChart({
                     criticalCount: 0,
                   };
                   const collapsed = collapsedGroups.has(row.group.id);
+                  const isExternalDropTarget = externalDropGroupId === row.group.id;
 
                   return (
-                    <div key={row.key} className="flex border-b border-zinc-800/30" style={{ height: GROUP_H }}>
+                    <div
+                      key={row.key}
+                      onDragEnter={(event) => handleGroupProjectDragOver(event, row.group)}
+                      onDragOver={(event) => handleGroupProjectDragOver(event, row.group)}
+                      onDragLeave={(event) => handleGroupProjectDragLeave(event, row.group.id)}
+                      onDrop={(event) => handleGroupProjectDrop(event, row.group)}
+                      className={`flex border-b border-zinc-800/30 transition ${
+                        isExternalDropTarget ? "bg-sky-500/8 ring-2 ring-inset ring-sky-400/35" : ""
+                      }`}
+                      style={{ height: GROUP_H }}
+                    >
                       <button
                         type="button"
                         onClick={() => toggleGroup(row.group.id)}
-                        className="sticky left-0 z-10 flex shrink-0 items-center gap-2 border-r border-zinc-800/40 px-3 text-[11px] font-semibold text-zinc-100 transition hover:brightness-110"
+                        className={`sticky left-0 z-10 flex shrink-0 items-center gap-2 border-r border-zinc-800/40 px-3 text-[11px] font-semibold text-zinc-100 transition hover:brightness-110 ${
+                          isExternalDropTarget ? "border-sky-400/35 text-sky-50" : ""
+                        }`}
                         style={{ width: LABEL_W, background: surface.headerBg }}
+                        title={isExternalDropTarget ? `Отпускай — задача переедет в «${row.group.label}»` : undefined}
                       >
                         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${groupDotCls(row.group)}`} />
                         <span className="truncate text-left">{row.group.label}</span>
@@ -3268,13 +3415,26 @@ export function TaskGanttChart({
                     : dependencyTargetState === "source"
                       ? "ring-2 ring-cyan-100/35"
                       : "";
+                const isExternalTaskDropTarget = externalDropTaskId === task.id;
 
                 return (
-                  <div key={row.key} className="flex border-b border-zinc-800/20" style={{ height: ROW_H }}>
+                  <div
+                    key={row.key}
+                    onDragEnter={(event) => handleTaskParentDragOver(event, task)}
+                    onDragOver={(event) => handleTaskParentDragOver(event, task)}
+                    onDragLeave={(event) => handleTaskParentDragLeave(event, task.id)}
+                    onDrop={(event) => handleTaskParentDrop(event, task)}
+                    className={`flex border-b border-zinc-800/20 transition ${
+                      isExternalTaskDropTarget ? "bg-sky-500/8 ring-2 ring-inset ring-sky-400/30" : ""
+                    }`}
+                    style={{ height: ROW_H }}
+                  >
                     <div
-                      className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-zinc-800/30 px-2 text-[10px]"
+                      className={`sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-zinc-800/30 px-2 text-[10px] ${
+                        isExternalTaskDropTarget ? "border-sky-400/30 text-sky-50" : ""
+                      }`}
                       style={{ width: LABEL_W, paddingLeft: 10 + row.depth * 14, background: surface.labelBg }}
-                      title={task.title}
+                      title={isExternalTaskDropTarget ? `Отпускай — задача станет подзадачей внутри «${task.title}»` : task.title}
                     >
                       <span className={`shrink-0 font-bold uppercase ${priorityTone}`} style={{ fontSize: 8 }}>
                         {task.priority}
@@ -3369,6 +3529,11 @@ export function TaskGanttChart({
                     </div>
 
                     <div className="relative" style={{ width: gridWidth }}>
+                      {isExternalTaskDropTarget && (
+                        <div className="pointer-events-none absolute inset-1 flex items-center rounded-xl border border-dashed border-sky-400/35 bg-sky-500/6 px-3 text-[10px] font-medium text-sky-100">
+                          Отпускай — задача станет подзадачей внутри «{task.title}»
+                        </div>
+                      )}
                       {showRollup && row.rollupSpan && (
                         <div
                           className="absolute top-1/2 -translate-y-1/2 rounded-full border border-dashed border-violet-400/30 bg-violet-500/10"
