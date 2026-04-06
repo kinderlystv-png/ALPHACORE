@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
+import type { ScheduleTone } from "@/lib/schedule";
 import { lsGet, lsSet } from "@/lib/storage";
 import type { Project, ProjectAccent } from "@/lib/projects";
 import type { Task } from "@/lib/tasks";
@@ -22,8 +23,17 @@ export type GanttGroup = {
   openCount: number;
 };
 
+export type GanttScheduledSlot = {
+  date: string;
+  start: string;
+  end: string;
+  title: string;
+  tone: ScheduleTone;
+};
+
 export type TaskGanttChartProps = {
   groups: GanttGroup[];
+  scheduledSlotsByTaskId?: Record<string, GanttScheduledSlot>;
   onTaskRangeChange: (taskId: string, patch: { startDate?: string; dueDate?: string }) => void;
   onTaskPlannedMinutesChange?: (taskId: string, minutes: number | null) => void;
 };
@@ -100,6 +110,7 @@ type InteractionState = {
 type PersistedGanttUiState = {
   zoom?: ZoomLevel;
   collapsedGroups?: string[];
+  showNoEstimateOnly?: boolean;
 };
 
 const BAR_BG: Record<ProjectAccent, string> = {
@@ -124,6 +135,28 @@ const DOT: Record<ProjectAccent, string> = {
   violet: "bg-violet-400",
   teal: "bg-teal-400",
   rose: "bg-rose-400",
+};
+
+const SLOT_BG: Record<ScheduleTone, string> = {
+  kinderly: "bg-sky-300/85",
+  heys: "bg-orange-300/85",
+  work: "bg-zinc-300/80",
+  health: "bg-emerald-300/85",
+  personal: "bg-violet-300/85",
+  cleanup: "bg-rose-300/85",
+  family: "bg-fuchsia-300/85",
+  review: "bg-amber-300/85",
+};
+
+const SLOT_BD: Record<ScheduleTone, string> = {
+  kinderly: "border-sky-100/35",
+  heys: "border-orange-100/35",
+  work: "border-zinc-100/25",
+  health: "border-emerald-100/35",
+  personal: "border-violet-100/35",
+  cleanup: "border-rose-100/35",
+  family: "border-fuchsia-100/35",
+  review: "border-amber-100/35",
 };
 
 function d0(date: Date): Date {
@@ -199,6 +232,37 @@ function formatDayLabel(value?: string): string | null {
   });
 }
 
+function parseClockMinutes(value: string): number {
+  const [hours, minutes] = value.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
+  return clamp(hours * 60 + minutes, 0, 24 * 60);
+}
+
+function countNodes(nodes: GanttTaskNode[]): number {
+  return nodes.reduce((sum, node) => sum + 1 + countNodes(node.children), 0);
+}
+
+function countNoEstimateNodes(nodes: GanttTaskNode[]): number {
+  return nodes.reduce(
+    (sum, node) => sum + (node.task.plannedMinutes ? 0 : 1) + countNoEstimateNodes(node.children),
+    0,
+  );
+}
+
+function filterNodesByNoEstimate(nodes: GanttTaskNode[]): GanttTaskNode[] {
+  return nodes.flatMap((node) => {
+    const filteredChildren = filterNodesByNoEstimate(node.children);
+    const matches = !node.task.plannedMinutes;
+
+    if (!matches && filteredChildren.length === 0) return [];
+
+    return [{
+      ...node,
+      children: filteredChildren,
+    }];
+  });
+}
+
 function resolveTaskStartDate(task: Task): Date {
   const explicitStart = parseDay(task.startDate);
   if (explicitStart) return explicitStart;
@@ -225,7 +289,7 @@ function clampDueDate(nextDue: Date, startDate?: string): Date {
   return nextDue < start ? start : nextDue;
 }
 
-function buildTaskTooltip(task: Task): string {
+function buildTaskTooltip(task: Task, slot?: GanttScheduledSlot): string {
   const lines = [task.title, `Приоритет: ${task.priority.toUpperCase()}`];
   const startLabel = formatDayLabel(task.startDate);
   const dueLabel = formatDayLabel(task.dueDate);
@@ -234,7 +298,12 @@ function buildTaskTooltip(task: Task): string {
   if (startLabel) lines.push(`Старт: ${startLabel}`);
   if (dueLabel) lines.push(`Финиш: ${dueLabel}`);
   if (plannedLabel) lines.push(`Оценка: ${plannedLabel}`);
+  else lines.push("Оценка: нет");
   if (task.project) lines.push(`Проект: ${task.project}`);
+  if (slot) {
+    const slotDay = formatDayLabel(slot.date);
+    lines.push(`Слот: ${slot.start}–${slot.end}${slotDay ? ` · ${slotDay}` : ""}`);
+  }
 
   return lines.join("\n");
 }
@@ -259,6 +328,37 @@ function getOverdueTailSpan(
     width: Math.max((endIndex - startIndex + 0.5) * dayWidth, 6),
     startIndex,
     endIndex,
+  };
+}
+
+function computeScheduledSlotVisual(
+  slot: GanttScheduledSlot,
+  timelineStart: Date,
+  totalDays: number,
+  dayWidth: number,
+): Span | undefined {
+  const day = parseDay(slot.date);
+  if (!day) return undefined;
+
+  const dayIndex = diffDays(timelineStart, day);
+  if (dayIndex < 0 || dayIndex >= totalDays) return undefined;
+
+  const startMinutes = parseClockMinutes(slot.start);
+  const endMinutes = Math.max(startMinutes + 15, parseClockMinutes(slot.end));
+  const inset = Math.max(dayWidth * 0.08, 1);
+  const usableWidth = Math.max(dayWidth - inset * 2, 6);
+  const left = dayIndex * dayWidth + inset + (startMinutes / (24 * 60)) * usableWidth;
+  const rawWidth = ((endMinutes - startMinutes) / (24 * 60)) * usableWidth;
+  const width = Math.min(
+    usableWidth - (left - dayIndex * dayWidth - inset),
+    Math.max(rawWidth, Math.min(usableWidth, Math.max(6, dayWidth * 0.16))),
+  );
+
+  return {
+    left,
+    width,
+    startIndex: dayIndex,
+    endIndex: dayIndex,
   };
 }
 
@@ -523,6 +623,7 @@ function computeTaskVisual(
 
 export function TaskGanttChart({
   groups,
+  scheduledSlotsByTaskId = {},
   onTaskRangeChange,
   onTaskPlannedMinutesChange,
 }: TaskGanttChartProps) {
@@ -536,6 +637,10 @@ export function TaskGanttChart({
   const [zoom, setZoom] = useState<ZoomLevel>(() => {
     const persisted = readPersistedGanttUiState();
     return isZoomLevel(persisted.zoom) ? persisted.zoom : "month";
+  });
+  const [showNoEstimateOnly, setShowNoEstimateOnly] = useState<boolean>(() => {
+    const persisted = readPersistedGanttUiState();
+    return Boolean(persisted.showNoEstimateOnly);
   });
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
 
@@ -582,6 +687,25 @@ export function TaskGanttChart({
     return result;
   }, [dayWidth, days]);
 
+  const noEstimateCount = useMemo(
+    () => groups.reduce((sum, group) => sum + countNoEstimateNodes(group.nodes), 0),
+    [groups],
+  );
+
+  const displayGroups = useMemo(() => {
+    return groups
+      .map((group) => {
+        const nodes = showNoEstimateOnly ? filterNodesByNoEstimate(group.nodes) : group.nodes;
+
+        return {
+          ...group,
+          nodes,
+          openCount: countNodes(nodes),
+        } satisfies GanttGroup;
+      })
+      .filter((group) => group.nodes.length > 0);
+  }, [groups, showNoEstimateOnly]);
+
   const derived = useMemo(() => {
     const loadByDay = Array.from({ length: totalDays }, () => 0);
     const orderedRows: DerivedRow[] = [];
@@ -625,7 +749,7 @@ export function TaskGanttChart({
       };
     };
 
-    for (const group of groups) {
+    for (const group of displayGroups) {
       const nodeResults = group.nodes.map((node) => buildNodeRows(group, node));
       const groupRollup = mergeSpans(nodeResults.map((result) => result.span));
 
@@ -647,7 +771,7 @@ export function TaskGanttChart({
     );
 
     return { orderedRows, bodyHeight, loadByDay };
-  }, [buildVisual, collapsedGroups, groups, totalDays]);
+  }, [buildVisual, collapsedGroups, displayGroups, totalDays]);
 
   const maxLoad = useMemo(() => Math.max(...derived.loadByDay, 0), [derived.loadByDay]);
 
@@ -655,8 +779,9 @@ export function TaskGanttChart({
     lsSet(GANTT_UI_STATE_KEY, {
       zoom,
       collapsedGroups: Array.from(collapsedGroups),
+      showNoEstimateOnly,
     } satisfies PersistedGanttUiState);
-  }, [collapsedGroups, zoom]);
+  }, [collapsedGroups, showNoEstimateOnly, zoom]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -877,8 +1002,8 @@ export function TaskGanttChart({
   }, []);
 
   const totalOpenTasks = useMemo(
-    () => groups.reduce((sum, group) => sum + group.openCount, 0),
-    [groups],
+    () => displayGroups.reduce((sum, group) => sum + group.openCount, 0),
+    [displayGroups],
   );
 
   return (
@@ -892,6 +1017,19 @@ export function TaskGanttChart({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowNoEstimateOnly((current) => !current)}
+            aria-pressed={showNoEstimateOnly}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
+              showNoEstimateOnly
+                ? "border-amber-400/40 bg-amber-500/12 text-amber-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+            }`}
+            title="Сфокусироваться на задачах без plannedMinutes"
+          >
+            Без оценки · {noEstimateCount}
+          </button>
           {(Object.entries(ZOOM_OPTIONS) as Array<[ZoomLevel, (typeof ZOOM_OPTIONS)[ZoomLevel]]>).map(([key, option]) => {
             const active = zoom === key;
             return (
@@ -1038,6 +1176,10 @@ export function TaskGanttChart({
                 const interactionForTask = interaction?.taskId === task.id ? interaction : null;
                 const previewTask = buildPreviewTask(task, interactionForTask);
                 const previewVisual = buildVisual(previewTask);
+                const scheduledSlot = scheduledSlotsByTaskId[task.id];
+                const scheduledSlotVisual = scheduledSlot
+                  ? computeScheduledSlotVisual(scheduledSlot, timelineStart, totalDays, dayWidth)
+                  : undefined;
                 const baseTone = groupBarTone(group);
                 const urgencyTone = taskUrgencyTone(previewTask, today);
                 const priorityTone =
@@ -1047,8 +1189,12 @@ export function TaskGanttChart({
                       ? "text-amber-400"
                       : "text-zinc-600";
                 const planned = durationLabel(previewTask.plannedMinutes);
+                const isNoEstimate = !task.plannedMinutes;
+                const slotTone = scheduledSlot
+                  ? { bg: SLOT_BG[scheduledSlot.tone], border: SLOT_BD[scheduledSlot.tone] }
+                  : null;
                 const showRollup = row.hasChildren && row.rollupSpan && row.rollupSpan.width > previewVisual.width + 8;
-                const taskTooltip = buildTaskTooltip(previewTask);
+                const taskTooltip = buildTaskTooltip(previewTask, scheduledSlot);
                 const overdueTail = getOverdueTailSpan(previewTask, timelineStart, today, totalDays, dayWidth);
                 const canResizeStart = Boolean(task.dueDate);
                 const canResizeEnd = Boolean(task.startDate && task.dueDate) || Boolean(task.plannedMinutes && onTaskPlannedMinutesChange);
@@ -1068,6 +1214,11 @@ export function TaskGanttChart({
                       </span>
                       {row.hasChildren && <span className="text-zinc-600">▸</span>}
                       <span className="truncate text-zinc-300">{task.title}</span>
+                      {isNoEstimate && (
+                        <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                          без оценки
+                        </span>
+                      )}
                       {planned && (
                         <span className="shrink-0 rounded-full border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-200">
                           {planned}
@@ -1091,11 +1242,26 @@ export function TaskGanttChart({
                         />
                       )}
 
+                      {scheduledSlotVisual && slotTone && (
+                        <div
+                          className={`pointer-events-none absolute rounded-full border ${slotTone.bg} ${slotTone.border}`}
+                          style={{
+                            left: scheduledSlotVisual.left,
+                            width: scheduledSlotVisual.width,
+                            top: ROW_H - 8,
+                            height: 5,
+                          }}
+                          title={`Слот ${scheduledSlot.start}–${scheduledSlot.end}: ${scheduledSlot.title}`}
+                        />
+                      )}
+
                       <button
                         type="button"
                         onClick={() => openTaskInList(task.id)}
                         onPointerDown={(event) => beginMove(event, task)}
                         className={`absolute rounded-lg border ${baseTone.bg} ${baseTone.border} ${urgencyTone} ${
+                          isNoEstimate ? "border-dashed ring-1 ring-amber-300/35 saturate-125" : ""
+                        } ${
                           task.priority === "p3" ? "opacity-55" : ""
                         } ${interactionForTask?.mode === "move" ? "z-20 shadow-lg shadow-black/30" : ""} transition-shadow`}
                         style={{
@@ -1176,6 +1342,8 @@ export function TaskGanttChart({
         <span>Левый край — задаёт старт</span>
         {onTaskPlannedMinutesChange && <span>Правый край — финиш или длительность</span>}
         <span>Пунктир — сводный rollup родителя</span>
+        <span>Тонкая цветная плашка — реальный слот в календаре</span>
+        <span>Пунктирная рамка — задача без оценки</span>
         <span>Красный хвост — уже вышли за срок</span>
       </div>
     </div>

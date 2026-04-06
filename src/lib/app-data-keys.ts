@@ -3,6 +3,7 @@ export const STORAGE_KEYS = [
   "alphacore_notes",
   "alphacore_habits",
   "alphacore_medical",
+  "alphacore_sickness",
   "alphacore_projects",
   "alphacore_journal",
   "alphacore_heys_activity_sync",

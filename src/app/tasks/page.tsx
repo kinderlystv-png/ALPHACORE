@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { ProjectSelectManager } from "@/components/project-select-manager";
-import { TaskGanttChart, type GanttGroup } from "@/components/task-gantt-chart";
+import { TaskGanttChart, type GanttGroup, type GanttScheduledSlot } from "@/components/task-gantt-chart";
 import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import {
@@ -17,6 +17,7 @@ import {
 import {
   addCompletedFactSlot,
   deleteTaskWithScheduledSlot,
+  getCustomEvents,
   getScheduledTaskSlot,
   updateCustomEvent,
   type ScheduleTone,
@@ -645,7 +646,11 @@ export default function TasksPage() {
   useEffect(() => {
     reload();
     return subscribeAppDataChange((keys) => {
-      if (keys.includes("alphacore_tasks") || keys.includes("alphacore_projects")) {
+      if (
+        keys.includes("alphacore_tasks")
+        || keys.includes("alphacore_projects")
+        || keys.includes("alphacore_schedule_custom")
+      ) {
         reload();
       }
     });
@@ -1193,6 +1198,28 @@ export default function TasksPage() {
     [visibleGroups],
   );
 
+  const ganttScheduledSlotsByTaskId = useMemo<Record<string, GanttScheduledSlot>>(() => {
+    const visibleTaskIds = new Set(
+      visible.filter((task) => task.status === "active" || task.status === "inbox").map((task) => task.id),
+    );
+
+    return getCustomEvents().reduce<Record<string, GanttScheduledSlot>>((acc, event) => {
+      if (event.kind === "event") return acc;
+
+      const taskId = event.taskId ?? undefined;
+      if (!taskId || !visibleTaskIds.has(taskId)) return acc;
+
+      acc[taskId] = {
+        date: event.date,
+        start: event.start,
+        end: event.end,
+        title: event.title,
+        tone: event.tone,
+      };
+      return acc;
+    }, {});
+  }, [visible]);
+
   function renderTaskNode(node: TaskTreeNode): React.ReactNode {
       const task = node.task;
       const badge = dueBadge(task.dueDate);
@@ -1633,6 +1660,7 @@ export default function TasksPage() {
             {ganttExpanded && (
               <TaskGanttChart
                 groups={ganttGroups}
+                scheduledSlotsByTaskId={ganttScheduledSlotsByTaskId}
                 onTaskRangeChange={handleSetRange}
                 onTaskPlannedMinutesChange={handleSetPlannedMinutes}
               />
