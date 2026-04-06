@@ -756,6 +756,10 @@ function resolveDependencyEntryX(from: Span, to: Span): number {
 }
 
 function buildDependencyPath(fromX: number, fromY: number, toX: number, toY: number): string {
+  if (toY >= fromY) {
+    return `M ${fromX} ${fromY} V ${toY} H ${toX}`;
+  }
+
   const elbowY = toY >= fromY
     ? fromY + Math.max(14, Math.min(30, (toY - fromY) / 2))
     : fromY + 14;
