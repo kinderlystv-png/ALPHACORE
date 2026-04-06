@@ -89,6 +89,16 @@ type DerivedGroupRow = {
   rollupSpan?: Span;
 };
 
+type DerivedGroupSection = {
+  key: string;
+  group: GanttGroup;
+  top: number;
+  height: number;
+  bodyTop: number;
+  bodyHeight: number;
+  collapsed: boolean;
+};
+
 type DerivedRow = DerivedTaskRow | DerivedGroupRow;
 
 type InteractionState = {
@@ -159,6 +169,70 @@ const SLOT_BD: Record<ScheduleTone, string> = {
   review: "border-amber-100/35",
 };
 
+type GroupSurfaceTone = {
+  sectionBg: string;
+  headerBg: string;
+  labelBg: string;
+  borderColor: string;
+};
+
+const PROJECT_SURFACE: Record<ProjectAccent, GroupSurfaceTone> = {
+  sky: {
+    sectionBg: "rgba(14, 165, 233, 0.055)",
+    headerBg: "linear-gradient(90deg, rgba(14, 165, 233, 0.18) 0%, rgba(14, 165, 233, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(14, 165, 233, 0.12) 0%, rgba(14, 165, 233, 0.035) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(56, 189, 248, 0.15)",
+  },
+  orange: {
+    sectionBg: "rgba(249, 115, 22, 0.055)",
+    headerBg: "linear-gradient(90deg, rgba(249, 115, 22, 0.18) 0%, rgba(249, 115, 22, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(249, 115, 22, 0.12) 0%, rgba(249, 115, 22, 0.035) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(251, 146, 60, 0.15)",
+  },
+  violet: {
+    sectionBg: "rgba(139, 92, 246, 0.06)",
+    headerBg: "linear-gradient(90deg, rgba(139, 92, 246, 0.18) 0%, rgba(139, 92, 246, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(139, 92, 246, 0.12) 0%, rgba(139, 92, 246, 0.04) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(167, 139, 250, 0.15)",
+  },
+  teal: {
+    sectionBg: "rgba(20, 184, 166, 0.055)",
+    headerBg: "linear-gradient(90deg, rgba(20, 184, 166, 0.18) 0%, rgba(20, 184, 166, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(20, 184, 166, 0.12) 0%, rgba(20, 184, 166, 0.04) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(45, 212, 191, 0.15)",
+  },
+  rose: {
+    sectionBg: "rgba(244, 63, 94, 0.055)",
+    headerBg: "linear-gradient(90deg, rgba(244, 63, 94, 0.18) 0%, rgba(244, 63, 94, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(244, 63, 94, 0.12) 0%, rgba(244, 63, 94, 0.04) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(251, 113, 133, 0.15)",
+  },
+};
+
+const AREA_SURFACE: Record<LifeArea, GroupSurfaceTone> = {
+  work: PROJECT_SURFACE.sky,
+  health: {
+    sectionBg: "rgba(16, 185, 129, 0.055)",
+    headerBg: "linear-gradient(90deg, rgba(16, 185, 129, 0.18) 0%, rgba(16, 185, 129, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(16, 185, 129, 0.12) 0%, rgba(16, 185, 129, 0.04) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(52, 211, 153, 0.15)",
+  },
+  family: {
+    sectionBg: "rgba(217, 70, 239, 0.055)",
+    headerBg: "linear-gradient(90deg, rgba(217, 70, 239, 0.18) 0%, rgba(217, 70, 239, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(217, 70, 239, 0.12) 0%, rgba(217, 70, 239, 0.04) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(232, 121, 249, 0.15)",
+  },
+  operations: PROJECT_SURFACE.rose,
+  reflection: {
+    sectionBg: "rgba(245, 158, 11, 0.055)",
+    headerBg: "linear-gradient(90deg, rgba(245, 158, 11, 0.18) 0%, rgba(245, 158, 11, 0.08) 42%, rgba(9, 9, 11, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(245, 158, 11, 0.12) 0%, rgba(245, 158, 11, 0.04) 42%, rgba(9, 9, 11, 0.93) 100%)",
+    borderColor: "rgba(251, 191, 36, 0.15)",
+  },
+  recovery: PROJECT_SURFACE.violet,
+};
+
 function d0(date: Date): Date {
   const result = new Date(date);
   result.setHours(0, 0, 0, 0);
@@ -196,6 +270,34 @@ function isZoomLevel(value: string | undefined): value is ZoomLevel {
 
 function readPersistedGanttUiState(): PersistedGanttUiState {
   return lsGet<PersistedGanttUiState>(GANTT_UI_STATE_KEY, {});
+}
+
+function getDayCapacityMinutes(day: Date): number {
+  const weekday = day.getDay();
+
+  if (weekday === 0) return 2 * 60;
+  if (weekday === 3) return 4 * 60;
+  if (weekday === 6) return 3 * 60;
+  return WORKDAY_MINUTES;
+}
+
+function getHeatOverlay(ratio: number): string | null {
+  if (ratio >= 1.15) return "rgba(244, 63, 94, 0.14)";
+  if (ratio >= 0.9) return "rgba(245, 158, 11, 0.11)";
+  if (ratio >= 0.6) return "rgba(139, 92, 246, 0.08)";
+  return null;
+}
+
+function getLoadBarColor(ratio: number): string {
+  if (ratio >= 1.15) return "rgba(251, 113, 133, 0.9)";
+  if (ratio >= 0.9) return "rgba(251, 191, 36, 0.85)";
+  return "rgba(167, 139, 250, 0.8)";
+}
+
+function getCapacityLineColor(ratio: number): string {
+  if (ratio >= 1.15) return "rgba(254, 202, 202, 0.85)";
+  if (ratio >= 0.9) return "rgba(254, 240, 138, 0.8)";
+  return "rgba(228, 228, 231, 0.45)";
 }
 
 function isWeekend(date: Date): boolean {
@@ -486,6 +588,23 @@ function groupBarTone(group: GanttGroup): { bg: string; border: string } {
   };
 }
 
+function groupSurfaceTone(group: GanttGroup): GroupSurfaceTone {
+  if (group.project) {
+    return PROJECT_SURFACE[group.project.accent];
+  }
+
+  if (group.area) {
+    return AREA_SURFACE[group.area];
+  }
+
+  return {
+    sectionBg: "rgba(39, 39, 42, 0.22)",
+    headerBg: "linear-gradient(90deg, rgba(39, 39, 42, 0.66) 0%, rgba(24, 24, 27, 0.96) 100%)",
+    labelBg: "linear-gradient(90deg, rgba(39, 39, 42, 0.45) 0%, rgba(24, 24, 27, 0.93) 100%)",
+    borderColor: "rgba(82, 82, 91, 0.18)",
+  };
+}
+
 function taskUrgencyTone(task: Task, today: Date): string {
   const due = parseDay(task.dueDate);
   if (!due) return "";
@@ -709,6 +828,8 @@ export function TaskGanttChart({
   const derived = useMemo(() => {
     const loadByDay = Array.from({ length: totalDays }, () => 0);
     const orderedRows: DerivedRow[] = [];
+    const groupSections: DerivedGroupSection[] = [];
+    let cursorTop = 0;
 
     const collectLoad = (span: Span, task: Task) => {
       const totalMinutes = task.plannedMinutes ?? 30;
@@ -750,8 +871,11 @@ export function TaskGanttChart({
     };
 
     for (const group of displayGroups) {
+      const sectionTop = cursorTop;
       const nodeResults = group.nodes.map((node) => buildNodeRows(group, node));
       const groupRollup = mergeSpans(nodeResults.map((result) => result.span));
+      const groupRows = nodeResults.flatMap((result) => result.rows);
+      const collapsed = collapsedGroups.has(group.id);
 
       orderedRows.push({
         kind: "group",
@@ -759,21 +883,51 @@ export function TaskGanttChart({
         group,
         rollupSpan: groupRollup,
       });
+      cursorTop += GROUP_H;
 
-      if (!collapsedGroups.has(group.id)) {
-        orderedRows.push(...nodeResults.flatMap((result) => result.rows));
+      if (!collapsed) {
+        orderedRows.push(...groupRows);
+        cursorTop += groupRows.length * ROW_H;
       }
+
+      groupSections.push({
+        key: `section:${group.id}`,
+        group,
+        top: sectionTop,
+        height: cursorTop - sectionTop,
+        bodyTop: sectionTop + GROUP_H,
+        bodyHeight: Math.max(cursorTop - sectionTop - GROUP_H, 0),
+        collapsed,
+      });
     }
 
-    const bodyHeight = orderedRows.reduce(
-      (sum, row) => sum + (row.kind === "group" ? GROUP_H : ROW_H),
-      0,
-    );
+    const bodyHeight = cursorTop;
 
-    return { orderedRows, bodyHeight, loadByDay };
+    return { orderedRows, bodyHeight, loadByDay, groupSections };
   }, [buildVisual, collapsedGroups, displayGroups, totalDays]);
 
   const maxLoad = useMemo(() => Math.max(...derived.loadByDay, 0), [derived.loadByDay]);
+  const dayMetrics = useMemo(
+    () => days.map((day, index) => {
+      const capacity = getDayCapacityMinutes(day);
+      const load = derived.loadByDay[index] ?? 0;
+      const ratio = capacity > 0 ? load / capacity : 0;
+      return {
+        load,
+        capacity,
+        ratio,
+        heatOverlay: getHeatOverlay(ratio),
+        loadBarColor: getLoadBarColor(ratio),
+        capacityLineColor: getCapacityLineColor(ratio),
+      };
+    }),
+    [days, derived.loadByDay],
+  );
+  const maxCapacity = useMemo(
+    () => Math.max(...dayMetrics.map((metric) => metric.capacity), 0),
+    [dayMetrics],
+  );
+  const loadScaleMax = Math.max(maxLoad, maxCapacity, WORKDAY_MINUTES);
 
   useEffect(() => {
     lsSet(GANTT_UI_STATE_KEY, {
@@ -1097,21 +1251,36 @@ export function TaskGanttChart({
                 </div>
 
                 <div className="flex h-5 border-b border-zinc-800/45 bg-zinc-950/40">
-                  {derived.loadByDay.map((load, index) => {
-                    const heightPct = maxLoad > 0 ? Math.max((load / maxLoad) * 100, load > 0 ? 12 : 0) : 0;
+                  {dayMetrics.map((metric, index) => {
+                    const load = metric.load;
+                    const heightPct = loadScaleMax > 0 ? Math.max((load / loadScaleMax) * 100, load > 0 ? 12 : 0) : 0;
+                    const capacityPct = loadScaleMax > 0 ? (metric.capacity / loadScaleMax) * 100 : 0;
                     return (
                       <div
                         key={`load-${index}`}
                         className={`relative border-r border-zinc-800/20 ${isWeekend(days[index]) ? "bg-zinc-900/35" : ""}`}
                         style={{ width: dayWidth }}
-                        title={load > 0 ? `${Math.round(load)} мин нагрузки` : "Пусто"}
+                        title={load > 0 ? `${Math.round(load)} / ${metric.capacity} мин нагрузки` : `Пусто · capacity ${metric.capacity}м`}
                       >
-                        {load > 0 && (
+                        {metric.heatOverlay && (
                           <div
-                            className="absolute bottom-0 left-[20%] w-[60%] rounded-t bg-violet-400/60"
-                            style={{ height: `${heightPct}%` }}
+                            className="absolute inset-0"
+                            style={{ backgroundColor: metric.heatOverlay }}
                           />
                         )}
+                        {load > 0 && (
+                          <div
+                            className="absolute bottom-0 left-[20%] w-[60%] rounded-t"
+                            style={{ backgroundColor: metric.loadBarColor, height: `${heightPct}%` }}
+                          />
+                        )}
+                        <div
+                          className="absolute left-[12%] right-[12%] h-px rounded-full"
+                          style={{
+                            bottom: `calc(${capacityPct}% - 0.5px)`,
+                            backgroundColor: metric.capacityLineColor,
+                          }}
+                        />
                       </div>
                     );
                   })}
@@ -1135,6 +1304,45 @@ export function TaskGanttChart({
             </div>
 
             <div
+              className="pointer-events-none absolute top-0"
+              style={{ left: LABEL_W, width: gridWidth, height: derived.bodyHeight }}
+            >
+              {dayMetrics.map((metric, index) =>
+                metric.heatOverlay ? (
+                  <div
+                    key={`heat-${index}`}
+                    className="absolute top-0 bottom-0"
+                    style={{
+                      left: index * dayWidth,
+                      width: dayWidth,
+                      backgroundColor: metric.heatOverlay,
+                    }}
+                  />
+                ) : null,
+              )}
+            </div>
+
+            <div className="pointer-events-none absolute inset-0">
+              {derived.groupSections.map((section) => {
+                const surface = groupSurfaceTone(section.group);
+                return (
+                  <div
+                    key={section.key}
+                    className="absolute rounded-[20px] border"
+                    style={{
+                      left: 0,
+                      top: section.top + 1,
+                      width: LABEL_W + gridWidth,
+                      height: Math.max(section.height - 2, GROUP_H - 2),
+                      background: surface.sectionBg,
+                      borderColor: surface.borderColor,
+                    }}
+                  />
+                );
+              })}
+            </div>
+
+            <div
               className="pointer-events-none absolute top-0 bottom-0 w-px bg-amber-400/55"
               style={{ left: LABEL_W + todayIndex * dayWidth + Math.floor(dayWidth / 2), zIndex: 15 }}
             />
@@ -1143,6 +1351,7 @@ export function TaskGanttChart({
               {derived.orderedRows.map((row) => {
                 if (row.kind === "group") {
                   const tone = groupBarTone(row.group);
+                  const surface = groupSurfaceTone(row.group);
                   const collapsed = collapsedGroups.has(row.group.id);
 
                   return (
@@ -1150,8 +1359,8 @@ export function TaskGanttChart({
                       <button
                         type="button"
                         onClick={() => toggleGroup(row.group.id)}
-                        className="sticky left-0 z-10 flex shrink-0 items-center gap-2 border-r border-zinc-800/40 bg-zinc-950/92 px-3 text-[11px] font-semibold text-zinc-100 transition hover:bg-zinc-900/70"
-                        style={{ width: LABEL_W }}
+                        className="sticky left-0 z-10 flex shrink-0 items-center gap-2 border-r border-zinc-800/40 px-3 text-[11px] font-semibold text-zinc-100 transition hover:brightness-110"
+                        style={{ width: LABEL_W, background: surface.headerBg }}
                       >
                         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${groupDotCls(row.group)}`} />
                         <span className="truncate text-left">{row.group.label}</span>
@@ -1173,6 +1382,7 @@ export function TaskGanttChart({
 
                 const task = row.task;
                 const group = row.group;
+                const surface = groupSurfaceTone(group);
                 const interactionForTask = interaction?.taskId === task.id ? interaction : null;
                 const previewTask = buildPreviewTask(task, interactionForTask);
                 const previewVisual = buildVisual(previewTask);
@@ -1205,8 +1415,8 @@ export function TaskGanttChart({
                 return (
                   <div key={row.key} className="flex border-b border-zinc-800/20" style={{ height: ROW_H }}>
                     <div
-                      className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-zinc-800/30 bg-zinc-950/92 px-2 text-[10px]"
-                      style={{ width: LABEL_W, paddingLeft: 10 + row.depth * 14 }}
+                      className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-zinc-800/30 px-2 text-[10px]"
+                      style={{ width: LABEL_W, paddingLeft: 10 + row.depth * 14, background: surface.labelBg }}
                       title={task.title}
                     >
                       <span className={`shrink-0 font-bold uppercase ${priorityTone}`} style={{ fontSize: 8 }}>
@@ -1237,6 +1447,7 @@ export function TaskGanttChart({
                       {overdueTail && (
                         <div
                           className="pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full bg-linear-to-r from-rose-500/10 via-rose-400/55 to-rose-300/20"
+
                           style={{ left: overdueTail.left, width: overdueTail.width, height: 7 }}
                           title={`Просрочка: ${task.title}`}
                         />
@@ -1344,6 +1555,8 @@ export function TaskGanttChart({
         <span>Пунктир — сводный rollup родителя</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
+        <span>Фон колонки — heatmap по дневной нагрузке</span>
+        <span>Светлая риска — capacity дня</span>
         <span>Красный хвост — уже вышли за срок</span>
       </div>
     </div>
