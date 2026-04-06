@@ -315,7 +315,7 @@ export function CalendarQuickMenu({
               </div>
 
               <div className="space-y-1.5">
-                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Тон</p>
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Категория</p>
                 <div className="flex flex-wrap gap-1.5">
                   {QUICK_TONE_OPTIONS.map((option) => {
                     const tone = toneColor(option.value);
