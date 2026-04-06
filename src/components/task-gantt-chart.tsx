@@ -120,6 +120,7 @@ type DerivedRepeatSeriesRow = {
   group: GanttGroup;
   depth: number;
   tasks: Task[];
+  taskRows: DerivedTaskRow[];
   visuals: Array<{ task: Task; visual: TaskVisual }>;
   combinedSpan?: Span;
   representativeTask: Task;
@@ -943,6 +944,7 @@ export function TaskGanttChart({
     const persisted = readPersistedGanttUiState();
     return Boolean((persisted.collapseRepeatSeries ?? true) && persisted.repeatExceptionsOnly);
   });
+  const [expandedRepeatSeriesKey, setExpandedRepeatSeriesKey] = useState<string | null>(null);
   const [showPlanVsSlot, setShowPlanVsSlot] = useState<boolean>(() => {
     const persisted = readPersistedGanttUiState();
     return Boolean(persisted.showPlanVsSlot);
@@ -1506,6 +1508,10 @@ export function TaskGanttChart({
             group,
             depth: row.depth,
             tasks: run.map((repeatRow) => repeatRow.task),
+            taskRows: run.map((repeatRow) => ({
+              ...repeatRow,
+              depth: repeatRow.depth + 1,
+            })),
             visuals,
             combinedSpan: mergeSpans(visuals.map(({ visual }) => spanFromVisual(visual))),
             representativeTask: row.task,
@@ -1539,11 +1545,18 @@ export function TaskGanttChart({
             (row): row is DerivedRepeatSeriesRow => row.kind === "repeat-series" && row.health.canHideInExceptionsMode,
           )
         : [];
-      const visibleRows = !collapseRepeatSeries
+      const compactRows = !collapseRepeatSeries
         ? groupRows
         : repeatExceptionsOnly
           ? repeatPreview.rows.filter((row) => row.kind !== "repeat-series" || !row.health.canHideInExceptionsMode)
           : repeatPreview.rows;
+      const visibleRows = compactRows.flatMap((row) => {
+        if (row.kind !== "repeat-series" || row.key !== expandedRepeatSeriesKey) {
+          return [row];
+        }
+
+        return [row, ...row.taskRows];
+      });
       repeatSeriesCount += repeatPreview.repeatSeriesCount;
       repeatTaskCount += repeatPreview.repeatTaskCount;
       hiddenStableRepeatSeriesCount += hiddenRepeatRows.length;
@@ -1592,7 +1605,7 @@ export function TaskGanttChart({
       hiddenStableRepeatSeriesCount,
       hiddenStableRepeatTaskCount,
     };
-  }, [analyzeRepeatSeries, buildVisual, collapseRepeatSeries, collapsedGroups, displayGroups, repeatExceptionsOnly, totalDays]);
+  }, [analyzeRepeatSeries, buildVisual, collapseRepeatSeries, collapsedGroups, displayGroups, expandedRepeatSeriesKey, repeatExceptionsOnly, totalDays]);
 
   const maxLoad = useMemo(() => Math.max(...derived.loadByDay, 0), [derived.loadByDay]);
   const dayMetrics = useMemo(
@@ -1900,6 +1913,22 @@ export function TaskGanttChart({
     setCollapseRepeatSeries(true);
     setRepeatExceptionsOnly(false);
   }, []);
+
+  const toggleRepeatSeriesExpansion = useCallback((seriesKey: string) => {
+    setExpandedRepeatSeriesKey((current) => (current === seriesKey ? null : seriesKey));
+  }, []);
+
+  useEffect(() => {
+    if (!expandedRepeatSeriesKey) return;
+
+    const hasVisibleSeries = derived.orderedRows.some(
+      (row) => row.kind === "repeat-series" && row.key === expandedRepeatSeriesKey,
+    );
+
+    if (!hasVisibleSeries) {
+      setExpandedRepeatSeriesKey(null);
+    }
+  }, [derived.orderedRows, expandedRepeatSeriesKey]);
 
   const beginMove = useCallback((event: React.PointerEvent<HTMLButtonElement>, task: Task) => {
     event.preventDefault();
@@ -2614,6 +2643,7 @@ export function TaskGanttChart({
                   const surface = groupSurfaceTone(group);
                   const baseTone = groupBarTone(group);
                   const firstTask = row.tasks[0]!;
+                  const isExpanded = expandedRepeatSeriesKey === row.key;
                   const priorityTone =
                     firstTask.priority === "p1"
                       ? "text-rose-400"
@@ -2643,66 +2673,81 @@ export function TaskGanttChart({
 
                   return (
                     <div key={row.key} className="flex border-b border-zinc-800/20" style={{ height: ROW_H }}>
-                      <button
-                        type="button"
-                        onClick={() => openTaskInList(firstTask.id)}
-                        className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-zinc-800/30 px-2 text-left text-[10px] transition hover:brightness-110"
+                      <div
+                        className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-zinc-800/30 px-2"
                         style={{ width: LABEL_W, paddingLeft: 10 + row.depth * 14, background: surface.labelBg }}
                         title={seriesTooltip}
                       >
-                        <span className={`shrink-0 font-bold uppercase ${priorityTone}`} style={{ fontSize: 8 }}>
-                          {firstTask.priority}
-                        </span>
-                        <span className="shrink-0 rounded-full border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-100">
-                          ∿ серия ×{row.tasks.length}
-                        </span>
-                        <span className="truncate text-zinc-300">{firstTask.title}</span>
-                        {seriesHealthLabel && (
-                          <span className="shrink-0 rounded-full border border-zinc-700/70 bg-zinc-900/60 px-1.5 py-0.5 text-[8px] text-zinc-300">
-                            {seriesHealthLabel}
+                        <button
+                          type="button"
+                          onClick={() => toggleRepeatSeriesExpansion(row.key)}
+                          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[10px] transition hover:brightness-110"
+                          title={isExpanded ? "Свернуть серию" : "Раскрыть серию"}
+                        >
+                          <span className="shrink-0 text-[10px] text-zinc-500">{isExpanded ? "▾" : "▸"}</span>
+                          <span className={`shrink-0 font-bold uppercase ${priorityTone}`} style={{ fontSize: 8 }}>
+                            {firstTask.priority}
                           </span>
-                        )}
-                        {noEstimateCount > 0 && (
-                          <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
-                            без оценки {noEstimateCount}
+                          <span className="shrink-0 rounded-full border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-100">
+                            ∿ серия ×{row.tasks.length}
                           </span>
-                        )}
-                        {cadenceBreakCount > 0 && (
-                          <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
-                            ⚠ ритм {cadenceBreakCount}
-                          </span>
-                        )}
-                        {slippedCount > 0 && (
-                          <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
-                            Δ {slippedCount}
-                          </span>
-                        )}
-                        {overdueCount > 0 && (
-                          <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
-                            ⌛ {overdueCount}
-                          </span>
-                        )}
-                        {slotOutsideCount > 0 && (
-                          <span className="shrink-0 rounded-full border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[8px] text-sky-200">
-                            ↔ слот {slotOutsideCount}
-                          </span>
-                        )}
-                        {criticalCount > 0 && (
-                          <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
-                            ✦ {criticalCount}
-                          </span>
-                        )}
-                        {dependencyCount > 0 && (
-                          <span className="shrink-0 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 text-[8px] text-cyan-100">
-                            ⛓ {dependencyCount}
-                          </span>
-                        )}
-                        {(firstLabel || lastLabel) && (
-                          <span className="shrink-0 rounded-full border border-zinc-700/70 bg-zinc-900/60 px-1.5 py-0.5 text-[8px] text-zinc-400">
-                            {firstLabel ?? "?"}{lastLabel && lastLabel !== firstLabel ? ` → ${lastLabel}` : ""}
-                          </span>
-                        )}
-                      </button>
+                          <span className="truncate text-zinc-300">{firstTask.title}</span>
+                          {seriesHealthLabel && (
+                            <span className="shrink-0 rounded-full border border-zinc-700/70 bg-zinc-900/60 px-1.5 py-0.5 text-[8px] text-zinc-300">
+                              {seriesHealthLabel}
+                            </span>
+                          )}
+                          {noEstimateCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                              без оценки {noEstimateCount}
+                            </span>
+                          )}
+                          {cadenceBreakCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                              ⚠ ритм {cadenceBreakCount}
+                            </span>
+                          )}
+                          {slippedCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
+                              Δ {slippedCount}
+                            </span>
+                          )}
+                          {overdueCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
+                              ⌛ {overdueCount}
+                            </span>
+                          )}
+                          {slotOutsideCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[8px] text-sky-200">
+                              ↔ слот {slotOutsideCount}
+                            </span>
+                          )}
+                          {criticalCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
+                              ✦ {criticalCount}
+                            </span>
+                          )}
+                          {dependencyCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 text-[8px] text-cyan-100">
+                              ⛓ {dependencyCount}
+                            </span>
+                          )}
+                          {(firstLabel || lastLabel) && (
+                            <span className="shrink-0 rounded-full border border-zinc-700/70 bg-zinc-900/60 px-1.5 py-0.5 text-[8px] text-zinc-400">
+                              {firstLabel ?? "?"}{lastLabel && lastLabel !== firstLabel ? ` → ${lastLabel}` : ""}
+                            </span>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => openTaskInList(firstTask.id)}
+                          className="shrink-0 rounded-full border border-zinc-700/70 bg-zinc-900/65 px-1.5 py-0.5 text-[8px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                          title="Прыжок к первому элементу серии в списке задач"
+                        >
+                          ↗
+                        </button>
+                      </div>
 
                       <div className="relative" style={{ width: gridWidth }}>
                         {row.combinedSpan && (
@@ -3103,6 +3148,7 @@ export function TaskGanttChart({
         <span>Preview последствий — во время drag/resize показывает, кого заденет цепочка</span>
         <span>Повторы compact — одинаковые подряд идущие задачи схлопываются в серию</span>
         <span>Повторы exceptions — стабильные серии уходят в фон, остаются только сбои и зависимости</span>
+        <span>▸ / ▾ на серии — раскрывает только один повторный ритм, не разворачивая все повторы сразу</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
         <span>Зелёная шкала — rollup-progress по подзадачам</span>
