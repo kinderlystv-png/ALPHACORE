@@ -10,6 +10,7 @@ import {
   formatScheduleTimeRange,
   getScheduleSlotApprovalState,
   timeToMinutes,
+  type ScheduleRepeat,
   type ScheduleSlot,
 } from "@/lib/schedule";
 import { toneColor } from "@/lib/life-areas";
@@ -35,6 +36,21 @@ function findProjectIdByLabel(projects: Project[], label?: string | null): strin
   return match?.id ?? "";
 }
 
+const QUICK_REPEAT_OPTIONS: Array<{
+  value: ScheduleRepeat;
+  label: string;
+  meta: string;
+}> = [
+  { value: "once", label: "Один раз", meta: "без серии" },
+  { value: "weekly", label: "Каждую неделю", meta: "+26 слотов" },
+  { value: "monthly", label: "Каждый месяц", meta: "+12 слотов" },
+];
+
+const QUICK_REPEAT_LABEL: Record<ScheduleRepeat, string> = {
+  once: "1×",
+  weekly: "Каждую неделю",
+  monthly: "Каждый месяц",
+};
 function getSlotProjectId(
   slot: Pick<ScheduleSlot, "projectId" | "project">,
   linkedTask: Pick<Task, "projectId" | "project"> | null,
@@ -68,7 +84,7 @@ export type CalendarQuickMenuProps = {
   columns: DayColumn[];
   today: string;
   onClose: () => void;
-  onUpdateDraft: (patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone" | "draftKind" | "draftProjectId">>) => void;
+  onUpdateDraft: (patch: Partial<Pick<QuickMenuState, "draftTitle" | "draftTone" | "draftKind" | "draftProjectId" | "draftRepeat">>) => void;
   onSaveDraft: () => void;
   onDuplicate: () => void;
   onApplyPatch: (slot: ScheduleSlot, patch: Partial<Pick<ScheduleSlot, "start" | "end" | "date">>) => void;
@@ -151,12 +167,14 @@ export function CalendarQuickMenu({
   const endMin = timeToMinutes(slot.end);
   const durationMin = endMin - startMin;
   const draftTitle = quickMenu.draftTitle.trim();
+  const draftRepeat = quickMenu.draftRepeat;
   const saveDisabled =
     !draftTitle ||
     (draftTitle === slot.title &&
       quickMenu.draftTone === slot.tone &&
       quickMenu.draftKind === (slot.kind === "event" ? "event" : "task") &&
-      quickMenu.draftProjectId === currentProjectId);
+      quickMenu.draftProjectId === currentProjectId &&
+      draftRepeat === (slot.repeat ?? "once"));
   const earlierDisabled = startMin <= HOUR_START * 60;
   const laterDisabled = endMin >= HOUR_END * 60;
   const shorterDisabled = durationMin <= MIN_SLOT_MIN;
@@ -190,6 +208,7 @@ export function CalendarQuickMenu({
             <div className="mt-2 flex flex-wrap gap-1.5">
               <QuickMenuMetaChip label={formatScheduleTimeRange(slot.start, slot.end)} />
               <QuickMenuMetaChip label={`${durationMin} мин`} />
+              <QuickMenuMetaChip label={QUICK_REPEAT_LABEL[draftRepeat]} />
               {draftProjectLabel ? (
                 <QuickMenuMetaChip
                   label={draftProjectLabel}
@@ -264,6 +283,33 @@ export function CalendarQuickMenu({
                     );
                   })}
                 </div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Повтор</p>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                  {QUICK_REPEAT_OPTIONS.map((option) => {
+                    const active = draftRepeat === option.value;
+
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => onUpdateDraft({ draftRepeat: option.value })}
+                        className={`rounded-2xl border px-3 py-2 text-left transition ${
+                          active
+                            ? "border-sky-400/40 bg-sky-500/12 text-sky-100"
+                            : "border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
+                        }`}
+                      >
+                        <span className="block text-[11px] font-semibold">{option.label}</span>
+                        <span className="mt-0.5 block text-[10px] opacity-70">{option.meta}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] leading-4 text-zinc-500">
+                  Повтор применится от этого слота вперёд: текущий слот сохранится, а будущие копии соберутся автоматически.
+                </p>
               </div>
 
               {isCustomSlot && (

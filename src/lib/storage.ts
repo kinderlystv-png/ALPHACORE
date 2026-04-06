@@ -6,9 +6,13 @@ export { STORAGE_KEYS } from "./app-data-keys";
 
 export const APP_DATA_EVENT = "alphacore:data-change";
 export const APP_SYNC_EVENT = "alphacore:sync-state";
+export const APP_UNDO_EVENT = "alphacore:undo-state";
 
 const CLOUD_META_KEY = "alphacore_cloud_meta";
 const CLOUD_PENDING_KEY = "alphacore_cloud_pending_keys";
+const UNDO_HISTORY_KEY = "alphacore_undo_history_v1";
+const UNDO_HISTORY_LIMIT = 48;
+const UNDO_EXTRA_KEYS = ["alphacore_schedule_approvals"] as const;
 const CLOUD_API_PATH = "/api/storage";
 const CLOUD_POLL_INTERVAL_MS = 5000;
 const CLOUD_FLUSH_DEBOUNCE_MS = 250;
@@ -41,6 +45,25 @@ type SyncDetail = {
   state: AppSyncState;
 };
 
+type UndoDetail = {
+  state: UndoStateSnapshot;
+};
+
+type UndoHistoryEntry = {
+  id: string;
+  createdAt: string;
+  keys: string[];
+  before: Record<string, string | null>;
+};
+
+export type UndoStateSnapshot = {
+  canUndo: boolean;
+  pendingCount: number;
+  lastActionAt: string | null;
+};
+
+type UndoManagedKey = StorageKey | (typeof UNDO_EXTRA_KEYS)[number];
+
 export type AppSyncState = {
   mode: "cloud-cache";
   status: SyncStatus;
@@ -56,6 +79,9 @@ let flushTimer: number | null = null;
 let isFlushing = false;
 let isPulling = false;
 let listenersAttached = false;
+let undoCommitTimer: number | null = null;
+let pendingUndoBatch: Record<string, string | null> | null = null;
+let isApplyingUndo = false;
 
 let syncState: AppSyncState = {
   mode: "cloud-cache",
@@ -91,6 +117,111 @@ function readCloudMeta(): CloudMeta {
     remoteRevision: 0,
     lastSyncedAt: null,
   });
+}
+
+function isUndoManagedKey(key: string): key is UndoManagedKey {
+  return isStorageKey(key) || (UNDO_EXTRA_KEYS as readonly string[]).includes(key);
+}
+
+function sanitizeUndoHistoryEntry(entry: UndoHistoryEntry): UndoHistoryEntry | null {
+  if (!entry || typeof entry !== "object") return null;
+  if (typeof entry.id !== "string" || typeof entry.createdAt !== "string") return null;
+  if (!Array.isArray(entry.keys) || entry.keys.length === 0) return null;
+  if (!entry.before || typeof entry.before !== "object") return null;
+
+  const keys = entry.keys.filter((key) => typeof key === "string" && isUndoManagedKey(key));
+  if (keys.length === 0) return null;
+
+  const before = Object.fromEntries(
+    keys.map((key) => [key, Object.prototype.hasOwnProperty.call(entry.before, key) ? entry.before[key] ?? null : null]),
+  ) as Record<string, string | null>;
+
+  return {
+    id: entry.id,
+    createdAt: entry.createdAt,
+    keys,
+    before,
+  };
+}
+
+function readUndoHistory(): UndoHistoryEntry[] {
+  return readJson<UndoHistoryEntry[]>(UNDO_HISTORY_KEY, [])
+    .map((entry) => sanitizeUndoHistoryEntry(entry))
+    .filter((entry): entry is UndoHistoryEntry => entry != null);
+}
+
+function emitUndoStateChange(state: UndoStateSnapshot = { canUndo: false, pendingCount: 0, lastActionAt: null }): void {
+  if (!isBrowser()) return;
+  window.dispatchEvent(
+    new CustomEvent<UndoDetail>(APP_UNDO_EVENT, {
+      detail: { state },
+    }),
+  );
+}
+
+function writeUndoHistory(history: UndoHistoryEntry[]): void {
+  if (!isBrowser()) return;
+  writeJson(UNDO_HISTORY_KEY, history.slice(0, UNDO_HISTORY_LIMIT));
+  emitUndoStateChange();
+}
+
+function flushPendingUndoBatch(): void {
+  if (!isBrowser() || !pendingUndoBatch) return;
+
+  if (undoCommitTimer != null) {
+    window.clearTimeout(undoCommitTimer);
+    undoCommitTimer = null;
+  }
+
+  const batch = pendingUndoBatch;
+  pendingUndoBatch = null;
+
+  const changedKeys = Object.keys(batch).filter(
+    (key) => window.localStorage.getItem(key) !== batch[key],
+  );
+
+  if (changedKeys.length === 0) return;
+
+  const history = readUndoHistory();
+  history.unshift({
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    keys: changedKeys,
+    before: Object.fromEntries(changedKeys.map((key) => [key, batch[key] ?? null])),
+  });
+  writeUndoHistory(history);
+}
+
+function scheduleUndoCommit(): void {
+  if (!isBrowser()) return;
+
+  if (undoCommitTimer != null) {
+    window.clearTimeout(undoCommitTimer);
+  }
+
+  undoCommitTimer = window.setTimeout(() => {
+    undoCommitTimer = null;
+    flushPendingUndoBatch();
+  }, 0);
+}
+
+function captureUndoBeforeChange(key: string): void {
+  if (!isBrowser() || isApplyingUndo || !isUndoManagedKey(key)) return;
+
+  pendingUndoBatch ??= {};
+
+  if (!Object.prototype.hasOwnProperty.call(pendingUndoBatch, key)) {
+    pendingUndoBatch[key] = window.localStorage.getItem(key);
+  }
+
+  scheduleUndoCommit();
+}
+
+function findUndoEntryIndex(history: UndoHistoryEntry[], keys: string[]): number {
+  if (keys.length === 0) return -1;
+  const keySet = new Set(keys);
+
+  return history.findIndex((entry) => entry.keys.some((key) => keySet.has(key)));
 }
 
 function writeCloudMeta(meta: CloudMeta): void {
@@ -585,6 +716,110 @@ export function subscribeSyncState(handler: (state: AppSyncState) => void): () =
   };
 }
 
+export function getUndoStateSnapshot(keys: string[]): UndoStateSnapshot {
+  if (!isBrowser()) {
+    return {
+      canUndo: false,
+      pendingCount: 0,
+      lastActionAt: null,
+    };
+  }
+
+  flushPendingUndoBatch();
+
+  const history = readUndoHistory();
+  const matchingEntries = history.filter((entry) => entry.keys.some((key) => keys.includes(key)));
+  const latest = matchingEntries[0] ?? null;
+
+  return {
+    canUndo: Boolean(latest),
+    pendingCount: matchingEntries.length,
+    lastActionAt: latest?.createdAt ?? null,
+  };
+}
+
+export function subscribeUndoHistory(
+  keys: string[],
+  handler: (state: UndoStateSnapshot) => void,
+): () => void {
+  if (!isBrowser()) return () => {};
+
+  const emit = () => {
+    handler(getUndoStateSnapshot(keys));
+  };
+
+  const customHandler = (event: Event) => {
+    void event;
+    emit();
+  };
+
+  const storageHandler = (event: StorageEvent) => {
+    if (event.key === UNDO_HISTORY_KEY) {
+      emit();
+    }
+  };
+
+  window.addEventListener(APP_UNDO_EVENT, customHandler as EventListener);
+  window.addEventListener("storage", storageHandler);
+
+  emit();
+
+  return () => {
+    window.removeEventListener(APP_UNDO_EVENT, customHandler as EventListener);
+    window.removeEventListener("storage", storageHandler);
+  };
+}
+
+export function undoLastAction(keys: string[]): boolean {
+  if (!isBrowser()) return false;
+
+  flushPendingUndoBatch();
+
+  const history = readUndoHistory();
+  const index = findUndoEntryIndex(history, keys);
+  if (index === -1) return false;
+
+  const [entry] = history.splice(index, 1);
+  if (!entry) return false;
+
+  const restoredKeys: string[] = [];
+  isApplyingUndo = true;
+
+  try {
+    for (const key of entry.keys) {
+      const nextRaw = Object.prototype.hasOwnProperty.call(entry.before, key)
+        ? entry.before[key] ?? null
+        : null;
+      const currentRaw = window.localStorage.getItem(key);
+
+      if (currentRaw === nextRaw) continue;
+
+      if (nextRaw == null) {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, nextRaw);
+      }
+
+      restoredKeys.push(key);
+
+      if (isStorageKey(key)) {
+        void initializeCloudSync();
+        queueKeyForCloudSync(key);
+      }
+    }
+  } finally {
+    isApplyingUndo = false;
+  }
+
+  writeUndoHistory(history);
+
+  if (restoredKeys.length > 0) {
+    emitAppDataChange(restoredKeys);
+  }
+
+  return true;
+}
+
 export function getCachedAppData(): Partial<Record<StorageKey, unknown>> {
   return readLocalSnapshot();
 }
@@ -642,6 +877,7 @@ export function lsGet<T>(key: string, fallback: T): T {
 export function lsSet<T>(key: string, value: T): void {
   if (!isBrowser()) return;
 
+  captureUndoBeforeChange(key);
   writeCacheValue(key, value);
   emitAppDataChange(key);
 
@@ -654,6 +890,7 @@ export function lsSet<T>(key: string, value: T): void {
 export function lsRemove(key: string): void {
   if (!isBrowser()) return;
 
+  captureUndoBeforeChange(key);
   window.localStorage.removeItem(key);
   emitAppDataChange(key);
 

@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { DailyTaskCarryoverBanner } from "@/components/daily-task-carryover";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { GlobalSearch } from "@/components/global-search";
+import { TabUndoControl } from "@/components/tab-undo-control";
 import {
   formatSicknessStartedAt,
   getSicknessLog,
@@ -200,7 +201,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <DailyTaskCarryoverBanner />
 
           <ErrorBoundary>
-            <div className="px-4 sm:px-6 lg:px-5">{children}</div>
+            <div className="px-4 sm:px-6 lg:px-5">
+              <TabUndoControl pathname={pathname} />
+              {children}
+            </div>
           </ErrorBoundary>
         </main>
       </div>

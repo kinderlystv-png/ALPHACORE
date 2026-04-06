@@ -2,7 +2,7 @@ import type { CalendarDayPressure } from "@/lib/calendar-day-pressure";
 import type { CalendarSlotSupportNote } from "@/lib/calendar-slot-support-notes";
 import type { DayMode } from "@/lib/heys-day-mode";
 import type { LifeArea } from "@/lib/life-areas";
-import type { ScheduleSlot, ScheduleSource, ScheduleTone } from "@/lib/schedule";
+import type { ScheduleRepeat, ScheduleSlot, ScheduleSource, ScheduleTone } from "@/lib/schedule";
 import type { Task } from "@/lib/tasks";
 
 /* ── Layout constants ── */
@@ -119,6 +119,7 @@ export type QuickMenuState = {
   draftTone: ScheduleTone;
   draftKind: "task" | "event";
   draftProjectId: string;
+  draftRepeat: ScheduleRepeat;
 };
 
 export type EdgeCueState = {

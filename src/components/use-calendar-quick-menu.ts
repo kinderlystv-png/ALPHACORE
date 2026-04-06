@@ -22,10 +22,12 @@ import { getProjects, type Project } from "@/lib/projects";
 import {
   addCustomEvent,
   removeEditableScheduleSlot,
+  saveEditableScheduleSlot,
   toggleScheduleSlotApproval,
   unscheduleCustomTaskEvent,
   updateEditableScheduleSlot,
   timeToMinutes,
+  type ScheduleRepeat,
   type ScheduleSlot,
 } from "@/lib/schedule";
 import type { Task } from "@/lib/tasks";
@@ -97,6 +99,7 @@ export function useCalendarQuickMenu({
         draftTone: slot.tone,
         draftKind: slot.kind === "event" ? "event" : "task",
         draftProjectId: getSlotProjectId(slot, linkedTask, projects),
+        draftRepeat: slot.repeat ?? "once",
       });
     },
     [hideDesktopSlotHint, linkedTasksById, onClearHoveredSlot],
@@ -105,7 +108,10 @@ export function useCalendarQuickMenu({
   const updateQuickMenuDraft = useCallback(
     (
       patch: Partial<
-        Pick<QuickMenuState, "draftTitle" | "draftTone" | "draftKind" | "draftProjectId">
+        Pick<
+          QuickMenuState,
+          "draftTitle" | "draftTone" | "draftKind" | "draftProjectId" | "draftRepeat"
+        >
       >,
     ) => {
       setQuickMenu((current) => (current ? { ...current, ...patch } : current));
@@ -145,23 +151,26 @@ export function useCalendarQuickMenu({
 
     const isCustomSlot = quickMenu.slot.id.startsWith("custom-");
     const nextKind = isCustomSlot ? quickMenu.draftKind : quickMenu.slot.kind ?? "event";
+    const nextRepeat: ScheduleRepeat = quickMenu.draftRepeat;
 
     if (
       nextTitle === quickMenu.slot.title &&
       quickMenu.draftTone === quickMenu.slot.tone &&
       nextKind === (quickMenu.slot.kind ?? "event") &&
-      quickMenu.draftProjectId === currentProjectId
+      quickMenu.draftProjectId === currentProjectId &&
+      nextRepeat === (quickMenu.slot.repeat ?? "once")
     ) {
       clearQuickMenu();
       return;
     }
 
-    updateEditableScheduleSlot(quickMenu.slot, {
+    saveEditableScheduleSlot(quickMenu.slot, {
       title: nextTitle,
       tone: quickMenu.draftTone,
       kind: nextKind,
       projectId: selectedProject?.id,
       project: selectedProject?.name,
+      repeat: nextRepeat,
     });
     onVersionBump();
     clearQuickMenu();
