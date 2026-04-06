@@ -438,6 +438,15 @@ function formatSignedDayDelta(value: number): string {
   return `${value > 0 ? "+" : ""}${value}д`;
 }
 
+function formatGapDays(value: number): string {
+  if (value % 7 === 0 && value >= 7) {
+    const weeks = value / 7;
+    return `${weeks}н`;
+  }
+
+  return `${value}д`;
+}
+
 function resolveTaskStartDate(task: Task): Date {
   const explicitStart = parseDay(task.startDate);
   if (explicitStart) return explicitStart;
@@ -2367,12 +2376,96 @@ export function TaskGanttChart({
                   const noEstimateCount = row.tasks.filter((task) => !task.plannedMinutes).length;
                   const firstLabel = formatDayLabel(getTaskAnchorDate(firstTask));
                   const lastLabel = formatDayLabel(getTaskAnchorDate(lastTask));
+                  const sortedSeriesItems = [...row.visuals].sort(
+                    (left, right) => left.visual.startIndex - right.visual.startIndex || left.task.createdAt.localeCompare(right.task.createdAt),
+                  );
+                  const gapFrequencies = new Map<number, number>();
+
+                  for (let index = 1; index < sortedSeriesItems.length; index += 1) {
+                    const previousDate = parseDay(getTaskAnchorDate(sortedSeriesItems[index - 1]!.task));
+                    const nextDate = parseDay(getTaskAnchorDate(sortedSeriesItems[index]!.task));
+                    if (!previousDate || !nextDate) continue;
+
+                    const gapDays = Math.max(diffDays(previousDate, nextDate), 0);
+                    gapFrequencies.set(gapDays, (gapFrequencies.get(gapDays) ?? 0) + 1);
+                  }
+
+                  const dominantGapDays = Array.from(gapFrequencies.entries())
+                    .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0] ?? null;
+
+                  const cadenceBreakTaskIds = new Set<string>();
+
+                  if (dominantGapDays != null) {
+                    for (let index = 1; index < sortedSeriesItems.length; index += 1) {
+                      const previousDate = parseDay(getTaskAnchorDate(sortedSeriesItems[index - 1]!.task));
+                      const nextDate = parseDay(getTaskAnchorDate(sortedSeriesItems[index]!.task));
+                      if (!previousDate || !nextDate) continue;
+
+                      const gapDays = Math.max(diffDays(previousDate, nextDate), 0);
+                      if (gapDays !== dominantGapDays) {
+                        cadenceBreakTaskIds.add(sortedSeriesItems[index]!.task.id);
+                      }
+                    }
+                  }
+
+                  const slippedTaskIds = new Set(
+                    row.tasks
+                      .filter((task) => (riskMeta.varianceByTaskId[task.id]?.slipDays ?? 0) > 0)
+                      .map((task) => task.id),
+                  );
+                  const overdueTaskIds = new Set(
+                    row.tasks
+                      .filter((task) => {
+                        const due = parseDay(task.dueDate);
+                        return Boolean(due && due < today);
+                      })
+                      .map((task) => task.id),
+                  );
+                  const slotOutsideTaskIds = new Set(
+                    sortedSeriesItems
+                      .filter(({ task, visual }) => {
+                        const scheduledSlot = scheduledSlotsByTaskId[task.id];
+                        if (!scheduledSlot) return false;
+                        const scheduledSlotVisual = computeScheduledSlotVisual(scheduledSlot, timelineStart, totalDays, dayWidth);
+                        return Boolean(scheduledSlotVisual && isScheduledSlotOutsidePlan(scheduledSlotVisual, spanFromVisual(visual)));
+                      })
+                      .map(({ task }) => task.id),
+                  );
+                  const criticalTaskIds = new Set(
+                    row.tasks
+                      .filter((task) => {
+                        const dependencyState = riskMeta.dependencyByTaskId[task.id];
+                        return (
+                          riskMeta.criticalTaskIds.has(task.id)
+                          || ((dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0)) > 0
+                        );
+                      })
+                      .map((task) => task.id),
+                  );
+                  const exceptionTaskIds = new Set<string>([
+                    ...cadenceBreakTaskIds,
+                    ...slippedTaskIds,
+                    ...overdueTaskIds,
+                    ...slotOutsideTaskIds,
+                    ...criticalTaskIds,
+                  ]);
+                  const cadenceBreakCount = cadenceBreakTaskIds.size;
+                  const slippedCount = slippedTaskIds.size;
+                  const overdueCount = overdueTaskIds.size;
+                  const slotOutsideCount = slotOutsideTaskIds.size;
+                  const criticalCount = criticalTaskIds.size;
+                  const seriesHealthLabel = dominantGapDays != null ? `ритм ${formatGapDays(dominantGapDays)}` : null;
                   const seriesTooltip = [
                     firstTask.title,
                     `Серия: ${row.tasks.length} повторов`,
                     firstLabel || lastLabel
                       ? `Окно: ${firstLabel ?? "?"}${lastLabel && lastLabel !== firstLabel ? ` → ${lastLabel}` : ""}`
                       : null,
+                    seriesHealthLabel ? `Базовый ${seriesHealthLabel}` : null,
+                    cadenceBreakCount > 0 ? `Ритм сбит: ${cadenceBreakCount}` : null,
+                    slippedCount > 0 ? `Baseline drift: ${slippedCount}` : null,
+                    overdueCount > 0 ? `Просрочено: ${overdueCount}` : null,
+                    slotOutsideCount > 0 ? `Слот вне плана: ${slotOutsideCount}` : null,
                     ...row.tasks.slice(0, 6).map((task) => `• ${formatDayLabel(getTaskAnchorDate(task)) ?? task.createdAt.slice(0, 10)}`),
                     row.tasks.length > 6 ? `… ещё ${row.tasks.length - 6}` : null,
                     "Переключи Повторы = full, если нужно двигать каждый элемент отдельно.",
@@ -2396,9 +2489,39 @@ export function TaskGanttChart({
                           ∿ серия ×{row.tasks.length}
                         </span>
                         <span className="truncate text-zinc-300">{firstTask.title}</span>
+                        {seriesHealthLabel && (
+                          <span className="shrink-0 rounded-full border border-zinc-700/70 bg-zinc-900/60 px-1.5 py-0.5 text-[8px] text-zinc-300">
+                            {seriesHealthLabel}
+                          </span>
+                        )}
                         {noEstimateCount > 0 && (
                           <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
                             без оценки {noEstimateCount}
+                          </span>
+                        )}
+                        {cadenceBreakCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                            ⚠ ритм {cadenceBreakCount}
+                          </span>
+                        )}
+                        {slippedCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
+                            Δ {slippedCount}
+                          </span>
+                        )}
+                        {overdueCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
+                            ⌛ {overdueCount}
+                          </span>
+                        )}
+                        {slotOutsideCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[8px] text-sky-200">
+                            ↔ слот {slotOutsideCount}
+                          </span>
+                        )}
+                        {criticalCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
+                            ✦ {criticalCount}
                           </span>
                         )}
                         {(firstLabel || lastLabel) && (
@@ -2417,16 +2540,36 @@ export function TaskGanttChart({
                         )}
 
                         {row.visuals.map(({ task, visual }) => {
+                          const isCadenceBreak = cadenceBreakTaskIds.has(task.id);
+                          const isSlipped = slippedTaskIds.has(task.id);
+                          const isOverdue = overdueTaskIds.has(task.id);
+                          const isSlotOutside = slotOutsideTaskIds.has(task.id);
+                          const isCritical = criticalTaskIds.has(task.id);
+                          const isException = exceptionTaskIds.has(task.id);
                           const compactWidth = visual.kind === "marker"
                             ? 10
                             : Math.max(Math.min(visual.width, 24), 12);
-                          const compactLeft = visual.left + Math.max((visual.width - compactWidth) / 2, 0);
+                          const markerWidth = isException ? Math.max(compactWidth, 14) : compactWidth;
+                          const compactLeft = visual.left + Math.max((visual.width - markerWidth) / 2, 0);
+                          const markerTone = isOverdue
+                            ? "border-rose-300/45 bg-rose-300/85"
+                            : isCadenceBreak
+                              ? "border-amber-300/45 bg-amber-300/85"
+                              : isSlotOutside
+                                ? "border-sky-300/45 bg-sky-300/85"
+                                : isSlipped
+                                  ? "border-fuchsia-300/45 bg-fuchsia-300/85"
+                                  : isCritical
+                                    ? "border-cyan-300/45 bg-cyan-300/80"
+                                    : `${baseTone.bg} ${baseTone.border}`;
+                          const markerOpacity = isException ? "opacity-95" : "opacity-55";
+                          const markerHeight = isException ? 16 : 12;
 
                           return (
                             <div
                               key={`${row.key}:${task.id}`}
-                              className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full border ${baseTone.bg} ${baseTone.border}`}
-                              style={{ left: compactLeft, width: compactWidth, height: 12 }}
+                              className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full border ${markerTone} ${markerOpacity}`}
+                              style={{ left: compactLeft, width: markerWidth, height: markerHeight }}
                             />
                           );
                         })}
