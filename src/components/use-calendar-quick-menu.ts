@@ -86,6 +86,11 @@ export function useCalendarQuickMenu({
       const desktopPanelWidth = Math.min(48 * 16, Math.max(320, window.innerWidth - 24));
       const desktopHalfWidth = desktopPanelWidth / 2;
       const maxTop = Math.max(12, window.innerHeight - QUICK_MENU_ESTIMATED_HEIGHT - 12);
+      const containerRect = gridRef.current?.getBoundingClientRect();
+      const minLeftEdge = containerRect ? containerRect.left + 16 : 16;
+      const maxRightEdge = containerRect ? containerRect.right - 16 : window.innerWidth - 16;
+      const minCenter = minLeftEdge + desktopHalfWidth;
+      const maxCenter = Math.max(minCenter, maxRightEdge - desktopHalfWidth);
       const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
       const projects = getProjects();
 
@@ -96,8 +101,8 @@ export function useCalendarQuickMenu({
         top: clamp(rect.top + Math.min(rect.height, 28) + 10, 12, maxTop),
         left: clamp(
           rect.left + rect.width / 2,
-          16 + desktopHalfWidth,
-          window.innerWidth - 16 - desktopHalfWidth,
+          minCenter,
+          maxCenter,
         ),
         mobile,
         draftTitle: slot.title,
@@ -113,7 +118,7 @@ export function useCalendarQuickMenu({
         draftSeriesScope: isRecurringScheduleSlot(slot) ? "single" : "following",
       });
     },
-    [hideDesktopSlotHint, linkedTasksById, onClearHoveredSlot],
+    [gridRef, hideDesktopSlotHint, linkedTasksById, onClearHoveredSlot],
   );
 
   const updateQuickMenuDraft = useCallback(
