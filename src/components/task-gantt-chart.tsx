@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
+import { lsGet, lsSet } from "@/lib/storage";
 import type { Project, ProjectAccent } from "@/lib/projects";
 import type { Task } from "@/lib/tasks";
 
@@ -23,7 +24,7 @@ export type GanttGroup = {
 
 export type TaskGanttChartProps = {
   groups: GanttGroup[];
-  onTaskDueDateChange: (taskId: string, newDate: string) => void;
+  onTaskRangeChange: (taskId: string, patch: { startDate?: string; dueDate?: string }) => void;
   onTaskPlannedMinutesChange?: (taskId: string, minutes: number | null) => void;
 };
 
@@ -37,6 +38,7 @@ const FUTURE_DAYS = 365;
 const MIN_BAR_DAYS = 0.55;
 const MIN_MARKER_W = 18;
 const AUTO_SCROLL_EDGE = 56;
+const GANTT_UI_STATE_KEY = "alphacore_tasks_gantt_ui_v1";
 
 type ZoomLevel = "detail" | "month" | "overview";
 
@@ -81,14 +83,23 @@ type DerivedRow = DerivedTaskRow | DerivedGroupRow;
 
 type InteractionState = {
   taskId: string;
-  mode: "move" | "resize";
+  mode: "move" | "resize-start" | "resize-end";
+  resizeKind?: "date" | "duration";
   startX: number;
-  startDueDate?: string;
-  startCreatedAt: string;
-  startPlannedMinutes?: number;
+  hasExplicitStartDate: boolean;
+  hasDueDate: boolean;
+  baseStartDate: string;
+  baseDueDate?: string;
+  baseCreatedAt: string;
+  basePlannedMinutes?: number;
   offsetDays: number;
   previewPlannedMinutes?: number;
   moved: boolean;
+};
+
+type PersistedGanttUiState = {
+  zoom?: ZoomLevel;
+  collapsedGroups?: string[];
 };
 
 const BAR_BG: Record<ProjectAccent, string> = {
@@ -146,6 +157,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+function isZoomLevel(value: string | undefined): value is ZoomLevel {
+  return value === "detail" || value === "month" || value === "overview";
+}
+
+function readPersistedGanttUiState(): PersistedGanttUiState {
+  return lsGet<PersistedGanttUiState>(GANTT_UI_STATE_KEY, {});
+}
+
 function isWeekend(date: Date): boolean {
   const day = date.getDay();
   return day === 0 || day === 6;
@@ -167,6 +186,151 @@ function durationLabel(minutes?: number): string | null {
   if (hours < 8) return `${hours.toFixed(hours % 1 === 0 ? 0 : 1)}ч`;
   const days = minutes / WORKDAY_MINUTES;
   return `${days.toFixed(days % 1 === 0 ? 0 : 1)}д`;
+}
+
+function formatDayLabel(value?: string): string | null {
+  if (!value) return null;
+  const date = parseDay(value);
+  if (!date) return null;
+
+  return date.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function resolveTaskStartDate(task: Task): Date {
+  const explicitStart = parseDay(task.startDate);
+  if (explicitStart) return explicitStart;
+
+  const due = parseDay(task.dueDate);
+  const plannedDays = durationDaysFromMinutes(task.plannedMinutes);
+
+  if (due) {
+    return addDays(due, -Math.max(Math.ceil(plannedDays ?? 1) - 1, 0));
+  }
+
+  return d0(new Date(task.createdAt));
+}
+
+function clampStartDate(nextStart: Date, dueDate?: string): Date {
+  const due = parseDay(dueDate);
+  if (!due) return nextStart;
+  return nextStart > due ? due : nextStart;
+}
+
+function clampDueDate(nextDue: Date, startDate?: string): Date {
+  const start = parseDay(startDate);
+  if (!start) return nextDue;
+  return nextDue < start ? start : nextDue;
+}
+
+function buildTaskTooltip(task: Task): string {
+  const lines = [task.title, `Приоритет: ${task.priority.toUpperCase()}`];
+  const startLabel = formatDayLabel(task.startDate);
+  const dueLabel = formatDayLabel(task.dueDate);
+  const plannedLabel = durationLabel(task.plannedMinutes);
+
+  if (startLabel) lines.push(`Старт: ${startLabel}`);
+  if (dueLabel) lines.push(`Финиш: ${dueLabel}`);
+  if (plannedLabel) lines.push(`Оценка: ${plannedLabel}`);
+  if (task.project) lines.push(`Проект: ${task.project}`);
+
+  return lines.join("\n");
+}
+
+function getOverdueTailSpan(
+  task: Task,
+  timelineStart: Date,
+  today: Date,
+  totalDays: number,
+  dayWidth: number,
+): Span | undefined {
+  const due = parseDay(task.dueDate);
+  if (!due || due >= today) return undefined;
+
+  const startIndex = clamp(diffDays(timelineStart, addDays(due, 1)), 0, totalDays - 1);
+  const endIndex = clamp(diffDays(timelineStart, today), 0, totalDays - 1);
+
+  if (endIndex < startIndex) return undefined;
+
+  return {
+    left: startIndex * dayWidth,
+    width: Math.max((endIndex - startIndex + 0.5) * dayWidth, 6),
+    startIndex,
+    endIndex,
+  };
+}
+
+function buildPreviewTask(task: Task, interaction: InteractionState | null): Task {
+  if (!interaction || interaction.taskId !== task.id) return task;
+
+  if (interaction.mode === "move") {
+    const shiftedStart = fmtISO(addDays(parseDay(interaction.baseStartDate) ?? d0(new Date(task.createdAt)), interaction.offsetDays));
+    const shiftedDue = interaction.baseDueDate
+      ? fmtISO(addDays(parseDay(interaction.baseDueDate) ?? d0(new Date(task.createdAt)), interaction.offsetDays))
+      : undefined;
+
+    if (interaction.hasExplicitStartDate) {
+      return {
+        ...task,
+        startDate: shiftedStart,
+        ...(interaction.hasDueDate ? { dueDate: shiftedDue } : {}),
+      };
+    }
+
+    if (interaction.hasDueDate) {
+      return {
+        ...task,
+        dueDate: shiftedDue,
+      };
+    }
+
+    if (interaction.basePlannedMinutes) {
+      return {
+        ...task,
+        startDate: shiftedStart,
+      };
+    }
+
+    return {
+      ...task,
+      dueDate: shiftedStart,
+    };
+  }
+
+  if (interaction.mode === "resize-start") {
+    const nextStart = clampStartDate(
+      addDays(parseDay(interaction.baseStartDate) ?? d0(new Date(task.createdAt)), interaction.offsetDays),
+      interaction.baseDueDate,
+    );
+
+    return {
+      ...task,
+      startDate: fmtISO(nextStart),
+    };
+  }
+
+  if (interaction.mode === "resize-end") {
+    if (interaction.resizeKind === "date" && interaction.baseDueDate) {
+      const nextDue = clampDueDate(
+        addDays(parseDay(interaction.baseDueDate) ?? d0(new Date(task.createdAt)), interaction.offsetDays),
+        interaction.baseStartDate,
+      );
+
+      return {
+        ...task,
+        dueDate: fmtISO(nextDue),
+      };
+    }
+
+    return {
+      ...task,
+      plannedMinutes: interaction.previewPlannedMinutes,
+    };
+  }
+
+  return task;
 }
 
 function spanFromVisual(visual: TaskVisual): Span {
@@ -237,21 +401,74 @@ function computeTaskVisual(
     dayWidth: number;
     timelineStart: Date;
     totalDays: number;
-    offsetDays?: number;
-    plannedMinutesOverride?: number;
   },
 ): TaskVisual {
-  const { dayWidth, timelineStart, totalDays, offsetDays = 0, plannedMinutesOverride } = options;
+  const { dayWidth, timelineStart, totalDays } = options;
 
   const created = d0(new Date(task.createdAt));
   const createdIndex = clamp(diffDays(timelineStart, created), 0, totalDays - 1);
+  const start = parseDay(task.startDate);
   const due = parseDay(task.dueDate);
-  const plannedMinutes = plannedMinutesOverride ?? task.plannedMinutes;
+  const plannedMinutes = task.plannedMinutes;
   const plannedDays = durationDaysFromMinutes(plannedMinutes);
+
+  if (start) {
+    if (due) {
+      const startIndex = clamp(diffDays(timelineStart, start), 0, totalDays - 1);
+      const dueIndex = clamp(diffDays(timelineStart, due), 0, totalDays - 1);
+      const visibleStart = Math.min(startIndex, dueIndex);
+      const visibleEnd = Math.max(startIndex, dueIndex) + 1;
+      const left = visibleStart * dayWidth;
+      const width = Math.max((visibleEnd - visibleStart) * dayWidth, Math.max(dayWidth * 0.8, MIN_MARKER_W));
+
+      return {
+        kind: "bar",
+        left,
+        width,
+        startIndex: visibleStart,
+        endIndex: clamp(visibleEnd - 1, 0, totalDays - 1),
+        anchorIndex: clamp(visibleEnd - 1, 0, totalDays - 1),
+        titleOutside: width < 76,
+      };
+    }
+
+    if (plannedDays != null) {
+      const startIndexFloat = clamp(diffDays(timelineStart, start), 0, totalDays - 1);
+      const visibleEnd = clamp(startIndexFloat + plannedDays, 0, totalDays);
+      const left = startIndexFloat * dayWidth;
+      const width = Math.max((visibleEnd - startIndexFloat) * dayWidth, Math.max(dayWidth * 0.8, MIN_MARKER_W));
+      const startIndex = clamp(Math.floor(startIndexFloat), 0, totalDays - 1);
+      const endIndex = clamp(Math.ceil(visibleEnd) - 1, 0, totalDays - 1);
+
+      return {
+        kind: "bar",
+        left,
+        width,
+        startIndex,
+        endIndex,
+        anchorIndex: endIndex,
+        titleOutside: width < 76,
+      };
+    }
+
+    const anchor = clamp(diffDays(timelineStart, start), 0, totalDays - 1);
+    const width = Math.max(dayWidth * 0.75, MIN_MARKER_W);
+    const left = anchor * dayWidth + Math.max(dayWidth * 0.12, 1);
+
+    return {
+      kind: "marker",
+      left,
+      width,
+      startIndex: anchor,
+      endIndex: anchor,
+      anchorIndex: anchor,
+      titleOutside: true,
+    };
+  }
 
   if (plannedDays != null) {
     if (due) {
-      const dueIndex = clamp(diffDays(timelineStart, due) + offsetDays, 0, totalDays - 1);
+      const dueIndex = clamp(diffDays(timelineStart, due), 0, totalDays - 1);
       const rawStart = dueIndex + 1 - plannedDays;
       const visibleStart = clamp(rawStart, 0, totalDays - 1);
       const visibleEnd = clamp(dueIndex + 1, 0, totalDays);
@@ -271,7 +488,7 @@ function computeTaskVisual(
       };
     }
 
-    const startIndexFloat = clamp(createdIndex + offsetDays, 0, totalDays - 1);
+    const startIndexFloat = clamp(createdIndex, 0, totalDays - 1);
     const visibleEnd = clamp(startIndexFloat + plannedDays, 0, totalDays);
     const left = startIndexFloat * dayWidth;
     const width = Math.max((visibleEnd - startIndexFloat) * dayWidth, Math.max(dayWidth * 0.8, MIN_MARKER_W));
@@ -289,7 +506,7 @@ function computeTaskVisual(
     };
   }
 
-  const anchor = due ? clamp(diffDays(timelineStart, due) + offsetDays, 0, totalDays - 1) : clamp(createdIndex + offsetDays, 0, totalDays - 1);
+  const anchor = due ? clamp(diffDays(timelineStart, due), 0, totalDays - 1) : clamp(createdIndex, 0, totalDays - 1);
   const width = Math.max(dayWidth * 0.75, MIN_MARKER_W);
   const left = anchor * dayWidth + Math.max(dayWidth * 0.12, 1);
 
@@ -306,14 +523,20 @@ function computeTaskVisual(
 
 export function TaskGanttChart({
   groups,
-  onTaskDueDateChange,
+  onTaskRangeChange,
   onTaskPlannedMinutesChange,
 }: TaskGanttChartProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef<string | null>(null);
 
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [zoom, setZoom] = useState<ZoomLevel>("month");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    const persisted = readPersistedGanttUiState();
+    return new Set((persisted.collapsedGroups ?? []).filter(Boolean));
+  });
+  const [zoom, setZoom] = useState<ZoomLevel>(() => {
+    const persisted = readPersistedGanttUiState();
+    return isZoomLevel(persisted.zoom) ? persisted.zoom : "month";
+  });
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
 
   const today = useMemo(() => d0(new Date()), []);
@@ -329,13 +552,11 @@ export function TaskGanttChart({
   );
 
   const buildVisual = useCallback(
-    (task: Task, options?: { offsetDays?: number; plannedMinutesOverride?: number }) =>
+    (task: Task) =>
       computeTaskVisual(task, {
         dayWidth,
         timelineStart,
         totalDays,
-        offsetDays: options?.offsetDays,
-        plannedMinutesOverride: options?.plannedMinutesOverride,
       }),
     [dayWidth, timelineStart, totalDays],
   );
@@ -431,6 +652,13 @@ export function TaskGanttChart({
   const maxLoad = useMemo(() => Math.max(...derived.loadByDay, 0), [derived.loadByDay]);
 
   useEffect(() => {
+    lsSet(GANTT_UI_STATE_KEY, {
+      zoom,
+      collapsedGroups: Array.from(collapsedGroups),
+    } satisfies PersistedGanttUiState);
+  }, [collapsedGroups, zoom]);
+
+  useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     viewport.scrollLeft = 0;
@@ -456,28 +684,56 @@ export function TaskGanttChart({
       taskId: task.id,
       mode: "move",
       startX: event.clientX,
-      startDueDate: task.dueDate,
-      startCreatedAt: task.createdAt,
-      startPlannedMinutes: task.plannedMinutes,
+      hasExplicitStartDate: Boolean(task.startDate),
+      hasDueDate: Boolean(task.dueDate),
+      baseStartDate: fmtISO(resolveTaskStartDate(task)),
+      baseDueDate: task.dueDate,
+      baseCreatedAt: task.createdAt,
+      basePlannedMinutes: task.plannedMinutes,
       offsetDays: 0,
       previewPlannedMinutes: task.plannedMinutes,
       moved: false,
     });
   }, []);
 
-  const beginResize = useCallback((event: React.PointerEvent<HTMLButtonElement>, task: Task) => {
-    if (!onTaskPlannedMinutesChange) return;
+  const beginResizeStart = useCallback((event: React.PointerEvent<HTMLButtonElement>, task: Task) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setInteraction({
+      taskId: task.id,
+      mode: "resize-start",
+      startX: event.clientX,
+      hasExplicitStartDate: Boolean(task.startDate),
+      hasDueDate: Boolean(task.dueDate),
+      baseStartDate: fmtISO(resolveTaskStartDate(task)),
+      baseDueDate: task.dueDate,
+      baseCreatedAt: task.createdAt,
+      basePlannedMinutes: task.plannedMinutes,
+      offsetDays: 0,
+      previewPlannedMinutes: task.plannedMinutes,
+      moved: false,
+    });
+  }, []);
+
+  const beginResizeEnd = useCallback((event: React.PointerEvent<HTMLButtonElement>, task: Task) => {
+    const resizeKind = task.startDate && task.dueDate ? "date" : "duration";
+    if (resizeKind === "duration" && !onTaskPlannedMinutesChange) return;
 
     event.preventDefault();
     event.stopPropagation();
 
     setInteraction({
       taskId: task.id,
-      mode: "resize",
+      mode: "resize-end",
+      resizeKind,
       startX: event.clientX,
-      startDueDate: task.dueDate,
-      startCreatedAt: task.createdAt,
-      startPlannedMinutes: task.plannedMinutes ?? 60,
+      hasExplicitStartDate: Boolean(task.startDate),
+      hasDueDate: Boolean(task.dueDate),
+      baseStartDate: fmtISO(resolveTaskStartDate(task)),
+      baseDueDate: task.dueDate,
+      baseCreatedAt: task.createdAt,
+      basePlannedMinutes: task.plannedMinutes ?? 60,
       offsetDays: 0,
       previewPlannedMinutes: task.plannedMinutes ?? 60,
       moved: false,
@@ -500,7 +756,11 @@ export function TaskGanttChart({
 
       const deltaX = event.clientX - interaction.startX;
 
-      if (interaction.mode === "move") {
+      if (
+        interaction.mode === "move"
+        || interaction.mode === "resize-start"
+        || (interaction.mode === "resize-end" && interaction.resizeKind === "date")
+      ) {
         const offsetDays = Math.round(deltaX / dayWidth);
         setInteraction((current) =>
           current
@@ -514,7 +774,7 @@ export function TaskGanttChart({
         return;
       }
 
-      const baseMinutes = interaction.startPlannedMinutes ?? 60;
+      const baseMinutes = interaction.basePlannedMinutes ?? 60;
       const nextMinutes = roundToQuarterHour(baseMinutes + (deltaX / dayWidth) * WORKDAY_MINUTES);
       setInteraction((current) =>
         current
@@ -529,21 +789,63 @@ export function TaskGanttChart({
 
     const handlePointerUp = () => {
       if (interaction.mode === "move" && interaction.offsetDays !== 0) {
-        const currentPlannedMinutes = interaction.startPlannedMinutes;
-        const durationDays = durationDaysFromMinutes(currentPlannedMinutes) ?? 0;
-        const baseDue = parseDay(interaction.startDueDate)
-          ?? addDays(d0(new Date(interaction.startCreatedAt)), Math.max(Math.ceil(durationDays) - 1, 0));
-        const nextDueDate = addDays(baseDue, interaction.offsetDays);
-        onTaskDueDateChange(interaction.taskId, fmtISO(nextDueDate));
+        const shiftedStart = addDays(parseDay(interaction.baseStartDate) ?? d0(new Date(interaction.baseCreatedAt)), interaction.offsetDays);
+
+        if (interaction.hasExplicitStartDate) {
+          const patch: { startDate?: string; dueDate?: string } = {
+            startDate: fmtISO(shiftedStart),
+          };
+
+          if (interaction.hasDueDate && interaction.baseDueDate) {
+            patch.dueDate = fmtISO(addDays(parseDay(interaction.baseDueDate) ?? shiftedStart, interaction.offsetDays));
+          }
+
+          onTaskRangeChange(interaction.taskId, patch);
+        } else if (interaction.hasDueDate && interaction.baseDueDate) {
+          onTaskRangeChange(interaction.taskId, {
+            dueDate: fmtISO(addDays(parseDay(interaction.baseDueDate) ?? shiftedStart, interaction.offsetDays)),
+          });
+        } else if (interaction.basePlannedMinutes) {
+          onTaskRangeChange(interaction.taskId, {
+            startDate: fmtISO(shiftedStart),
+          });
+        } else {
+          onTaskRangeChange(interaction.taskId, {
+            dueDate: fmtISO(shiftedStart),
+          });
+        }
       }
 
-      if (
-        interaction.mode === "resize"
-        && onTaskPlannedMinutesChange
-        && interaction.previewPlannedMinutes
-        && interaction.previewPlannedMinutes !== interaction.startPlannedMinutes
-      ) {
-        onTaskPlannedMinutesChange(interaction.taskId, interaction.previewPlannedMinutes);
+      if (interaction.mode === "resize-start" && interaction.offsetDays !== 0) {
+        const nextStart = clampStartDate(
+          addDays(parseDay(interaction.baseStartDate) ?? d0(new Date(interaction.baseCreatedAt)), interaction.offsetDays),
+          interaction.baseDueDate,
+        );
+        const nextStartValue = fmtISO(nextStart);
+
+        if (!interaction.hasExplicitStartDate || nextStartValue !== interaction.baseStartDate) {
+          onTaskRangeChange(interaction.taskId, { startDate: nextStartValue });
+        }
+      }
+
+      if (interaction.mode === "resize-end") {
+        if (interaction.resizeKind === "date" && interaction.baseDueDate) {
+          const nextDue = clampDueDate(
+            addDays(parseDay(interaction.baseDueDate) ?? d0(new Date(interaction.baseCreatedAt)), interaction.offsetDays),
+            interaction.baseStartDate,
+          );
+          const nextDueValue = fmtISO(nextDue);
+
+          if (nextDueValue !== interaction.baseDueDate) {
+            onTaskRangeChange(interaction.taskId, { dueDate: nextDueValue });
+          }
+        } else if (
+          onTaskPlannedMinutesChange
+          && interaction.previewPlannedMinutes
+          && interaction.previewPlannedMinutes !== interaction.basePlannedMinutes
+        ) {
+          onTaskPlannedMinutesChange(interaction.taskId, interaction.previewPlannedMinutes);
+        }
       }
 
       if (interaction.moved) {
@@ -565,7 +867,7 @@ export function TaskGanttChart({
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [dayWidth, interaction, onTaskDueDateChange, onTaskPlannedMinutesChange]);
+  }, [dayWidth, interaction, onTaskPlannedMinutesChange, onTaskRangeChange]);
 
   const openTaskInList = useCallback((taskId: string) => {
     if (suppressClickRef.current === taskId) return;
@@ -585,7 +887,7 @@ export function TaskGanttChart({
         <div>
           <p className="text-xs font-medium text-zinc-100">Гант по категориям и подзадачам</p>
           <p className="mt-1 text-[11px] text-zinc-500">
-            Виден весь список без внутренней вертикальной прокрутки. Тяни бар — двигаешь дедлайн, правый край — меняешь длительность.
+            Виден весь список без внутренней вертикальной прокрутки. Тяни бар — сдвигаешь диапазон, левый край задаёт старт, правый — финиш или длительность.
           </p>
         </div>
 
@@ -734,20 +1036,25 @@ export function TaskGanttChart({
                 const task = row.task;
                 const group = row.group;
                 const interactionForTask = interaction?.taskId === task.id ? interaction : null;
-                const previewVisual = buildVisual(task, {
-                  offsetDays: interactionForTask?.mode === "move" ? interactionForTask.offsetDays : 0,
-                  plannedMinutesOverride: interactionForTask?.mode === "resize" ? interactionForTask.previewPlannedMinutes : undefined,
-                });
+                const previewTask = buildPreviewTask(task, interactionForTask);
+                const previewVisual = buildVisual(previewTask);
                 const baseTone = groupBarTone(group);
-                const urgencyTone = taskUrgencyTone(task, today);
+                const urgencyTone = taskUrgencyTone(previewTask, today);
                 const priorityTone =
                   task.priority === "p1"
                     ? "text-rose-400"
                     : task.priority === "p2"
                       ? "text-amber-400"
                       : "text-zinc-600";
-                const planned = durationLabel(task.plannedMinutes);
+                const planned = durationLabel(previewTask.plannedMinutes);
                 const showRollup = row.hasChildren && row.rollupSpan && row.rollupSpan.width > previewVisual.width + 8;
+                const taskTooltip = buildTaskTooltip(previewTask);
+                const overdueTail = getOverdueTailSpan(previewTask, timelineStart, today, totalDays, dayWidth);
+                const canResizeStart = Boolean(task.dueDate);
+                const canResizeEnd = Boolean(task.startDate && task.dueDate) || Boolean(task.plannedMinutes && onTaskPlannedMinutesChange);
+                const endResizeTitle = task.startDate && task.dueDate
+                  ? `Изменить финиш ${task.title}`
+                  : `Изменить длительность ${task.title}`;
 
                 return (
                   <div key={row.key} className="flex border-b border-zinc-800/20" style={{ height: ROW_H }}>
@@ -776,6 +1083,14 @@ export function TaskGanttChart({
                         />
                       )}
 
+                      {overdueTail && (
+                        <div
+                          className="pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full bg-linear-to-r from-rose-500/10 via-rose-400/55 to-rose-300/20"
+                          style={{ left: overdueTail.left, width: overdueTail.width, height: 7 }}
+                          title={`Просрочка: ${task.title}`}
+                        />
+                      )}
+
                       <button
                         type="button"
                         onClick={() => openTaskInList(task.id)}
@@ -790,7 +1105,7 @@ export function TaskGanttChart({
                           height: ROW_H - 8,
                           cursor: "grab",
                         }}
-                        title={task.title}
+                        title={taskTooltip}
                       >
                         {!previewVisual.titleOutside && (
                           <span className="pointer-events-none absolute inset-0 flex items-center px-2 text-[8px] text-white/75 truncate">
@@ -805,16 +1120,33 @@ export function TaskGanttChart({
                           onClick={() => openTaskInList(task.id)}
                           className="absolute top-1 truncate text-left text-[8px] text-zinc-500 hover:text-zinc-300"
                           style={{ left: previewVisual.left + previewVisual.width + 4, maxWidth: 140 }}
-                          title={task.title}
+                          title={taskTooltip}
                         >
                           {task.title}
                         </button>
                       )}
 
-                      {task.plannedMinutes && onTaskPlannedMinutesChange && (
+                      {canResizeStart && previewVisual.kind === "bar" && (
                         <button
                           type="button"
-                          onPointerDown={(event) => beginResize(event, task)}
+                          onPointerDown={(event) => beginResizeStart(event, task)}
+                          className="absolute z-30 rounded-l-lg border-r border-white/10 bg-black/20 hover:bg-black/30"
+                          style={{
+                            left: previewVisual.left,
+                            top: 4,
+                            width: 8,
+                            height: ROW_H - 8,
+                            cursor: "ew-resize",
+                          }}
+                          aria-label={`Изменить старт ${task.title}`}
+                          title={`Изменить старт ${task.title}`}
+                        />
+                      )}
+
+                      {canResizeEnd && previewVisual.kind === "bar" && (
+                        <button
+                          type="button"
+                          onPointerDown={(event) => beginResizeEnd(event, task)}
                           className="absolute z-30 rounded-r-lg border-l border-white/10 bg-black/15 hover:bg-black/25"
                           style={{
                             left: previewVisual.left + previewVisual.width - 8,
@@ -823,8 +1155,8 @@ export function TaskGanttChart({
                             height: ROW_H - 8,
                             cursor: "ew-resize",
                           }}
-                          aria-label={`Изменить длительность ${task.title}`}
-                          title={`Изменить длительность ${task.title}`}
+                          aria-label={endResizeTitle}
+                          title={endResizeTitle}
                         />
                       )}
                     </div>
@@ -840,9 +1172,11 @@ export function TaskGanttChart({
         <span className="inline-flex items-center gap-1">
           <span className="h-2 w-2 rounded-full bg-amber-400" /> сегодня
         </span>
-        <span>Drag бара — двигает дедлайн</span>
-        {onTaskPlannedMinutesChange && <span>Правый край — меняет длительность</span>}
+        <span>Drag бара — двигает весь диапазон</span>
+        <span>Левый край — задаёт старт</span>
+        {onTaskPlannedMinutesChange && <span>Правый край — финиш или длительность</span>}
         <span>Пунктир — сводный rollup родителя</span>
+        <span>Красный хвост — уже вышли за срок</span>
       </div>
     </div>
   );

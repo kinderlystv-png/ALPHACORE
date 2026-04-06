@@ -21,7 +21,7 @@ import {
   updateCustomEvent,
   type ScheduleTone,
 } from "@/lib/schedule";
-import { subscribeAppDataChange } from "@/lib/storage";
+import { lsGet, lsSet, subscribeAppDataChange } from "@/lib/storage";
 import {
   type Task,
   type TaskStatus,
@@ -176,6 +176,7 @@ const QUICK_EFFORT_OPTIONS: QuickEffortOption[] = [
 const QUICK_EFFORT_LABEL_BY_MINUTES = new Map(
   QUICK_EFFORT_OPTIONS.map((option) => [option.minutes, option]),
 );
+const TASKS_GANTT_EXPANDED_KEY = "alphacore_tasks_gantt_expanded_v1";
 
 function pluralizeTasks(count: number): string {
   const mod10 = count % 10;
@@ -534,6 +535,22 @@ function dueBadge(due?: string): { cls: string; label: string } | null {
   };
 }
 
+function startBadge(startDate?: string, dueDate?: string): { cls: string; label: string } | null {
+  if (!startDate) return null;
+
+  const start = new Date(`${startDate}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+
+  const sameAsDue = Boolean(dueDate && dueDate === startDate);
+
+  return {
+    cls: sameAsDue
+      ? "border-sky-500/15 bg-sky-500/8 text-sky-200"
+      : "border-sky-500/25 bg-sky-500/10 text-sky-200",
+    label: `старт ${start.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}`,
+  };
+}
+
 function inferComposerFactTone(project: Project | undefined): ScheduleTone {
   const label = `${project?.id ?? ""} ${project?.name ?? ""}`.toLowerCase();
   if (label.includes("kinderly")) return "kinderly";
@@ -605,7 +622,7 @@ export default function TasksPage() {
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedCompletedGroups, setExpandedCompletedGroups] = useState<Set<string>>(new Set());
-  const [ganttExpanded, setGanttExpanded] = useState(true);
+  const [ganttExpanded, setGanttExpanded] = useState<boolean>(() => lsGet<boolean>(TASKS_GANTT_EXPANDED_KEY, true));
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [nestDropTargetId, setNestDropTargetId] = useState<string | null>(null);
   const [taskComposerModal, setTaskComposerModal] = useState<TaskComposerModalState | null>(null);
@@ -633,6 +650,10 @@ export default function TasksPage() {
       }
     });
   }, [reload]);
+
+  useEffect(() => {
+    lsSet(TASKS_GANTT_EXPANDED_KEY, ganttExpanded);
+  }, [ganttExpanded]);
 
   const projectNameById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
@@ -860,6 +881,17 @@ export default function TasksPage() {
   const handleSetDue = useCallback(
     (id: string, date: string) => {
       updateTask(id, { dueDate: date || undefined });
+      reload();
+    },
+    [reload],
+  );
+
+  const handleSetRange = useCallback(
+    (id: string, patch: { startDate?: string; dueDate?: string }) => {
+      updateTask(id, {
+        ...(Object.prototype.hasOwnProperty.call(patch, "startDate") ? { startDate: patch.startDate || undefined } : {}),
+        ...(Object.prototype.hasOwnProperty.call(patch, "dueDate") ? { dueDate: patch.dueDate || undefined } : {}),
+      });
       reload();
     },
     [reload],
@@ -1164,6 +1196,7 @@ export default function TasksPage() {
   function renderTaskNode(node: TaskTreeNode): React.ReactNode {
       const task = node.task;
       const badge = dueBadge(task.dueDate);
+      const rangeBadge = startBadge(task.startDate, task.dueDate);
       const plannedLabel = formatPlannedMinutesLabel(task.plannedMinutes, "short");
       const focus = getTaskFocusTotal(task);
       const taskProjectId = getTaskProjectId(task);
@@ -1288,6 +1321,15 @@ export default function TasksPage() {
                         {badge && (
                           <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>
                             📅 {badge.label}
+                          </span>
+                        )}
+
+                        {rangeBadge && (
+                          <span
+                            className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${rangeBadge.cls}`}
+                            title="Старт диапазона задачи — можно менять левым краем в Ганте"
+                          >
+                            ↦ {rangeBadge.label}
                           </span>
                         )}
 
@@ -1591,7 +1633,7 @@ export default function TasksPage() {
             {ganttExpanded && (
               <TaskGanttChart
                 groups={ganttGroups}
-                onTaskDueDateChange={handleSetDue}
+                onTaskRangeChange={handleSetRange}
                 onTaskPlannedMinutesChange={handleSetPlannedMinutes}
               />
             )}

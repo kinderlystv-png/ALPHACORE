@@ -22,6 +22,7 @@ export type Task = {
   parentTaskId?: string;
   priority: TaskPriority;
   status: TaskStatus;
+  startDate?: string;
   dueDate?: string;
   plannedMinutes?: number;
   createdAt: string;
@@ -41,6 +42,7 @@ type AddTaskOptions = Partial<
     | "projectId"
     | "parentTaskId"
     | "priority"
+    | "startDate"
     | "dueDate"
     | "plannedMinutes"
     | "status"
@@ -56,6 +58,11 @@ function sanitizeOptionalId(value?: string | null): string | undefined {
   return next ? next : undefined;
 }
 
+function sanitizeOptionalDate(value?: string | null): string | undefined {
+  const next = value?.trim();
+  return next ? next : undefined;
+}
+
 function sanitizePlannedMinutes(value?: number | null): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
 
@@ -67,6 +74,8 @@ function normalizeTasks(tasks: Task[]): Task[] {
   const prepared = tasks.map((task) => ({
     ...task,
     parentTaskId: sanitizeOptionalId(task.parentTaskId),
+    startDate: sanitizeOptionalDate(task.startDate),
+    dueDate: sanitizeOptionalDate(task.dueDate),
     plannedMinutes: sanitizePlannedMinutes(task.plannedMinutes),
   }));
   const taskIds = new Set(prepared.map((task) => task.id));
@@ -194,7 +203,8 @@ export function addTask(
     parentTaskId: opts?.parentTaskId,
     priority: opts?.priority ?? "p2",
     status,
-    dueDate: opts?.dueDate,
+    startDate: sanitizeOptionalDate(opts?.startDate),
+    dueDate: sanitizeOptionalDate(opts?.dueDate),
     plannedMinutes: sanitizePlannedMinutes(opts?.plannedMinutes),
     createdAt: new Date().toISOString(),
     origin: opts?.origin,
@@ -206,12 +216,18 @@ export function addTask(
 }
 
 export function updateTask(id: string, patch: Partial<Task>): void {
-  const nextPatch = "plannedMinutes" in patch
-    ? {
-        ...patch,
-        plannedMinutes: sanitizePlannedMinutes(patch.plannedMinutes),
-      }
-    : patch;
+  const nextPatch: Partial<Task> = {
+    ...patch,
+    ...(Object.prototype.hasOwnProperty.call(patch, "plannedMinutes")
+      ? { plannedMinutes: sanitizePlannedMinutes(patch.plannedMinutes) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, "startDate")
+      ? { startDate: sanitizeOptionalDate(patch.startDate) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, "dueDate")
+      ? { dueDate: sanitizeOptionalDate(patch.dueDate) }
+      : {}),
+  };
 
   const tasks = getTasks().map((t) => (t.id === id ? { ...t, ...nextPatch } : t));
   save(tasks);
