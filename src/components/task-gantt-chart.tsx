@@ -143,6 +143,11 @@ type PersistedGanttUiState = {
   showDependencies?: boolean;
 };
 
+type DependencyChainSummary = {
+  taskIds: string[];
+  maxDepth: number;
+};
+
 const BAR_BG: Record<ProjectAccent, string> = {
   sky: "bg-sky-500/60",
   orange: "bg-orange-500/60",
@@ -341,6 +346,12 @@ function durationLabel(minutes?: number): string | null {
   if (hours < 8) return `${hours.toFixed(hours % 1 === 0 ? 0 : 1)}ч`;
   const days = minutes / WORKDAY_MINUTES;
   return `${days.toFixed(days % 1 === 0 ? 0 : 1)}д`;
+}
+
+function formatSignedDurationDelta(minutes: number): string {
+  const label = durationLabel(Math.abs(minutes));
+  if (!label || minutes === 0) return "0";
+  return `${minutes > 0 ? "+" : "-"}${label}`;
 }
 
 function formatDayLabel(value?: string): string | null {
@@ -903,6 +914,8 @@ export function TaskGanttChart({
     const taskById = new Map(allTasks.map((task) => [task.id, task]));
     const incomingByTaskId = new Map<string, string[]>();
     const outgoingByTaskId = new Map<string, string[]>();
+    const downstreamByTaskId = new Map<string, DependencyChainSummary>();
+    const upstreamByTaskId = new Map<string, DependencyChainSummary>();
     const varianceByTaskId: Record<string, { startDeltaDays: number; finishDeltaDays: number; slipDays: number; gainDays: number }> = {};
     const dependencyByTaskId: Record<
       string,
@@ -999,6 +1012,37 @@ export function TaskGanttChart({
       }
     }
 
+    const collectChain = (
+      rootTaskId: string,
+      graph: Map<string, string[]>,
+    ): DependencyChainSummary => {
+      const seen = new Set<string>();
+      let maxDepth = 0;
+      const stack = (graph.get(rootTaskId) ?? []).map((taskId) => ({ taskId, depth: 1 }));
+
+      while (stack.length > 0) {
+        const current = stack.pop();
+        if (!current || seen.has(current.taskId)) continue;
+
+        seen.add(current.taskId);
+        maxDepth = Math.max(maxDepth, current.depth);
+
+        for (const nextTaskId of graph.get(current.taskId) ?? []) {
+          stack.push({ taskId: nextTaskId, depth: current.depth + 1 });
+        }
+      }
+
+      return {
+        taskIds: Array.from(seen),
+        maxDepth,
+      };
+    };
+
+    for (const task of allTasks) {
+      downstreamByTaskId.set(task.id, collectChain(task.id, outgoingByTaskId));
+      upstreamByTaskId.set(task.id, collectChain(task.id, incomingByTaskId));
+    }
+
     for (const taskId of conflictedTaskIds) {
       relevantTaskIds.add(taskId);
     }
@@ -1040,6 +1084,10 @@ export function TaskGanttChart({
     return {
       varianceByTaskId,
       dependencyByTaskId,
+      incomingByTaskId,
+      outgoingByTaskId,
+      downstreamByTaskId,
+      upstreamByTaskId,
       dependencyHeatByDay,
       dependencyConflictHeatByDay,
       criticalChainHeatByDay,
@@ -1289,6 +1337,146 @@ export function TaskGanttChart({
     return layouts;
   }, [buildVisual, derived.orderedRows, derived.taskRowTopById, interaction]);
 
+  const interactionImpact = useMemo(() => {
+    if (!interaction) return null;
+
+    const task = allTasksById.get(interaction.taskId);
+    if (!task) return null;
+
+    const previewTask = buildPreviewTask(task, interaction);
+    const currentVisual = buildVisual(task);
+    const previewVisual = buildVisual(previewTask);
+    const startDeltaDays = previewVisual.startIndex - currentVisual.startIndex;
+    const finishDeltaDays = previewVisual.endIndex - currentVisual.endIndex;
+    const plannedMinutesDelta = (previewTask.plannedMinutes ?? task.plannedMinutes ?? 0) - (task.plannedMinutes ?? 0);
+
+    if (startDeltaDays === 0 && finishDeltaDays === 0 && plannedMinutesDelta === 0) {
+      return null;
+    }
+
+    const directIncomingIds = riskMeta.incomingByTaskId.get(task.id) ?? [];
+    const directOutgoingIds = riskMeta.outgoingByTaskId.get(task.id) ?? [];
+    const downstreamSummary = riskMeta.downstreamByTaskId.get(task.id) ?? { taskIds: [], maxDepth: 0 };
+
+    const currentOutgoingConflictIds = new Set(
+      directOutgoingIds.filter((dependentId) => {
+        const dependent = allTasksById.get(dependentId);
+        if (!dependent) return false;
+
+        const dependentVisual = taskLayoutsById[dependentId]?.visual ?? buildVisual(dependent);
+        return dependentVisual.startIndex <= currentVisual.endIndex;
+      }),
+    );
+
+    const nextOutgoingConflictIds = new Set(
+      directOutgoingIds.filter((dependentId) => {
+        const dependent = allTasksById.get(dependentId);
+        if (!dependent) return false;
+
+        const dependentVisual = taskLayoutsById[dependentId]?.visual ?? buildVisual(dependent);
+        return dependentVisual.startIndex <= previewVisual.endIndex;
+      }),
+    );
+
+    const currentIncomingConflictIds = new Set(
+      directIncomingIds.filter((blockerId) => {
+        const blocker = allTasksById.get(blockerId);
+        if (!blocker) return false;
+
+        const blockerVisual = taskLayoutsById[blockerId]?.visual ?? buildVisual(blocker);
+        return blockerVisual.endIndex >= currentVisual.startIndex;
+      }),
+    );
+
+    const nextIncomingConflictIds = new Set(
+      directIncomingIds.filter((blockerId) => {
+        const blocker = allTasksById.get(blockerId);
+        if (!blocker) return false;
+
+        const blockerVisual = taskLayoutsById[blockerId]?.visual ?? buildVisual(blocker);
+        return blockerVisual.endIndex >= previewVisual.startIndex;
+      }),
+    );
+
+    const newOutgoingConflictCount = Array.from(nextOutgoingConflictIds).filter((taskId) => !currentOutgoingConflictIds.has(taskId)).length;
+    const resolvedOutgoingConflictCount = Array.from(currentOutgoingConflictIds).filter((taskId) => !nextOutgoingConflictIds.has(taskId)).length;
+    const newIncomingConflictCount = Array.from(nextIncomingConflictIds).filter((taskId) => !currentIncomingConflictIds.has(taskId)).length;
+    const resolvedIncomingConflictCount = Array.from(currentIncomingConflictIds).filter((taskId) => !nextIncomingConflictIds.has(taskId)).length;
+
+    const deltaLabel = finishDeltaDays !== 0
+      ? `финиш ${formatSignedDayDelta(finishDeltaDays)}`
+      : startDeltaDays !== 0
+        ? `старт ${formatSignedDayDelta(startDeltaDays)}`
+        : `длительность ${formatSignedDurationDelta(plannedMinutesDelta)}`;
+
+    const summaryParts: string[] = [];
+    if (downstreamSummary.taskIds.length > 0) {
+      if (finishDeltaDays > 0) {
+        summaryParts.push(`под риском ${downstreamSummary.taskIds.length} задач`);
+      } else if (finishDeltaDays < 0) {
+        summaryParts.push(`освобождает запас для ${downstreamSummary.taskIds.length}`);
+      } else {
+        summaryParts.push(`цепочка ${downstreamSummary.taskIds.length} задач`);
+      }
+    }
+    if (downstreamSummary.maxDepth > 1) {
+      summaryParts.push(`глубина ${downstreamSummary.maxDepth}`);
+    }
+    if (newOutgoingConflictCount > 0) {
+      summaryParts.push(`новых конфликтов ${newOutgoingConflictCount}`);
+    }
+    if (resolvedOutgoingConflictCount > 0) {
+      summaryParts.push(`снимет ${resolvedOutgoingConflictCount} конфликтов`);
+    }
+    if (newIncomingConflictCount > 0) {
+      summaryParts.push(`входящих конфликтов ${newIncomingConflictCount}`);
+    }
+    if (resolvedIncomingConflictCount > 0) {
+      summaryParts.push(`снимет ${resolvedIncomingConflictCount} входящих конфликтов`);
+    }
+    if (summaryParts.length === 0) {
+      if (directOutgoingIds.length > 0) {
+        summaryParts.push(`прямых зависимых ${directOutgoingIds.length}`);
+      } else if (directIncomingIds.length > 0) {
+        summaryParts.push(`ждёт ${directIncomingIds.length} blockers`);
+      } else {
+        summaryParts.push("локальный сдвиг без цепочки");
+      }
+    }
+
+    const downstreamTitles = downstreamSummary.taskIds
+      .slice(0, 3)
+      .map((taskId) => allTasksById.get(taskId)?.title)
+      .filter((title): title is string => Boolean(title));
+
+    const bubbleWidth = 224;
+    const defaultBubbleLeft = previewVisual.left + previewVisual.width + 10;
+    const maxBubbleLeft = Math.max(8, gridWidth - bubbleWidth - 8);
+    const bubbleLeft = defaultBubbleLeft + bubbleWidth <= gridWidth
+      ? defaultBubbleLeft
+      : clamp(previewVisual.left - bubbleWidth - 10, 8, maxBubbleLeft);
+    const bubbleAlign = defaultBubbleLeft + bubbleWidth <= gridWidth ? "start" : "end";
+
+    return {
+      taskId: task.id,
+      taskTitle: task.title,
+      deltaLabel,
+      summaryLabel: summaryParts.join(" · "),
+      downstreamTitles,
+      downstreamCount: downstreamSummary.taskIds.length,
+      downstreamDepth: downstreamSummary.maxDepth,
+      directOutgoingCount: directOutgoingIds.length,
+      directIncomingCount: directIncomingIds.length,
+      activeOutgoingConflictCount: nextOutgoingConflictIds.size,
+      activeIncomingConflictCount: nextIncomingConflictIds.size,
+      bubbleLeft,
+      bubbleAlign,
+      startDeltaDays,
+      finishDeltaDays,
+      plannedMinutesDelta,
+    };
+  }, [allTasksById, buildVisual, gridWidth, interaction, riskMeta, taskLayoutsById]);
+
   const renderableDependencyLinks = useMemo(() => {
     if (!showDependencies) return [];
 
@@ -1325,6 +1513,7 @@ export function TaskGanttChart({
 
         const dependencyState = riskMeta.dependencyByTaskId[taskId];
         const variance = riskMeta.varianceByTaskId[taskId];
+        const downstream = riskMeta.downstreamByTaskId.get(taskId) ?? { taskIds: [], maxDepth: 0 };
         const outgoingCount = dependencyState?.outgoingCount ?? 0;
         const incomingCount = dependencyState?.incomingCount ?? 0;
         const conflictCount = (dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0);
@@ -1338,15 +1527,17 @@ export function TaskGanttChart({
           incomingCount,
           conflictCount,
           slipDays,
+          downstreamCount: downstream.taskIds.length,
+          downstreamDepth: downstream.maxDepth,
           hasBaseline,
           score,
         };
       })
       .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
-      .sort((left, right) => right.score - left.score || right.outgoingCount - left.outgoingCount || right.slipDays - left.slipDays || left.task.title.localeCompare(right.task.title, "ru"));
+      .sort((left, right) => right.score - left.score || right.downstreamCount - left.downstreamCount || right.outgoingCount - left.outgoingCount || right.slipDays - left.slipDays || left.task.title.localeCompare(right.task.title, "ru"));
 
     return candidates[0] ?? null;
-  }, [allTasksById, riskMeta.criticalTaskIds, riskMeta.dependencyByTaskId, riskMeta.varianceByTaskId]);
+  }, [allTasksById, riskMeta]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1706,7 +1897,9 @@ export function TaskGanttChart({
             <p className="text-[10px] uppercase tracking-[0.18em] text-fuchsia-200/80">главный bottleneck недели</p>
             <p className="mt-1 truncate text-sm font-medium text-zinc-50">{bottleneckSummary.task.title}</p>
             <p className="mt-1 text-[11px] text-zinc-300">
-              {bottleneckSummary.outgoingCount > 0 ? `сдвинет ${bottleneckSummary.outgoingCount} задач` : "пока никого не сдвигает"}
+              {bottleneckSummary.downstreamCount > 0 ? `под риском ${bottleneckSummary.downstreamCount} задач` : bottleneckSummary.outgoingCount > 0 ? `сдвинет ${bottleneckSummary.outgoingCount} задач` : "пока никого не сдвигает"}
+              {bottleneckSummary.downstreamDepth > 1 ? ` · глубина ${bottleneckSummary.downstreamDepth}` : ""}
+              {bottleneckSummary.outgoingCount > 0 && bottleneckSummary.downstreamCount > bottleneckSummary.outgoingCount ? ` · прямых ${bottleneckSummary.outgoingCount}` : ""}
               {bottleneckSummary.incomingCount > 0 ? ` · ждёт ${bottleneckSummary.incomingCount}` : ""}
               {bottleneckSummary.slipDays > 0 ? ` · Δ ${formatSignedDayDelta(bottleneckSummary.slipDays)}` : ""}
               {bottleneckSummary.conflictCount > 0 ? ` · chain conflict ${bottleneckSummary.conflictCount}` : ""}
@@ -1740,6 +1933,41 @@ export function TaskGanttChart({
               >
                 ◎ Rebase baseline
               </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {interactionImpact && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-500/20 bg-cyan-500/8 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-cyan-100/80">preview последствий</p>
+            <p className="mt-1 truncate text-sm font-medium text-zinc-50">{interactionImpact.taskTitle}</p>
+            <p className="mt-1 text-[11px] text-zinc-300">
+              {interactionImpact.deltaLabel} · {interactionImpact.summaryLabel}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-300">
+            {interactionImpact.downstreamCount > 0 && (
+              <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-1 text-violet-100">
+                ↠ цепочка {interactionImpact.downstreamCount}
+              </span>
+            )}
+            {interactionImpact.downstreamDepth > 1 && (
+              <span className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-2 py-1 text-fuchsia-100">
+                глубина {interactionImpact.downstreamDepth}
+              </span>
+            )}
+            {interactionImpact.activeOutgoingConflictCount > 0 && (
+              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-amber-200">
+                ⚠ вниз {interactionImpact.activeOutgoingConflictCount}
+              </span>
+            )}
+            {interactionImpact.activeIncomingConflictCount > 0 && (
+              <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-cyan-100">
+                ⛓ сверху {interactionImpact.activeIncomingConflictCount}
+              </span>
             )}
           </div>
         </div>
@@ -2259,6 +2487,22 @@ export function TaskGanttChart({
                         )}
                       </button>
 
+                      {interactionImpact?.taskId === task.id && (
+                        <div
+                          className={`pointer-events-none absolute z-30 w-56 rounded-2xl border border-cyan-400/25 bg-zinc-950/92 px-3 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.35)] ${interactionImpact.bubbleAlign === "end" ? "text-right" : "text-left"}`}
+                          style={{ left: interactionImpact.bubbleLeft, top: 2 }}
+                        >
+                          <p className="text-[9px] uppercase tracking-[0.16em] text-cyan-100/80">preview последствий</p>
+                          <p className="mt-1 text-[11px] font-medium text-zinc-50">{interactionImpact.deltaLabel}</p>
+                          <p className="mt-1 text-[10px] leading-4 text-zinc-300">{interactionImpact.summaryLabel}</p>
+                          {interactionImpact.downstreamTitles.length > 0 && (
+                            <p className="mt-1 truncate text-[9px] text-zinc-500">
+                              дальше: {interactionImpact.downstreamTitles.join(" · ")}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {previewVisual.titleOutside && (
                         <button
                           type="button"
@@ -2326,6 +2570,7 @@ export function TaskGanttChart({
         <span>Кнопка «Риски / цепочка» — фокус на slip и blocker tasks</span>
         <span>Фуксия — critical chain вокруг risky узлов</span>
         <span>↺ / ◎ — reset и rebase baseline по задаче</span>
+        <span>Preview последствий — во время drag/resize показывает, кого заденет цепочка</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
         <span>Зелёная шкала — rollup-progress по подзадачам</span>
