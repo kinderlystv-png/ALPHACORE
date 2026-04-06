@@ -733,7 +733,26 @@ function spanFromVisual(visual: TaskVisual): Span {
   };
 }
 
+function getDependencyEntryInset(span: Span): number {
+  return Math.min(Math.max(span.width * 0.2, 6), 12);
+}
+
+function resolveDependencyEntryX(from: Span, to: Span): number {
+  const sourceRight = from.left + from.width;
+  const targetLeft = Math.max(to.left, 0);
+
+  if (targetLeft <= sourceRight + 10) {
+    return targetLeft + getDependencyEntryInset(to);
+  }
+
+  return targetLeft;
+}
+
 function buildDependencyPath(fromX: number, fromY: number, toX: number, toY: number): string {
+  if (toX >= fromX && toX - fromX <= 24) {
+    return `M ${fromX} ${fromY} V ${toY} H ${toX}`;
+  }
+
   const elbowX = toX > fromX + 28
     ? fromX + Math.min(72, (toX - fromX) / 2)
     : fromX + 18;
@@ -2014,7 +2033,7 @@ export function TaskGanttChart({
       if (!from || !to) return [];
 
       const fromX = from.anchorVisual.left + from.anchorVisual.width;
-      const toX = Math.max(to.anchorVisual.left - 4, 0);
+      const toX = resolveDependencyEntryX(from.anchorVisual, to.anchorVisual);
       const fromY = from.anchorCenterY;
       const toY = to.anchorCenterY;
       const blocked = to.anchorVisual.left <= from.anchorVisual.left + from.anchorVisual.width;
@@ -2036,7 +2055,7 @@ export function TaskGanttChart({
     const source = taskLayoutsById[dependencyDraft.taskId];
     if (!source) return null;
 
-    const sourceX = Math.max(source.anchorVisual.left - 2, 0);
+    const sourceX = Math.max(source.anchorVisual.left, 0);
     const sourceY = source.anchorCenterY;
 
     if (dependencyDraft.hoveredTaskId) {
@@ -2045,10 +2064,11 @@ export function TaskGanttChart({
 
       const fromX = target.anchorVisual.left + target.anchorVisual.width;
       const fromY = target.anchorCenterY;
+      const toX = resolveDependencyEntryX(target.anchorVisual, source.anchorVisual);
 
       return {
-        path: buildDependencyPath(fromX, fromY, sourceX, sourceY),
-        lineEndX: sourceX,
+        path: buildDependencyPath(fromX, fromY, toX, sourceY),
+        lineEndX: toX,
         lineEndY: sourceY,
         tone: "valid" as const,
       };
