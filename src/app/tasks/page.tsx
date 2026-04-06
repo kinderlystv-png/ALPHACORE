@@ -1149,6 +1149,42 @@ export default function TasksPage() {
     [reload, taskById],
   );
 
+  const handleResetTaskBaseline = useCallback(
+    (id: string) => {
+      const task = taskById.get(id);
+      if (!task) return;
+
+      if (!task.baselineStartDate && !task.baselineDueDate && !task.baselinePlannedMinutes) {
+        return;
+      }
+
+      updateTask(id, {
+        startDate: task.baselineStartDate || undefined,
+        dueDate: task.baselineDueDate || undefined,
+        plannedMinutes: task.baselinePlannedMinutes ?? undefined,
+      });
+      reload();
+    },
+    [reload, taskById],
+  );
+
+  const handleRebaseTaskBaseline = useCallback(
+    (id: string) => {
+      const task = taskById.get(id);
+      if (!task) return;
+
+      const baseline = getTaskTimelineSnapshot(task);
+
+      updateTask(id, {
+        baselineStartDate: baseline.startDate,
+        baselineDueDate: baseline.dueDate,
+        baselinePlannedMinutes: baseline.plannedMinutes,
+      });
+      reload();
+    },
+    [reload, taskById],
+  );
+
   const handleAddBlocker = useCallback(
     (taskId: string, blockerId: string) => {
       const task = taskById.get(taskId);
@@ -1778,7 +1814,7 @@ export default function TasksPage() {
                     ))}
 
                     {dependencyCandidates.length > 0 && (
-                      <div className="min-w-[12rem] max-w-full flex-1 sm:flex-none">
+                      <div className="min-w-48 max-w-full flex-1 sm:flex-none">
                         <select
                           defaultValue=""
                           onChange={(event) => {
@@ -1977,6 +2013,8 @@ export default function TasksPage() {
                 dependencyLinks={ganttDependencyLinks}
                 onTaskRangeChange={handleSetRange}
                 onTaskPlannedMinutesChange={handleSetPlannedMinutes}
+                onTaskBaselineReset={handleResetTaskBaseline}
+                onTaskBaselineRebase={handleRebaseTaskBaseline}
               />
             )}
           </div>

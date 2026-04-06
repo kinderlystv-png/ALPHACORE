@@ -49,6 +49,8 @@ export type TaskGanttChartProps = {
   dependencyLinks?: GanttDependencyLink[];
   onTaskRangeChange: (taskId: string, patch: { startDate?: string; dueDate?: string }) => void;
   onTaskPlannedMinutesChange?: (taskId: string, minutes: number | null) => void;
+  onTaskBaselineReset?: (taskId: string) => void;
+  onTaskBaselineRebase?: (taskId: string) => void;
 };
 
 const DAY_MS = 86_400_000;
@@ -834,6 +836,8 @@ export function TaskGanttChart({
   dependencyLinks = [],
   onTaskRangeChange,
   onTaskPlannedMinutesChange,
+  onTaskBaselineReset,
+  onTaskBaselineRebase,
 }: TaskGanttChartProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef<string | null>(null);
@@ -1046,6 +1050,12 @@ export function TaskGanttChart({
       criticalLinkIds,
     };
   }, [buildVisual, dependencyLinks, groups, totalDays]);
+
+  const allTasks = useMemo(() => groups.flatMap((group) => collectNodeTasks(group.nodes)), [groups]);
+  const allTasksById = useMemo(
+    () => new Map(allTasks.map((task) => [task.id, task])),
+    [allTasks],
+  );
 
   const months = useMemo(() => {
     const result: Array<{ label: string; left: number; width: number }> = [];
@@ -1306,6 +1316,37 @@ export function TaskGanttChart({
       }];
     });
   }, [dependencyLinks, riskMeta.criticalLinkIds, showDependencies, taskLayoutsById]);
+
+  const bottleneckSummary = useMemo(() => {
+    const candidates = Array.from(riskMeta.criticalTaskIds)
+      .map((taskId) => {
+        const task = allTasksById.get(taskId);
+        if (!task) return null;
+
+        const dependencyState = riskMeta.dependencyByTaskId[taskId];
+        const variance = riskMeta.varianceByTaskId[taskId];
+        const outgoingCount = dependencyState?.outgoingCount ?? 0;
+        const incomingCount = dependencyState?.incomingCount ?? 0;
+        const conflictCount = (dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0);
+        const slipDays = variance?.slipDays ?? 0;
+        const hasBaseline = Boolean(task.baselineStartDate || task.baselineDueDate || task.baselinePlannedMinutes);
+        const score = conflictCount * 120 + outgoingCount * 22 + incomingCount * 10 + slipDays * 12 + (task.priority === "p1" ? 8 : task.priority === "p2" ? 4 : 0);
+
+        return {
+          task,
+          outgoingCount,
+          incomingCount,
+          conflictCount,
+          slipDays,
+          hasBaseline,
+          score,
+        };
+      })
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+      .sort((left, right) => right.score - left.score || right.outgoingCount - left.outgoingCount || right.slipDays - left.slipDays || left.task.title.localeCompare(right.task.title, "ru"));
+
+    return candidates[0] ?? null;
+  }, [allTasksById, riskMeta.criticalTaskIds, riskMeta.dependencyByTaskId, riskMeta.varianceByTaskId]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1659,6 +1700,51 @@ export function TaskGanttChart({
         </div>
       </div>
 
+      {bottleneckSummary && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-fuchsia-500/20 bg-fuchsia-500/8 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-fuchsia-200/80">главный bottleneck недели</p>
+            <p className="mt-1 truncate text-sm font-medium text-zinc-50">{bottleneckSummary.task.title}</p>
+            <p className="mt-1 text-[11px] text-zinc-300">
+              {bottleneckSummary.outgoingCount > 0 ? `сдвинет ${bottleneckSummary.outgoingCount} задач` : "пока никого не сдвигает"}
+              {bottleneckSummary.incomingCount > 0 ? ` · ждёт ${bottleneckSummary.incomingCount}` : ""}
+              {bottleneckSummary.slipDays > 0 ? ` · Δ ${formatSignedDayDelta(bottleneckSummary.slipDays)}` : ""}
+              {bottleneckSummary.conflictCount > 0 ? ` · chain conflict ${bottleneckSummary.conflictCount}` : ""}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openTaskInList(bottleneckSummary.task.id)}
+              className="rounded-xl border border-zinc-700 bg-zinc-900/60 px-3 py-1.5 text-[11px] text-zinc-100 transition hover:border-zinc-500"
+            >
+              К задаче
+            </button>
+            {onTaskBaselineReset && bottleneckSummary.hasBaseline && (
+              <button
+                type="button"
+                onClick={() => onTaskBaselineReset(bottleneckSummary.task.id)}
+                className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-100 transition hover:border-amber-400/30"
+                title="Вернуть диапазон bottleneck-задачи к baseline"
+              >
+                ↺ Reset baseline
+              </button>
+            )}
+            {onTaskBaselineRebase && (
+              <button
+                type="button"
+                onClick={() => onTaskBaselineRebase(bottleneckSummary.task.id)}
+                className="rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/10 px-3 py-1.5 text-[11px] text-fuchsia-100 transition hover:border-fuchsia-400/30"
+                title="Сделать текущий план bottleneck-задачи новым baseline"
+              >
+                ◎ Rebase baseline
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-zinc-800/60 bg-zinc-950/65" ref={viewportRef}>
         <div style={{ minWidth: LABEL_W + gridWidth }}>
           <div className="sticky top-0 z-20 bg-zinc-950/96 backdrop-blur-sm">
@@ -1945,6 +2031,7 @@ export function TaskGanttChart({
                 const outgoingDependencyCount = dependencyState?.outgoingCount ?? 0;
                 const dependencyConflictCount = (dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0);
                 const isCriticalChainTask = riskMeta.criticalTaskIds.has(task.id);
+                const hasBaselineSnapshot = Boolean(task.baselineStartDate || task.baselineDueDate || task.baselinePlannedMinutes);
                 const slipDays = variance?.slipDays ?? 0;
                 const gainDays = variance?.gainDays ?? 0;
                 const barRiskTone = dependencyConflictCount > 0
@@ -2040,6 +2127,36 @@ export function TaskGanttChart({
                       {dependencyConflictCount === 0 && isCriticalChainTask && (
                         <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
                           ✦ critical
+                        </span>
+                      )}
+                      {showBaseline && hasBaselineSnapshot && (onTaskBaselineReset || onTaskBaselineRebase) && (
+                        <span className="ml-0.5 inline-flex shrink-0 items-center gap-1">
+                          {onTaskBaselineReset && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onTaskBaselineReset(task.id);
+                              }}
+                              className="rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-100 transition hover:border-amber-400/30"
+                              title="Вернуть диапазон к baseline"
+                            >
+                              ↺
+                            </button>
+                          )}
+                          {onTaskBaselineRebase && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onTaskBaselineRebase(task.id);
+                              }}
+                              className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100 transition hover:border-fuchsia-400/30"
+                              title="Сделать текущий план новым baseline"
+                            >
+                              ◎
+                            </button>
+                          )}
                         </span>
                       )}
                     </div>
@@ -2208,6 +2325,7 @@ export function TaskGanttChart({
         <span>Голубой path — dependency-lite finish → start</span>
         <span>Кнопка «Риски / цепочка» — фокус на slip и blocker tasks</span>
         <span>Фуксия — critical chain вокруг risky узлов</span>
+        <span>↺ / ◎ — reset и rebase baseline по задаче</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
         <span>Зелёная шкала — rollup-progress по подзадачам</span>
