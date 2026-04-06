@@ -3,16 +3,11 @@
  * Each tone gets a visual identity tied to the 6 attention areas.
  */
 
+import { getProjectById, getProjects, type ProjectLifeArea } from "./projects";
 import type { ScheduleTone } from "./schedule";
 import type { Task } from "./tasks";
 
-export type LifeArea =
-  | "work"
-  | "health"
-  | "family"
-  | "operations"
-  | "reflection"
-  | "recovery";
+export type LifeArea = ProjectLifeArea;
 
 /** Tone → life area mapping */
 export const TONE_AREA: Record<ScheduleTone, LifeArea> = {
@@ -29,10 +24,11 @@ export const TONE_AREA: Record<ScheduleTone, LifeArea> = {
 /** Life area → Tailwind colour tokens */
 export const AREA_COLOR: Record<
   LifeArea,
-  { bg: string; border: string; text: string; dot: string; bar: string }
+  { bg: string; slotBg: string; border: string; text: string; dot: string; bar: string }
 > = {
   work: {
     bg: "bg-sky-500/12",
+    slotBg: "bg-sky-950/92",
     border: "border-sky-500/25",
     text: "text-sky-300",
     dot: "bg-sky-400",
@@ -40,6 +36,7 @@ export const AREA_COLOR: Record<
   },
   health: {
     bg: "bg-emerald-500/12",
+    slotBg: "bg-emerald-950/92",
     border: "border-emerald-500/25",
     text: "text-emerald-300",
     dot: "bg-emerald-400",
@@ -47,6 +44,7 @@ export const AREA_COLOR: Record<
   },
   family: {
     bg: "bg-fuchsia-500/12",
+    slotBg: "bg-fuchsia-950/92",
     border: "border-fuchsia-500/25",
     text: "text-fuchsia-300",
     dot: "bg-fuchsia-400",
@@ -54,6 +52,7 @@ export const AREA_COLOR: Record<
   },
   operations: {
     bg: "bg-rose-500/12",
+    slotBg: "bg-rose-950/92",
     border: "border-rose-500/25",
     text: "text-rose-300",
     dot: "bg-rose-400",
@@ -61,6 +60,7 @@ export const AREA_COLOR: Record<
   },
   reflection: {
     bg: "bg-amber-500/12",
+    slotBg: "bg-amber-950/92",
     border: "border-amber-500/25",
     text: "text-amber-300",
     dot: "bg-amber-400",
@@ -68,6 +68,7 @@ export const AREA_COLOR: Record<
   },
   recovery: {
     bg: "bg-violet-500/12",
+    slotBg: "bg-violet-950/92",
     border: "border-violet-500/25",
     text: "text-violet-300",
     dot: "bg-violet-400",
@@ -82,10 +83,24 @@ export function toneColor(tone: ScheduleTone) {
 
 /** Infer task life area from project name */
 export function taskArea(task: Task): LifeArea {
-  const p = (task.project ?? "").toLowerCase();
-  if (p === "kinderly" || p === "heys") return "work";
+  if (task.projectId) {
+    const project = getProjectById(task.projectId);
+    if (project) return project.lifeArea;
+  }
+
+  const p = (task.project ?? "").trim().toLowerCase();
+  if (p) {
+    const matchedProject = getProjects().find(
+      (project) => project.name.trim().toLowerCase() === p,
+    );
+    if (matchedProject) return matchedProject.lifeArea;
+  }
+
+  if (p === "kinderly" || p === "heys" || p === "work") return "work";
   if (p === "health" || p === "run") return "health";
   if (p === "family" || p === "danya") return "family";
+  if (p === "review" || p === "reflection") return "reflection";
+  if (p === "personal" || p === "recovery") return "recovery";
   return "operations";
 }
 

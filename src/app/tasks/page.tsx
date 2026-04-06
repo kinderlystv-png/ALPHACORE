@@ -573,7 +573,7 @@ function QuickProjectFilterBar({
               : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
           }`}
         >
-          Все проекты
+          Все группы
         </button>
 
         <button
@@ -586,7 +586,7 @@ function QuickProjectFilterBar({
               : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
           }`}
         >
-          Без проекта
+          Без группы
         </button>
 
         {visibleQuickProjects.map((project) => {
@@ -1263,16 +1263,16 @@ export default function TasksPage() {
 
   const handleOpenGroupTaskModal = useCallback(
     (group: TaskGroup) => {
-      const fallbackProjectLabel = group.project ? undefined : group.label === "Без проекта" ? undefined : group.label;
+      const fallbackProjectLabel = group.project ? undefined : group.label === "Без группы" ? undefined : group.label;
 
       openTaskComposerModal({
         kind: "group",
-        heading: group.project ? "Новая задача в проекте" : fallbackProjectLabel ? "Новая задача в категории" : "Новая задача",
+        heading: group.project || fallbackProjectLabel ? "Новая задача в группе" : "Новая задача",
         subtitle: group.project
           ? `Сразу в «${group.label}»`
           : fallbackProjectLabel
-            ? `Сразу в категории «${group.label}»`
-            : "Без проекта — можно оставить так или выбрать проект",
+            ? `Сразу в группе «${group.label}»`
+            : "Без группы — можно оставить так или выбрать группу",
         projectId: group.project?.id ?? "",
         fallbackProjectLabel,
         defaultStatus: "inbox",
@@ -1373,7 +1373,7 @@ export default function TasksPage() {
         : projectLabel
           ? projectByName.get(projectLabel.toLowerCase()) ?? null
           : null;
-      const groupLabel = projectLabel || "Без проекта";
+      const groupLabel = projectLabel || "Без группы";
       const groupKey = resolvedProject
         ? `project:${resolvedProject.id}`
         : projectLabel
@@ -1729,6 +1729,8 @@ export default function TasksPage() {
                                 onProjectsMutate={() => reload()}
                                 creationContextLabel="редактирования задачи"
                                 suggestedAccent="violet"
+                                suggestedKind="category"
+                                suggestedLifeArea="work"
                                 size="sm"
                               />
                             </div>
@@ -1763,7 +1765,7 @@ export default function TasksPage() {
                             type="button"
                             onClick={() => handleDetachSubtask(task.id)}
                             className="rounded-lg border border-violet-500/20 px-2 py-1 text-[10px] text-violet-300 transition hover:bg-violet-500/10"
-                            title="Поднять на верхний уровень внутри проекта"
+                            title="Поднять на верхний уровень внутри группы"
                           >
                             ↰
                           </button>
@@ -1896,8 +1898,10 @@ export default function TasksPage() {
                   reload();
                   setNewTaskProjectId(projectId);
                 }}
-                creationContextLabel="выбора проекта в задаче"
+                creationContextLabel="выбора группы в задаче"
                 suggestedAccent="violet"
+                suggestedKind="category"
+                suggestedLifeArea="work"
                 size="md"
               />
             </div>
@@ -2158,7 +2162,7 @@ export default function TasksPage() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                    {taskComposerModal.kind === "subtask" ? "Подзадача" : "Задача в категории"}
+                    {taskComposerModal.kind === "subtask" ? "Подзадача" : "Задача в группе"}
                   </p>
                   <h3 className="mt-1 text-lg font-semibold text-zinc-50">{taskComposerModal.heading}</h3>
                   <p className="mt-1 text-sm text-zinc-500">{taskComposerModal.subtitle}</p>
@@ -2207,15 +2211,17 @@ export default function TasksPage() {
                       creationContextLabel={
                         taskComposerModal.kind === "subtask"
                           ? "создания подзадачи"
-                          : "создания задачи в категории"
+                            : "создания задачи в группе"
                       }
                       suggestedAccent="violet"
+                      suggestedKind="category"
+                      suggestedLifeArea="work"
                       size="md"
                     />
 
                     {!taskComposerProjectTouched && !taskComposerProjectId && taskComposerModal.fallbackProjectLabel && (
                       <p className="mt-2 text-[11px] text-zinc-500">
-                        Если проект не менять, задача попадёт в категорию «{taskComposerModal.fallbackProjectLabel}».
+                        Если группу не менять, задача попадёт в «{taskComposerModal.fallbackProjectLabel}».
                       </p>
                     )}
                   </div>

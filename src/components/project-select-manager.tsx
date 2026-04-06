@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  PROJECT_KIND_LABEL,
+  PROJECT_LIFE_AREA_LABEL,
   addProject,
   getProjectDisplayName,
   isSubproject,
+  projectAccentForLifeArea,
   updateProject,
   type Project,
   type ProjectAccent,
+  type ProjectKind,
+  type ProjectLifeArea,
   type StatusTone,
 } from "@/lib/projects";
 
@@ -24,6 +29,8 @@ type ProjectSelectManagerProps = {
   size?: "sm" | "md";
   suggestedAccent?: ProjectAccent;
   suggestedStatus?: StatusTone;
+  suggestedKind?: ProjectKind;
+  suggestedLifeArea?: ProjectLifeArea;
   creationContextLabel?: string;
   align?: "left" | "right";
 };
@@ -38,6 +45,11 @@ const PROJECT_DOT_CLS: Record<ProjectAccent, string> = {
   rose: "bg-rose-400",
 };
 
+const PROJECT_KIND_BADGE_CLS: Record<ProjectKind, string> = {
+  project: "border-sky-500/25 bg-sky-500/10 text-sky-200",
+  category: "border-violet-500/25 bg-violet-500/10 text-violet-200",
+};
+
 function normalizeName(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -50,16 +62,28 @@ export function ProjectSelectManager({
   desktopSingleRow = false,
   onChange,
   onProjectsMutate,
-  noneLabel = "Без проекта",
+  noneLabel = "Без группы",
   size = "md",
   suggestedAccent = "sky",
   suggestedStatus = "yellow",
+  suggestedKind = "project",
+  suggestedLifeArea = suggestedAccent === "teal"
+    ? "health"
+    : suggestedAccent === "rose"
+      ? "operations"
+      : suggestedAccent === "orange"
+        ? "reflection"
+        : suggestedAccent === "violet"
+          ? "recovery"
+          : "work",
   creationContextLabel = "selector",
   align = "left",
 }: ProjectSelectManagerProps) {
   const [mode, setMode] = useState<ManagerMode>(null);
   const [showAllProjects, setShowAllProjects] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [draftKind, setDraftKind] = useState<ProjectKind>(suggestedKind);
+  const [draftLifeArea, setDraftLifeArea] = useState<ProjectLifeArea>(suggestedLifeArea);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -192,6 +216,8 @@ export function ProjectSelectManager({
   function openCreate(): void {
     setShowAllProjects(false);
     setDraftName("");
+    setDraftKind(suggestedKind);
+    setDraftLifeArea(suggestedLifeArea);
     setError(null);
     setMode("create");
   }
@@ -200,6 +226,8 @@ export function ProjectSelectManager({
     if (!selectedProject) return;
     setShowAllProjects(false);
     setDraftName(selectedProject.name);
+    setDraftKind(selectedProject.kind);
+    setDraftLifeArea(selectedProject.lifeArea);
     setError(null);
     setMode("rename");
   }
@@ -211,21 +239,23 @@ export function ProjectSelectManager({
   function handleSave(): void {
     const nextName = normalizeName(draftName);
     if (!nextName) {
-      setError("Нужно название проекта.");
+      setError("Нужно название группы.");
       return;
     }
 
     if (duplicateProject) {
-      setError(`Проект «${duplicateProject.name}» уже существует.`);
+      setError(`Группа «${duplicateProject.name}» уже существует.`);
       return;
     }
 
     if (mode === "create") {
       const created = addProject({
         name: nextName,
+        kind: draftKind,
+        lifeArea: draftLifeArea,
         description: `Создано из ${creationContextLabel}.`,
         status: suggestedStatus,
-        accent: suggestedAccent,
+        accent: projectAccentForLifeArea(draftLifeArea),
         nextStep: "Определить первый следующий шаг",
         kpis: [],
         deliverables: [],
@@ -237,11 +267,20 @@ export function ProjectSelectManager({
     }
 
     if (mode === "rename" && selectedProject) {
-      if (normalizeName(selectedProject.name) === nextName) {
+      if (
+        normalizeName(selectedProject.name) === nextName &&
+        selectedProject.kind === draftKind &&
+        selectedProject.lifeArea === draftLifeArea
+      ) {
         closeManager();
         return;
       }
-      updateProject(selectedProject.id, { name: nextName });
+      updateProject(selectedProject.id, {
+        name: nextName,
+        kind: draftKind,
+        lifeArea: draftLifeArea,
+        accent: projectAccentForLifeArea(draftLifeArea),
+      });
       onProjectsMutate?.(selectedProject.id);
       closeManager();
     }
@@ -260,7 +299,7 @@ export function ProjectSelectManager({
             }}
             aria-expanded={showAllProjects}
             className={compactValueBtnCls}
-            title={selectedProject ? `Сменить проект ${selectedProject.name}` : "Выбрать проект"}
+            title={selectedProject ? `Сменить группу ${selectedProject.name}` : "Выбрать группу"}
           >
             {selectedProject && (
               <span className={`${quickProjectDotCls} shrink-0 rounded-full ${PROJECT_DOT_CLS[selectedProject.accent]}`} />
@@ -279,7 +318,7 @@ export function ProjectSelectManager({
                   type="button"
                   onClick={() => onChange(isActive ? "" : project.id)}
                   aria-pressed={isActive}
-                  title={isActive ? `Снять проект ${getFullProjectLabel(project)}` : `Выбрать проект ${getFullProjectLabel(project)}`}
+                  title={isActive ? `Снять группу ${getFullProjectLabel(project)}` : `Выбрать группу ${getFullProjectLabel(project)}`}
                   className={`${quickProjectBtnCls} ${
                     isActive
                       ? "border-zinc-100 bg-zinc-100 text-zinc-950 shadow-[0_8px_24px_rgba(255,255,255,0.08)]"
@@ -314,7 +353,7 @@ export function ProjectSelectManager({
             <option value="">{noneLabel}</option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
-                {getFullProjectLabel(project)}
+                {`${PROJECT_KIND_LABEL[project.kind]} · ${getFullProjectLabel(project)}`}
               </option>
             ))}
           </select>
@@ -326,8 +365,8 @@ export function ProjectSelectManager({
               type="button"
               onClick={openCreate}
               className={iconBtnCls}
-              title="Создать новый проект"
-              aria-label="Создать новый проект"
+              title="Создать новую группу"
+              aria-label="Создать новую группу"
             >
               ＋
             </button>
@@ -336,8 +375,8 @@ export function ProjectSelectManager({
               onClick={openRename}
               disabled={!selectedProject}
               className={`${iconBtnCls} disabled:cursor-not-allowed disabled:opacity-35`}
-              title={selectedProject ? `Переименовать ${selectedProject.name}` : "Сначала выбери проект"}
-              aria-label="Переименовать выбранный проект"
+              title={selectedProject ? `Изменить ${selectedProject.name}` : "Сначала выбери группу"}
+              aria-label="Изменить выбранную группу"
             >
               ✎
             </button>
@@ -347,11 +386,11 @@ export function ProjectSelectManager({
 
       {(usesQuickProjects || usesCompactValueTrigger) && showAllProjects && (
         <div className={`absolute ${panelAlignCls} top-full z-30 mt-2 w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_14px_48px_rgba(0,0,0,0.38)] backdrop-blur`}>
-          <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Все проекты</p>
+          <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Все группы</p>
           <p className="mt-1 text-sm font-medium text-zinc-100">
             {usesCompactValueTrigger
-              ? "Нажми на проект, если нужно быстро перекинуть задачу в другой список."
-              : "Если нужного нет среди быстрых кнопок — он ждёт здесь."}
+              ? "Здесь можно быстро перекинуть задачу между проектами и категориями."
+              : "Если нужной группы нет среди быстрых кнопок — она ждёт здесь."}
           </p>
 
           <div className="mt-3 flex flex-wrap gap-2">
@@ -391,6 +430,9 @@ export function ProjectSelectManager({
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${PROJECT_DOT_CLS[project.accent]}`} />
                   <span className="truncate">{getFullProjectLabel(project)}</span>
+                  <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${PROJECT_KIND_BADGE_CLS[project.kind]}`}>
+                    {project.kind === "category" ? "категория" : "проект"}
+                  </span>
                 </button>
               );
             })}
@@ -401,13 +443,39 @@ export function ProjectSelectManager({
       {mode && (
         <div className={`absolute ${panelAlignCls} top-full z-30 mt-2 w-72 rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_14px_48px_rgba(0,0,0,0.38)] backdrop-blur`}>
           <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-            {mode === "create" ? "Новый проект" : "Переименовать проект"}
+            {mode === "create" ? "Новая группа" : "Параметры группы"}
           </p>
           <p className="mt-1 text-sm font-medium text-zinc-100">
             {mode === "create"
-              ? "Создать проект прямо из выбора"
-              : selectedProject?.name ?? "Выбранный проект"}
+              ? "Создать проект или категорию прямо из выбора"
+              : selectedProject?.name ?? "Выбранная группа"}
           </p>
+
+          <div className="mt-3 grid grid-cols-2 gap-1.5">
+            {(["project", "category"] as const).map((kind) => {
+              const active = draftKind === kind;
+
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setDraftKind(kind)}
+                  className={`rounded-xl border px-3 py-2 text-left text-xs transition ${
+                    active
+                      ? kind === "category"
+                        ? "border-violet-400/45 bg-violet-500/14 text-violet-100"
+                        : "border-sky-400/45 bg-sky-500/14 text-sky-100"
+                      : "border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+                  }`}
+                >
+                  <span className="block font-semibold">{PROJECT_KIND_LABEL[kind]}</span>
+                  <span className="mt-0.5 block text-[10px] opacity-70">
+                    {kind === "category" ? "общая тема / корзина задач" : "отдельное направление работы"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
           <input
             ref={inputRef}
@@ -426,13 +494,28 @@ export function ProjectSelectManager({
                 closeManager();
               }
             }}
-            placeholder="Название проекта"
+            placeholder="Название группы"
             className="mt-3 w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-zinc-600"
           />
 
+          <div className="mt-3">
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.16em] text-zinc-500">Сфера</label>
+            <select
+              value={draftLifeArea}
+              onChange={(event) => setDraftLifeArea(event.target.value as ProjectLifeArea)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-600"
+            >
+              {Object.entries(PROJECT_LIFE_AREA_LABEL).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {error && <p className="mt-2 text-[11px] text-rose-300">{error}</p>}
           {!error && duplicateProject && (
-            <p className="mt-2 text-[11px] text-amber-300">Такой проект уже есть.</p>
+            <p className="mt-2 text-[11px] text-amber-300">Такая группа уже есть.</p>
           )}
 
           <div className="mt-3 flex items-center gap-2">

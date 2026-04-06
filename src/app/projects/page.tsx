@@ -9,8 +9,12 @@ import {
   type ProjectAccent,
   type ProjectDeliverable,
   type ProjectInput,
+  type ProjectKind,
+  type ProjectLifeArea,
   type ProjectKpi,
   type StatusTone,
+  PROJECT_KIND_LABEL,
+  PROJECT_LIFE_AREA_LABEL,
   PROJECT_ACCENT_CLS,
   addProject,
   attentionProjects,
@@ -21,6 +25,7 @@ import {
   getProjectRootId,
   getProjects,
   moveProject,
+  projectAccentForLifeArea,
   projectProgress,
   reorderProjects,
   toggleDeliverable,
@@ -48,11 +53,18 @@ const ACCENT_LABEL: Record<ProjectAccent, string> = {
   rose: "Rose",
 };
 
+const KIND_BADGE_CLS: Record<ProjectKind, string> = {
+  project: "border-sky-500/20 bg-sky-500/10 text-sky-200",
+  category: "border-violet-500/20 bg-violet-500/10 text-violet-200",
+};
+
 type DraftKpi = ProjectKpi;
 type DraftDeliverable = ProjectDeliverable;
 
 type ProjectDraft = {
   name: string;
+  kind: ProjectKind;
+  lifeArea: ProjectLifeArea;
   description: string;
   status: StatusTone;
   accent: ProjectAccent;
@@ -81,6 +93,8 @@ function createDraft(project?: Project): ProjectDraft {
   if (!project) {
     return {
       name: "",
+      kind: "project",
+      lifeArea: "work",
       description: "",
       status: "yellow",
       accent: "sky",
@@ -95,6 +109,8 @@ function createDraft(project?: Project): ProjectDraft {
 
   return {
     name: project.name,
+    kind: project.kind,
+    lifeArea: project.lifeArea,
     description: project.description,
     status: project.status,
     accent: project.accent,
@@ -109,15 +125,19 @@ function createSubprojectDraft(parentProject: Project): ProjectDraft {
 
   return {
     ...base,
+    kind: "project",
+    lifeArea: parentProject.lifeArea,
     status: parentProject.status,
     accent: parentProject.accent,
-    description: `Подпроект внутри «${parentProject.name}».`,
+    description: `Вложенная группа внутри «${parentProject.name}».`,
   };
 }
 
 function toInput(draft: ProjectDraft): ProjectInput {
   return {
     name: draft.name,
+    kind: draft.kind,
+    lifeArea: draft.lifeArea,
     description: draft.description,
     status: draft.status,
     accent: draft.accent,
@@ -131,17 +151,17 @@ function pluralizeSubprojects(count: number): string {
   const mod10 = count % 10;
   const mod100 = count % 100;
 
-  if (mod10 === 1 && mod100 !== 11) return "подпроект";
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "подпроекта";
-  return "подпроектов";
+  if (mod10 === 1 && mod100 !== 11) return "вложенная группа";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "вложенные группы";
+  return "вложенных групп";
 }
 
 function buildDeletePrompt(project: Project, directChildrenCount: number): string {
   if (directChildrenCount === 0) {
-    return `Удалить проект «${project.name}»?`;
+    return `Удалить группу «${project.name}»?`;
   }
 
-  return `Удалить проект «${project.name}»? ${directChildrenCount} ${pluralizeSubprojects(directChildrenCount)} не пропадут: они поднимутся на уровень выше.`;
+  return `Удалить группу «${project.name}»? ${directChildrenCount} ${pluralizeSubprojects(directChildrenCount)} не пропадут: они поднимутся на уровень выше.`;
 }
 
 function SubprojectTree({
@@ -183,7 +203,7 @@ function SubprojectTree({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                  {depth === 1 ? "Подпроект" : `Уровень ${depth + 1}`}
+                  {depth === 1 ? "Вложенная группа" : `Уровень ${depth + 1}`}
                 </p>
                 <h3 className="mt-1 text-sm font-semibold text-zinc-100">{project.name}</h3>
                 <p className="mt-1 text-xs text-zinc-500">{displayName}</p>
@@ -191,6 +211,12 @@ function SubprojectTree({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] ${KIND_BADGE_CLS[project.kind]}`}>
+                  {PROJECT_KIND_LABEL[project.kind]}
+                </span>
+                <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                  {PROJECT_LIFE_AREA_LABEL[project.lifeArea]}
+                </span>
                 <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
                   {pct}%
                 </span>
@@ -211,7 +237,7 @@ function SubprojectTree({
                   type="button"
                   onClick={() => onCreateSubproject(project)}
                   className="rounded-full border border-sky-500/20 px-2 py-1 text-[10px] text-sky-300 transition hover:bg-sky-500/10"
-                  title="Добавить вложенный подпроект"
+                  title="Добавить вложенную группу"
                 >
                   ↳＋
                 </button>
@@ -263,7 +289,7 @@ function SubprojectTree({
 
                 {project.deliverables.length > 3 && (
                   <p className="text-[11px] text-zinc-500">
-                    Ещё {project.deliverables.length - 3} пунктов внутри подпроекта.
+                    Ещё {project.deliverables.length - 3} пунктов внутри вложенной группы.
                   </p>
                 )}
               </div>
@@ -336,10 +362,10 @@ function ProjectEditor({
         <div>
           <h2 className="text-lg font-semibold text-zinc-50">
             {isCreatingSubproject
-              ? "Новый подпроект"
+              ? "Новая вложенная группа"
               : state.mode === "create"
-                ? "Новый проект"
-                : "Редактирование проекта"}
+                ? "Новая группа"
+                : "Редактирование группы"}
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
             {isCreatingSubproject
@@ -363,7 +389,7 @@ function ProjectEditor({
             type="text"
             value={draft.name}
             onChange={(e) => onChange({ ...draft, name: e.target.value })}
-            placeholder="Например, HEYS Growth"
+            placeholder="Например, HEYS Growth или Здоровье"
             className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600"
           />
         </div>
@@ -392,6 +418,63 @@ function ProjectEditor({
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div>
+          <label className="mb-1 block text-xs text-zinc-500">Тип группы</label>
+          <div className="grid grid-cols-2 gap-2">
+            {(["project", "category"] as const).map((kind) => {
+              const active = draft.kind === kind;
+
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      ...draft,
+                      kind,
+                      accent: projectAccentForLifeArea(draft.lifeArea),
+                    })
+                  }
+                  className={`rounded-xl border px-3 py-2 text-left text-xs transition ${
+                    active
+                      ? kind === "category"
+                        ? "border-violet-400/45 bg-violet-500/14 text-violet-100"
+                        : "border-sky-400/45 bg-sky-500/14 text-sky-100"
+                      : "border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+                  }`}
+                >
+                  <span className="block font-semibold">{PROJECT_KIND_LABEL[kind]}</span>
+                  <span className="mt-0.5 block text-[10px] opacity-70">
+                    {kind === "category" ? "общая тема / корзина задач" : "отдельное направление"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-zinc-500">Сфера</label>
+          <select
+            value={draft.lifeArea}
+            onChange={(e) =>
+              onChange({
+                ...draft,
+                lifeArea: e.target.value as ProjectLifeArea,
+                accent: projectAccentForLifeArea(e.target.value as ProjectLifeArea),
+              })
+            }
+            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100"
+          >
+            {Object.entries(PROJECT_LIFE_AREA_LABEL).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div>
           <label className="mb-1 block text-xs text-zinc-500">Статус</label>
           <select
             value={draft.status}
@@ -406,7 +489,7 @@ function ProjectEditor({
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">Тон карточки</label>
+          <label className="mb-1 block text-xs text-zinc-500">Акцент карточки</label>
           <select
             value={draft.accent}
             onChange={(e) => onChange({ ...draft, accent: e.target.value as ProjectAccent })}
@@ -533,9 +616,9 @@ function ProjectEditor({
           className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {isCreatingSubproject
-            ? "Создать подпроект"
+            ? "Создать вложенную группу"
             : state.mode === "create"
-              ? "Создать проект"
+              ? "Создать группу"
               : "Сохранить изменения"}
         </button>
         <button
@@ -588,6 +671,14 @@ function ProjectsPageContent() {
     [projects],
   );
   const subprojectCount = projects.length - topLevelProjects.length;
+  const projectCount = useMemo(
+    () => projects.filter((project) => project.kind === "project").length,
+    [projects],
+  );
+  const categoryCount = useMemo(
+    () => projects.filter((project) => project.kind === "category").length,
+    [projects],
+  );
   const attentionCount = useMemo(() => attentionProjects(projects).length, [projects]);
   const openRootId = useMemo(
     () => (openId ? getProjectRootId(openId, projects) : null),
@@ -666,9 +757,9 @@ function ProjectsPageContent() {
       <div className="space-y-5 py-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold">📁 Проекты</h1>
+            <h1 className="text-2xl font-bold">📁 Группы</h1>
             <p className="mt-1 text-sm text-zinc-500">
-              {topLevelProjects.length} проектов · {subprojectCount} подпроектов · {attentionCount} требуют внимания
+              {projectCount} проектов · {categoryCount} категорий · {subprojectCount} вложенных групп · {attentionCount} требуют внимания
             </p>
           </div>
           <button
@@ -676,7 +767,7 @@ function ProjectsPageContent() {
             onClick={openCreateProject}
             className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
           >
-            + Проект
+            + Группа
           </button>
         </div>
 
@@ -696,7 +787,7 @@ function ProjectsPageContent() {
         <div className="space-y-4">
           {topLevelProjects.length === 0 && (
             <div className="rounded-4xl border border-zinc-800 bg-zinc-900/30 p-8 text-center">
-              <p className="text-sm text-zinc-500">Проектов пока нет</p>
+              <p className="text-sm text-zinc-500">Групп пока нет</p>
             </div>
           )}
 
@@ -728,6 +819,12 @@ function ProjectsPageContent() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="truncate text-lg font-semibold text-zinc-100">{project.name}</h2>
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] ${KIND_BADGE_CLS[project.kind]}`}>
+                          {PROJECT_KIND_LABEL[project.kind]}
+                        </span>
+                        <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                          {PROJECT_LIFE_AREA_LABEL[project.lifeArea]}
+                        </span>
                         <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
                           {project.kpis.length} KPI
                         </span>
@@ -793,7 +890,7 @@ function ProjectsPageContent() {
                       type="button"
                       onClick={() => openCreateSubproject(project)}
                       className="rounded-full border border-sky-500/20 px-2 py-1 text-[10px] text-sky-300 transition hover:bg-sky-500/10"
-                      title="Добавить подпроект"
+                      title="Добавить вложенную группу"
                     >
                       ↳＋
                     </button>
@@ -819,7 +916,7 @@ function ProjectsPageContent() {
                     {childProjects.length > 0 && (
                       <section>
                         <div className="mb-2 flex items-center justify-between gap-2">
-                          <p className="text-[11px] uppercase tracking-widest text-zinc-500">Подпроекты</p>
+                          <p className="text-[11px] uppercase tracking-widest text-zinc-500">Вложенные группы</p>
                           <span className="text-[10px] text-zinc-500">
                             {childProjects.length} {pluralizeSubprojects(childProjects.length)}
                           </span>
@@ -890,7 +987,7 @@ function ProjectsPageContent() {
                         onClick={() => openCreateSubproject(project)}
                         className="rounded-xl border border-sky-500/20 px-3 py-2 text-xs text-sky-200 transition hover:bg-sky-500/10"
                       >
-                        Добавить подпроект
+                        Добавить вложенную группу
                       </button>
                       <button
                         type="button"
@@ -920,7 +1017,7 @@ function ProjectsPageContent() {
 
 export default function ProjectsPage() {
   return (
-    <Suspense fallback={<AppShell><div className="py-8 text-sm text-zinc-600">Загрузка проектов…</div></AppShell>}>
+    <Suspense fallback={<AppShell><div className="py-8 text-sm text-zinc-600">Загрузка групп…</div></AppShell>}>
       <ProjectsPageContent />
     </Suspense>
   );

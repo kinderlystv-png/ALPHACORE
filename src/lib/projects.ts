@@ -3,6 +3,37 @@ import type { Task } from "./tasks";
 
 export type StatusTone = "green" | "yellow" | "red";
 export type ProjectAccent = "sky" | "orange" | "violet" | "teal" | "rose";
+export type ProjectKind = "project" | "category";
+export type ProjectLifeArea =
+  | "work"
+  | "health"
+  | "family"
+  | "operations"
+  | "reflection"
+  | "recovery";
+
+export const PROJECT_KIND_LABEL: Record<ProjectKind, string> = {
+  project: "Проект",
+  category: "Категория задач",
+};
+
+export const PROJECT_LIFE_AREA_LABEL: Record<ProjectLifeArea, string> = {
+  work: "Работа",
+  health: "Здоровье",
+  family: "Семья",
+  operations: "Операционка",
+  reflection: "Осмысление",
+  recovery: "Восстановление",
+};
+
+const PROJECT_ACCENT_BY_AREA: Record<ProjectLifeArea, ProjectAccent> = {
+  work: "sky",
+  health: "teal",
+  family: "violet",
+  operations: "rose",
+  reflection: "orange",
+  recovery: "violet",
+};
 
 export type ProjectKpi = {
   id: string;
@@ -20,6 +51,8 @@ export type Project = {
   id: string;
   order: number;
   name: string;
+  kind: ProjectKind;
+  lifeArea: ProjectLifeArea;
   description: string;
   status: StatusTone;
   accent: ProjectAccent;
@@ -36,6 +69,8 @@ export type ProjectInput = Pick<
   Project,
   "name" | "description" | "status" | "accent" | "nextStep" | "parentProjectId" | "sourceTaskId"
 > & {
+  kind?: ProjectKind;
+  lifeArea?: ProjectLifeArea;
   kpis: Array<Pick<ProjectKpi, "label" | "value">>;
   deliverables: Array<Pick<ProjectDeliverable, "text" | "done">>;
 };
@@ -56,6 +91,83 @@ function sanitizeOptionalId(value?: string): string | undefined {
   return next ? next : undefined;
 }
 
+function isProjectKind(value: string | undefined): value is ProjectKind {
+  return value === "project" || value === "category";
+}
+
+function isProjectLifeArea(value: string | undefined): value is ProjectLifeArea {
+  return (
+    value === "work" ||
+    value === "health" ||
+    value === "family" ||
+    value === "operations" ||
+    value === "reflection" ||
+    value === "recovery"
+  );
+}
+
+function inferProjectLifeArea(project: Pick<Project, "name" | "accent">): ProjectLifeArea {
+  const label = normalizeName(project.name).toLowerCase();
+
+  if (/kinderly|heys|work|studio|growth|product|launch|sales|pricing|marketing/u.test(label)) {
+    return "work";
+  }
+  if (/health|run|sleep|stretch|wellness|здоров|пробеж|трен|спорт|мед/u.test(label)) {
+    return "health";
+  }
+  if (/family|день рождения|minecraft|дани|dani|сем|реб|child/u.test(label)) {
+    return "family";
+  }
+  if (/ops|admin|cleanup|operations|операц|уборк|документ|finance|налог/u.test(label)) {
+    return "operations";
+  }
+  if (/review|retro|reflect|journal|weekly|осмыс|рефлекс|ревью/u.test(label)) {
+    return "reflection";
+  }
+  if (/personal|rest|recovery|личн|отдых|сон/u.test(label)) {
+    return "recovery";
+  }
+
+  return project.accent === "teal"
+    ? "health"
+    : project.accent === "rose"
+      ? "operations"
+      : project.accent === "orange"
+        ? "reflection"
+        : project.accent === "violet"
+          ? "recovery"
+          : "work";
+}
+
+function resolveProjectLifeArea(
+  project: Project,
+  projectById: Map<string, Project>,
+  seen = new Set<string>(),
+): ProjectLifeArea {
+  if (isProjectLifeArea(project.lifeArea)) {
+    return project.lifeArea;
+  }
+
+  if (seen.has(project.id)) {
+    return inferProjectLifeArea(project);
+  }
+
+  seen.add(project.id);
+
+  if (project.parentProjectId) {
+    const parent = projectById.get(project.parentProjectId);
+    if (parent) {
+      return resolveProjectLifeArea(parent, projectById, seen);
+    }
+  }
+
+  return inferProjectLifeArea(project);
+}
+
+export function projectAccentForLifeArea(area: ProjectLifeArea): ProjectAccent {
+  return PROJECT_ACCENT_BY_AREA[area];
+}
+
 function createProjectMap(projects: Project[]): Map<string, Project> {
   return new Map(projects.map((project) => [project.id, project]));
 }
@@ -66,9 +178,13 @@ function normalizeProjects(projects: Project[]): Project[] {
   return [...projects]
     .map((project) => {
       const parentProjectId = sanitizeOptionalId(project.parentProjectId);
+      const lifeArea = resolveProjectLifeArea(project, projectById);
 
       return {
         ...project,
+        kind: isProjectKind(project.kind) ? project.kind : "project",
+        lifeArea,
+        accent: project.accent ?? projectAccentForLifeArea(lifeArea),
         parentProjectId:
           parentProjectId && parentProjectId !== project.id && projectById.has(parentProjectId)
             ? parentProjectId
@@ -238,6 +354,8 @@ const DEFAULT_PROJECTS: Project[] = [
     id: "kinderly",
     order: 0,
     name: "Kinderly",
+    kind: "project",
+    lifeArea: "work",
     description:
       "Студия детских праздников. Подпроекты: PVA, Pricing, воронка бронирования.",
     status: "yellow",
@@ -261,6 +379,8 @@ const DEFAULT_PROJECTS: Project[] = [
     id: "heys",
     order: 1,
     name: "HEYS",
+    kind: "project",
+    lifeArea: "work",
     description:
       "Умный трекер здоровья и питания. Стадия: тестирование + оргподготовка.",
     status: "yellow",
@@ -284,6 +404,8 @@ const DEFAULT_PROJECTS: Project[] = [
     id: "bday",
     order: 2,
     name: "ДР Minecraft",
+    kind: "project",
+    lifeArea: "family",
     description:
       "День рождения Дани, 1 мая 2026. Тема — Minecraft. Локация: Kinderly.",
     status: "yellow",
@@ -408,13 +530,16 @@ function save(projects: Project[]): void {
 export function addProject(input: ProjectInput): Project {
   const projects = getProjects();
   const now = nowIso();
+  const lifeArea = input.lifeArea ?? inferProjectLifeArea({ name: input.name, accent: input.accent });
   const project: Project = {
     id: uid(),
     order: projects.length,
     name: normalizeName(input.name),
+    kind: input.kind ?? "project",
+    lifeArea,
     description: input.description.trim(),
     status: input.status,
-    accent: input.accent,
+    accent: input.accent ?? projectAccentForLifeArea(lifeArea),
     kpis: mapKpis(input.kpis),
     deliverables: mapDeliverables(input.deliverables),
     nextStep: input.nextStep.trim(),
@@ -437,12 +562,19 @@ export function addProject(input: ProjectInput): Project {
 export function updateProject(id: string, patch: Partial<ProjectInput>): void {
   const projects = getProjects().map((project) => {
     if (project.id !== id) return project;
+    const nextLifeArea = patch.lifeArea ?? project.lifeArea;
     return {
       ...project,
       ...(patch.name != null ? { name: normalizeName(patch.name) } : {}),
+      ...(patch.kind != null ? { kind: patch.kind } : {}),
+      ...(patch.lifeArea != null ? { lifeArea: patch.lifeArea } : {}),
       ...(patch.description != null ? { description: patch.description.trim() } : {}),
       ...(patch.status != null ? { status: patch.status } : {}),
-      ...(patch.accent != null ? { accent: patch.accent } : {}),
+      ...(patch.accent != null
+        ? { accent: patch.accent }
+        : patch.lifeArea != null
+          ? { accent: projectAccentForLifeArea(nextLifeArea) }
+          : {}),
       ...(patch.nextStep != null ? { nextStep: patch.nextStep.trim() } : {}),
       ...("parentProjectId" in patch
         ? { parentProjectId: sanitizeOptionalId(patch.parentProjectId) }
@@ -543,6 +675,8 @@ export function convertTaskToSubproject(input: {
 
   return addProject({
     name: title,
+    kind: "project",
+    lifeArea: parentProject.lifeArea,
     description: `Выделено из проекта «${parentProject.name}». Исходная задача выросла до отдельного подпроекта.${dueLabel ? ` Исходный срок: ${dueLabel}.` : ""}`,
     status: parentProject.status === "red" ? "red" : "yellow",
     accent: parentProject.accent,

@@ -1320,7 +1320,7 @@ export function AlphacoreDashboard() {
             <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/30 p-3">
               <p className="text-[10px] uppercase tracking-widest text-zinc-600">Проектное внимание</p>
               <p className="mt-1 text-sm font-medium text-zinc-100">
-                {focusSnapshot.attentionProject?.name ?? "Все проекты в зелёной зоне"}
+                {focusSnapshot.attentionProject?.name ?? "Все группы в зелёной зоне"}
               </p>
               <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">
                 {focusSnapshot.attentionProject?.nextStep ?? "Можно смело идти в execution mode."}

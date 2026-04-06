@@ -315,7 +315,7 @@ export function CalendarQuickMenu({
               </div>
 
               <div className="space-y-1.5">
-                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Категория</p>
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Сфера</p>
                 <div className="flex flex-wrap gap-1.5">
                   {QUICK_TONE_OPTIONS.map((option) => {
                     const tone = toneColor(option.value);
@@ -443,7 +443,7 @@ export function CalendarQuickMenu({
 
               {isCustomSlot && (
                 <div className="space-y-1.5">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Проект</p>
+                  <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">Группа</p>
                   <ProjectSelectManager
                     value={quickMenu.draftProjectId}
                     projects={projects}
@@ -452,7 +452,7 @@ export function CalendarQuickMenu({
                       onVersionBump();
                       onUpdateDraft({ draftProjectId: projectId });
                     }}
-                    creationContextLabel="выбора проекта в календарном слоте"
+                    creationContextLabel="выбора группы в календарном слоте"
                     suggestedAccent={
                       quickMenu.draftTone === "heys"
                         ? "orange"
@@ -463,6 +463,20 @@ export function CalendarQuickMenu({
                             : quickMenu.draftTone === "personal" || quickMenu.draftTone === "review" || quickMenu.draftTone === "family"
                               ? "violet"
                               : "sky"
+                    }
+                    suggestedKind="project"
+                    suggestedLifeArea={
+                      quickMenu.draftTone === "health"
+                        ? "health"
+                        : quickMenu.draftTone === "family"
+                          ? "family"
+                          : quickMenu.draftTone === "cleanup"
+                            ? "operations"
+                            : quickMenu.draftTone === "review"
+                              ? "reflection"
+                              : quickMenu.draftTone === "personal"
+                                ? "recovery"
+                                : "work"
                     }
                     size="sm"
                     align="right"
