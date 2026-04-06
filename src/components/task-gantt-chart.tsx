@@ -761,7 +761,7 @@ function sortNodesByDependencies(nodes: GanttTaskNode[]): GanttTaskNode[] {
     }
   }
 
-  const ready = prepared
+  let ready = prepared
     .filter((node) => (indegree.get(node.task.id) ?? 0) === 0)
     .sort(
       (left, right) =>
@@ -772,6 +772,7 @@ function sortNodesByDependencies(nodes: GanttTaskNode[]): GanttTaskNode[] {
   while (ready.length > 0) {
     const current = ready.shift()!;
     result.push(current);
+    const newlyReady: GanttTaskNode[] = [];
 
     for (const dependentId of dependentsById.get(current.task.id) ?? []) {
       const nextDegree = (indegree.get(dependentId) ?? 0) - 1;
@@ -780,13 +781,16 @@ function sortNodesByDependencies(nodes: GanttTaskNode[]): GanttTaskNode[] {
       if (nextDegree === 0) {
         const nextNode = nodeById.get(dependentId);
         if (!nextNode) continue;
-
-        ready.push(nextNode);
-        ready.sort(
-          (left, right) =>
-            (originalIndexById.get(left.task.id) ?? 0) - (originalIndexById.get(right.task.id) ?? 0),
-        );
+        newlyReady.push(nextNode);
       }
+    }
+
+    if (newlyReady.length > 0) {
+      newlyReady.sort(
+        (left, right) =>
+          (originalIndexById.get(left.task.id) ?? 0) - (originalIndexById.get(right.task.id) ?? 0),
+      );
+      ready = [...newlyReady, ...ready];
     }
   }
 

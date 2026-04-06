@@ -1279,7 +1279,8 @@ export default function TasksPage() {
       const existingTaskSlot = getScheduledTaskSlot(task.id);
       const slotDuration = resolveDependencySlotDurationMinutes(task, existingTaskSlot);
       const blockerTimeline = getTaskTimelineSnapshot(blocker);
-      const anchorDate = blockerSlot?.date ?? blockerTimeline.dueDate ?? blockerTimeline.startDate;
+      const blockerEndDate = blockerSlot?.date ?? blockerTimeline.dueDate ?? blockerTimeline.startDate;
+      const anchorDate = blockerSlot ? blockerEndDate : shiftDateValue(blockerEndDate, 1);
       const anchorStartMinutes = blockerSlot
         ? timeToMinutes(blockerSlot.end) + DEPENDENCY_SLOT_GAP_MIN
         : DEFAULT_DEPENDENCY_SLOT_START_MIN;
