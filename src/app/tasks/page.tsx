@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { ProjectSelectManager } from "@/components/project-select-manager";
-import { TaskGanttChart, type GanttGroup, type GanttScheduledSlot } from "@/components/task-gantt-chart";
+import { TaskGanttChart, type GanttGroup, type GanttScheduledSlot, type GanttTaskProgress } from "@/components/task-gantt-chart";
 import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import {
@@ -248,6 +248,58 @@ function buildTaskTree(tasks: Task[]): TaskTreeNode[] {
     .filter((task) => !task.parentTaskId || !visibleTaskIds.has(task.parentTaskId))
     .sort((left, right) => compareTasksByAttention(left, right))
     .map((task) => buildNode(task));
+}
+
+function buildTaskProgressMap(tasks: Task[]): Record<string, GanttTaskProgress> {
+  const visibleTaskIds = new Set(tasks.map((task) => task.id));
+  const childrenByParentId = new Map<string, Task[]>();
+
+  for (const task of tasks) {
+    if (!task.parentTaskId || !visibleTaskIds.has(task.parentTaskId)) continue;
+
+    const children = childrenByParentId.get(task.parentTaskId) ?? [];
+    children.push(task);
+    childrenByParentId.set(task.parentTaskId, children);
+  }
+
+  const cache = new Map<string, { done: number; total: number }>();
+  const progressByTaskId: Record<string, GanttTaskProgress> = {};
+
+  const collect = (taskId: string): { done: number; total: number } => {
+    const cached = cache.get(taskId);
+    if (cached) return cached;
+
+    let done = 0;
+    let total = 0;
+
+    for (const child of childrenByParentId.get(taskId) ?? []) {
+      total += 1;
+      if (child.status === "done") done += 1;
+
+      const nested = collect(child.id);
+      total += nested.total;
+      done += nested.done;
+    }
+
+    const aggregated = { done, total };
+    cache.set(taskId, aggregated);
+
+    if (total > 0) {
+      progressByTaskId[taskId] = {
+        done,
+        total,
+        ratio: done / total,
+      };
+    }
+
+    return aggregated;
+  };
+
+  for (const task of tasks) {
+    collect(task.id);
+  }
+
+  return progressByTaskId;
 }
 
 function getDueOffset(dueDate?: string): number | null {
@@ -1220,6 +1272,11 @@ export default function TasksPage() {
     }, {});
   }, [visible]);
 
+  const ganttProgressByTaskId = useMemo<Record<string, GanttTaskProgress>>(() => {
+    const tasksForProgress = tasks.filter((task) => matchesProjectFilter(task));
+    return buildTaskProgressMap(tasksForProgress);
+  }, [matchesProjectFilter, tasks]);
+
   function renderTaskNode(node: TaskTreeNode): React.ReactNode {
       const task = node.task;
       const badge = dueBadge(task.dueDate);
@@ -1661,6 +1718,7 @@ export default function TasksPage() {
               <TaskGanttChart
                 groups={ganttGroups}
                 scheduledSlotsByTaskId={ganttScheduledSlotsByTaskId}
+                progressByTaskId={ganttProgressByTaskId}
                 onTaskRangeChange={handleSetRange}
                 onTaskPlannedMinutesChange={handleSetPlannedMinutes}
               />

@@ -31,9 +31,16 @@ export type GanttScheduledSlot = {
   tone: ScheduleTone;
 };
 
+export type GanttTaskProgress = {
+  done: number;
+  total: number;
+  ratio: number;
+};
+
 export type TaskGanttChartProps = {
   groups: GanttGroup[];
   scheduledSlotsByTaskId?: Record<string, GanttScheduledSlot>;
+  progressByTaskId?: Record<string, GanttTaskProgress>;
   onTaskRangeChange: (taskId: string, patch: { startDate?: string; dueDate?: string }) => void;
   onTaskPlannedMinutesChange?: (taskId: string, minutes: number | null) => void;
 };
@@ -121,6 +128,7 @@ type PersistedGanttUiState = {
   zoom?: ZoomLevel;
   collapsedGroups?: string[];
   showNoEstimateOnly?: boolean;
+  showPlanVsSlot?: boolean;
 };
 
 const BAR_BG: Record<ProjectAccent, string> = {
@@ -410,6 +418,16 @@ function buildTaskTooltip(task: Task, slot?: GanttScheduledSlot): string {
   return lines.join("\n");
 }
 
+function buildTaskTooltipWithProgress(
+  task: Task,
+  slot: GanttScheduledSlot | undefined,
+  progress: GanttTaskProgress | undefined,
+): string {
+  const base = buildTaskTooltip(task, slot);
+  if (!progress || progress.total <= 0) return base;
+  return `${base}\nПодзадачи: ${progress.done}/${progress.total}`;
+}
+
 function getOverdueTailSpan(
   task: Task,
   timelineStart: Date,
@@ -462,6 +480,10 @@ function computeScheduledSlotVisual(
     startIndex: dayIndex,
     endIndex: dayIndex,
   };
+}
+
+function isScheduledSlotOutsidePlan(slot: Span, plan: Span): boolean {
+  return slot.startIndex < plan.startIndex || slot.endIndex > plan.endIndex;
 }
 
 function buildPreviewTask(task: Task, interaction: InteractionState | null): Task {
@@ -743,6 +765,7 @@ function computeTaskVisual(
 export function TaskGanttChart({
   groups,
   scheduledSlotsByTaskId = {},
+  progressByTaskId = {},
   onTaskRangeChange,
   onTaskPlannedMinutesChange,
 }: TaskGanttChartProps) {
@@ -760,6 +783,10 @@ export function TaskGanttChart({
   const [showNoEstimateOnly, setShowNoEstimateOnly] = useState<boolean>(() => {
     const persisted = readPersistedGanttUiState();
     return Boolean(persisted.showNoEstimateOnly);
+  });
+  const [showPlanVsSlot, setShowPlanVsSlot] = useState<boolean>(() => {
+    const persisted = readPersistedGanttUiState();
+    return Boolean(persisted.showPlanVsSlot);
   });
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
 
@@ -934,8 +961,9 @@ export function TaskGanttChart({
       zoom,
       collapsedGroups: Array.from(collapsedGroups),
       showNoEstimateOnly,
+      showPlanVsSlot,
     } satisfies PersistedGanttUiState);
-  }, [collapsedGroups, showNoEstimateOnly, zoom]);
+  }, [collapsedGroups, showNoEstimateOnly, showPlanVsSlot, zoom]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1173,6 +1201,19 @@ export function TaskGanttChart({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => setShowPlanVsSlot((current) => !current)}
+            aria-pressed={showPlanVsSlot}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
+              showPlanVsSlot
+                ? "border-sky-400/40 bg-sky-500/12 text-sky-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+            }`}
+            title="Подсветить соотношение планового диапазона и реального календарного слота"
+          >
+            План ↔ слот
+          </button>
+          <button
+            type="button"
             onClick={() => setShowNoEstimateOnly((current) => !current)}
             aria-pressed={showNoEstimateOnly}
             className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
@@ -1400,17 +1441,33 @@ export function TaskGanttChart({
                       : "text-zinc-600";
                 const planned = durationLabel(previewTask.plannedMinutes);
                 const isNoEstimate = !task.plannedMinutes;
+                const progress = progressByTaskId[task.id];
+                const progressPct = progress ? Math.max(progress.ratio * 100, progress.done > 0 ? 8 : 0) : 0;
+                const progressLabel = progress && progress.total > 0 ? `${progress.done}/${progress.total}` : null;
                 const slotTone = scheduledSlot
                   ? { bg: SLOT_BG[scheduledSlot.tone], border: SLOT_BD[scheduledSlot.tone] }
                   : null;
                 const showRollup = row.hasChildren && row.rollupSpan && row.rollupSpan.width > previewVisual.width + 8;
-                const taskTooltip = buildTaskTooltip(previewTask, scheduledSlot);
+                const taskTooltip = buildTaskTooltipWithProgress(previewTask, scheduledSlot, progress);
                 const overdueTail = getOverdueTailSpan(previewTask, timelineStart, today, totalDays, dayWidth);
                 const canResizeStart = Boolean(task.dueDate);
                 const canResizeEnd = Boolean(task.startDate && task.dueDate) || Boolean(task.plannedMinutes && onTaskPlannedMinutesChange);
                 const endResizeTitle = task.startDate && task.dueDate
                   ? `Изменить финиш ${task.title}`
                   : `Изменить длительность ${task.title}`;
+                const slotOutsidePlan = Boolean(
+                  showPlanVsSlot
+                    && scheduledSlotVisual
+                    && isScheduledSlotOutsidePlan(scheduledSlotVisual, previewVisual),
+                );
+                const slotOverlayTop = showPlanVsSlot ? 2 : ROW_H - 8;
+                const slotOverlayHeight = showPlanVsSlot ? 8 : 5;
+                const slotConnectorLeft = scheduledSlotVisual
+                  ? Math.min(previewVisual.left + previewVisual.width / 2, scheduledSlotVisual.left + scheduledSlotVisual.width / 2)
+                  : 0;
+                const slotConnectorWidth = scheduledSlotVisual
+                  ? Math.abs((previewVisual.left + previewVisual.width / 2) - (scheduledSlotVisual.left + scheduledSlotVisual.width / 2))
+                  : 0;
 
                 return (
                   <div key={row.key} className="flex border-b border-zinc-800/20" style={{ height: ROW_H }}>
@@ -1434,6 +1491,11 @@ export function TaskGanttChart({
                           {planned}
                         </span>
                       )}
+                      {progressLabel && (
+                        <span className="shrink-0 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-200">
+                          ✓ {progressLabel}
+                        </span>
+                      )}
                     </div>
 
                     <div className="relative" style={{ width: gridWidth }}>
@@ -1442,6 +1504,15 @@ export function TaskGanttChart({
                           className="absolute top-1/2 -translate-y-1/2 rounded-full border border-dashed border-violet-400/30 bg-violet-500/10"
                           style={{ left: row.rollupSpan.left, width: row.rollupSpan.width, height: 8 }}
                         />
+                      )}
+
+                      {showRollup && row.rollupSpan && progress && progress.total > 0 && (
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 overflow-hidden rounded-full bg-emerald-500/15"
+                          style={{ left: row.rollupSpan.left + 1, width: Math.max((row.rollupSpan.width - 2) * progress.ratio, progress.done > 0 ? 6 : 0), height: 6 }}
+                        >
+                          <div className="h-full w-full rounded-full bg-emerald-300/70" />
+                        </div>
                       )}
 
                       {overdueTail && (
@@ -1453,14 +1524,25 @@ export function TaskGanttChart({
                         />
                       )}
 
+                      {showPlanVsSlot && scheduledSlotVisual && slotOutsidePlan && slotConnectorWidth > 10 && (
+                        <div
+                          className="pointer-events-none absolute border-t border-dashed border-sky-300/45"
+                          style={{
+                            left: slotConnectorLeft,
+                            width: slotConnectorWidth,
+                            top: ROW_H / 2,
+                          }}
+                        />
+                      )}
+
                       {scheduledSlotVisual && slotTone && (
                         <div
-                          className={`pointer-events-none absolute rounded-full border ${slotTone.bg} ${slotTone.border}`}
+                          className={`pointer-events-none absolute rounded-full border ${slotTone.bg} ${slotTone.border} ${showPlanVsSlot && slotOutsidePlan ? "ring-1 ring-amber-300/35" : ""}`}
                           style={{
                             left: scheduledSlotVisual.left,
                             width: scheduledSlotVisual.width,
-                            top: ROW_H - 8,
-                            height: 5,
+                            top: slotOverlayTop,
+                            height: slotOverlayHeight,
                           }}
                           title={`Слот ${scheduledSlot.start}–${scheduledSlot.end}: ${scheduledSlot.title}`}
                         />
@@ -1472,6 +1554,8 @@ export function TaskGanttChart({
                         onPointerDown={(event) => beginMove(event, task)}
                         className={`absolute rounded-lg border ${baseTone.bg} ${baseTone.border} ${urgencyTone} ${
                           isNoEstimate ? "border-dashed ring-1 ring-amber-300/35 saturate-125" : ""
+                        } ${
+                          showPlanVsSlot && scheduledSlot ? "opacity-75" : ""
                         } ${
                           task.priority === "p3" ? "opacity-55" : ""
                         } ${interactionForTask?.mode === "move" ? "z-20 shadow-lg shadow-black/30" : ""} transition-shadow`}
@@ -1487,6 +1571,14 @@ export function TaskGanttChart({
                         {!previewVisual.titleOutside && (
                           <span className="pointer-events-none absolute inset-0 flex items-center px-2 text-[8px] text-white/75 truncate">
                             {task.title}
+                          </span>
+                        )}
+                        {progress && progress.total > 0 && (
+                          <span className="pointer-events-none absolute bottom-1.5 left-1.5 right-1.5 h-0.75 rounded-full bg-black/20">
+                            <span
+                              className="block h-full rounded-full bg-emerald-300/90"
+                              style={{ width: `${progressPct}%` }}
+                            />
                           </span>
                         )}
                       </button>
@@ -1555,6 +1647,7 @@ export function TaskGanttChart({
         <span>Пунктир — сводный rollup родителя</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
+        <span>Зелёная шкала — rollup-progress по подзадачам</span>
         <span>Фон колонки — heatmap по дневной нагрузке</span>
         <span>Светлая риска — capacity дня</span>
         <span>Красный хвост — уже вышли за срок</span>
