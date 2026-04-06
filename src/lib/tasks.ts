@@ -20,11 +20,15 @@ export type Task = {
   project?: string;
   projectId?: string;
   parentTaskId?: string;
+  blockedByTaskIds?: string[];
   priority: TaskPriority;
   status: TaskStatus;
   startDate?: string;
   dueDate?: string;
   plannedMinutes?: number;
+  baselineStartDate?: string;
+  baselineDueDate?: string;
+  baselinePlannedMinutes?: number;
   createdAt: string;
   origin?: AutomationOrigin;
   completedAt?: string;
@@ -41,10 +45,14 @@ type AddTaskOptions = Partial<
     | "project"
     | "projectId"
     | "parentTaskId"
+    | "blockedByTaskIds"
     | "priority"
     | "startDate"
     | "dueDate"
     | "plannedMinutes"
+    | "baselineStartDate"
+    | "baselineDueDate"
+    | "baselinePlannedMinutes"
     | "status"
     | "origin"
     | "completedAt"
@@ -52,6 +60,8 @@ type AddTaskOptions = Partial<
 >;
 
 const KEY = "alphacore_tasks";
+const DAY_MS = 86_400_000;
+const WORKDAY_MINUTES = 8 * 60;
 
 function sanitizeOptionalId(value?: string | null): string | undefined {
   const next = value?.trim();
@@ -61,6 +71,20 @@ function sanitizeOptionalId(value?: string | null): string | undefined {
 function sanitizeOptionalDate(value?: string | null): string | undefined {
   const next = value?.trim();
   return next ? next : undefined;
+}
+
+function sanitizeOptionalTaskIds(value?: readonly string[] | null): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const prepared = Array.from(
+    new Set(
+      value
+        .map((item) => sanitizeOptionalId(item))
+        .filter((item): item is string => Boolean(item)),
+    ),
+  );
+
+  return prepared.length > 0 ? prepared : undefined;
 }
 
 function sanitizePlannedMinutes(value?: number | null): number | undefined {
@@ -74,14 +98,18 @@ function normalizeTasks(tasks: Task[]): Task[] {
   const prepared = tasks.map((task) => ({
     ...task,
     parentTaskId: sanitizeOptionalId(task.parentTaskId),
+    blockedByTaskIds: sanitizeOptionalTaskIds(task.blockedByTaskIds),
     startDate: sanitizeOptionalDate(task.startDate),
     dueDate: sanitizeOptionalDate(task.dueDate),
     plannedMinutes: sanitizePlannedMinutes(task.plannedMinutes),
+    baselineStartDate: sanitizeOptionalDate(task.baselineStartDate),
+    baselineDueDate: sanitizeOptionalDate(task.baselineDueDate),
+    baselinePlannedMinutes: sanitizePlannedMinutes(task.baselinePlannedMinutes),
   }));
   const taskIds = new Set(prepared.map((task) => task.id));
   const taskById = new Map(prepared.map((task) => [task.id, task]));
 
-  return prepared.map((task) => {
+  const parentValidated = prepared.map((task) => {
     const parentTaskId = task.parentTaskId;
 
     if (!parentTaskId || parentTaskId === task.id || !taskIds.has(parentTaskId)) {
@@ -107,6 +135,36 @@ function normalizeTasks(tasks: Task[]): Task[] {
     }
 
     return task;
+  });
+
+  const blockerMap = new Map(
+    parentValidated.map((task) => [
+      task.id,
+      (task.blockedByTaskIds ?? []).filter((blockerId) => blockerId !== task.id && taskIds.has(blockerId)),
+    ]),
+  );
+
+  const hasDependencyPath = (
+    currentId: string,
+    targetId: string,
+    seen: Set<string> = new Set(),
+  ): boolean => {
+    if (currentId === targetId) return true;
+    if (seen.has(currentId)) return false;
+
+    seen.add(currentId);
+    return (blockerMap.get(currentId) ?? []).some((nextId) => hasDependencyPath(nextId, targetId, seen));
+  };
+
+  return parentValidated.map((task) => {
+    const blockedByTaskIds = (blockerMap.get(task.id) ?? []).filter(
+      (blockerId) => !hasDependencyPath(blockerId, task.id),
+    );
+
+    return {
+      ...task,
+      blockedByTaskIds: blockedByTaskIds.length > 0 ? blockedByTaskIds : undefined,
+    };
   });
 }
 
@@ -138,6 +196,94 @@ function save(tasks: Task[]): void {
 
 function ds(d: Date): string {
   return dateStr(d);
+}
+
+function d0(date: Date): Date {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  return result;
+}
+
+function parseDay(value?: string): Date | null {
+  if (!value) return null;
+
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return d0(date);
+}
+
+function addDays(date: Date, amount: number): Date {
+  const result = new Date(date);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+
+function durationDaysFromMinutes(minutes?: number): number | null {
+  if (!minutes || minutes <= 0) return null;
+  return Math.max(minutes / WORKDAY_MINUTES, 0.55);
+}
+
+export function getTaskTimelineSnapshot(task: Task): {
+  startDate: string;
+  dueDate?: string;
+  plannedMinutes?: number;
+} {
+  const explicitStart = parseDay(task.startDate);
+  const explicitDue = parseDay(task.dueDate);
+  const created = d0(new Date(task.createdAt));
+  const plannedDays = durationDaysFromMinutes(task.plannedMinutes);
+
+  if (explicitStart && explicitDue) {
+    return {
+      startDate: ds(explicitStart),
+      dueDate: ds(explicitDue),
+      plannedMinutes: task.plannedMinutes,
+    };
+  }
+
+  if (explicitStart && plannedDays != null) {
+    return {
+      startDate: ds(explicitStart),
+      dueDate: ds(addDays(explicitStart, Math.max(Math.ceil(plannedDays) - 1, 0))),
+      plannedMinutes: task.plannedMinutes,
+    };
+  }
+
+  if (explicitStart) {
+    return {
+      startDate: ds(explicitStart),
+      plannedMinutes: task.plannedMinutes,
+    };
+  }
+
+  if (explicitDue && plannedDays != null) {
+    return {
+      startDate: ds(addDays(explicitDue, -Math.max(Math.ceil(plannedDays) - 1, 0))),
+      dueDate: ds(explicitDue),
+      plannedMinutes: task.plannedMinutes,
+    };
+  }
+
+  if (explicitDue) {
+    return {
+      startDate: ds(explicitDue),
+      dueDate: ds(explicitDue),
+      plannedMinutes: task.plannedMinutes,
+    };
+  }
+
+  if (plannedDays != null) {
+    return {
+      startDate: ds(created),
+      dueDate: ds(addDays(created, Math.max(Math.ceil(plannedDays) - 1, 0))),
+      plannedMinutes: task.plannedMinutes,
+    };
+  }
+
+  return {
+    startDate: ds(created),
+    plannedMinutes: task.plannedMinutes,
+  };
 }
 
 function priorityWeight(priority: TaskPriority): number {
@@ -221,11 +367,23 @@ export function updateTask(id: string, patch: Partial<Task>): void {
     ...(Object.prototype.hasOwnProperty.call(patch, "plannedMinutes")
       ? { plannedMinutes: sanitizePlannedMinutes(patch.plannedMinutes) }
       : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, "baselinePlannedMinutes")
+      ? { baselinePlannedMinutes: sanitizePlannedMinutes(patch.baselinePlannedMinutes) }
+      : {}),
     ...(Object.prototype.hasOwnProperty.call(patch, "startDate")
       ? { startDate: sanitizeOptionalDate(patch.startDate) }
       : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, "baselineStartDate")
+      ? { baselineStartDate: sanitizeOptionalDate(patch.baselineStartDate) }
+      : {}),
     ...(Object.prototype.hasOwnProperty.call(patch, "dueDate")
       ? { dueDate: sanitizeOptionalDate(patch.dueDate) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, "baselineDueDate")
+      ? { baselineDueDate: sanitizeOptionalDate(patch.baselineDueDate) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, "blockedByTaskIds")
+      ? { blockedByTaskIds: sanitizeOptionalTaskIds(patch.blockedByTaskIds) }
       : {}),
   };
 

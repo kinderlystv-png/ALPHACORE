@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { ProjectSelectManager } from "@/components/project-select-manager";
-import { TaskGanttChart, type GanttGroup, type GanttScheduledSlot, type GanttTaskProgress } from "@/components/task-gantt-chart";
+import { TaskGanttChart, type GanttDependencyLink, type GanttGroup, type GanttScheduledSlot, type GanttTaskProgress } from "@/components/task-gantt-chart";
 import { readTaskDragId, writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import {
@@ -31,6 +31,7 @@ import {
   addTask,
   canAssignTaskParent,
   compareTasksByAttention,
+  getTaskTimelineSnapshot,
   getTaskFocusTotal,
   getTasks,
   moveTaskTreeToProject,
@@ -300,6 +301,112 @@ function buildTaskProgressMap(tasks: Task[]): Record<string, GanttTaskProgress> 
   }
 
   return progressByTaskId;
+}
+
+function buildTaskDescendantsMap(tasks: Task[]): Map<string, Set<string>> {
+  const childrenByParentId = new Map<string, string[]>();
+
+  for (const task of tasks) {
+    if (!task.parentTaskId) continue;
+    const children = childrenByParentId.get(task.parentTaskId) ?? [];
+    children.push(task.id);
+    childrenByParentId.set(task.parentTaskId, children);
+  }
+
+  const cache = new Map<string, Set<string>>();
+
+  const collect = (taskId: string): Set<string> => {
+    const cached = cache.get(taskId);
+    if (cached) return cached;
+
+    const descendants = new Set<string>();
+
+    for (const childId of childrenByParentId.get(taskId) ?? []) {
+      descendants.add(childId);
+      for (const nestedId of collect(childId)) {
+        descendants.add(nestedId);
+      }
+    }
+
+    cache.set(taskId, descendants);
+    return descendants;
+  };
+
+  for (const task of tasks) {
+    collect(task.id);
+  }
+
+  return cache;
+}
+
+function buildTaskBlockerMap(tasks: Task[]): Map<string, string[]> {
+  return new Map(tasks.map((task) => [task.id, task.blockedByTaskIds ?? []]));
+}
+
+function hasTaskDependencyPath(
+  blockerMap: Map<string, string[]>,
+  currentId: string,
+  targetId: string,
+  seen: Set<string> = new Set(),
+): boolean {
+  if (currentId === targetId) return true;
+  if (seen.has(currentId)) return false;
+
+  seen.add(currentId);
+  return (blockerMap.get(currentId) ?? []).some((nextId) =>
+    hasTaskDependencyPath(blockerMap, nextId, targetId, seen),
+  );
+}
+
+function buildDependencyCandidatesByTaskId(
+  groups: TaskGroup[],
+  tasks: Task[],
+): Record<string, Task[]> {
+  const descendantsByTaskId = buildTaskDescendantsMap(tasks);
+  const blockerMap = buildTaskBlockerMap(tasks);
+  const result: Record<string, Task[]> = {};
+
+  for (const group of groups) {
+    const actionableTasks = group.tasks.filter((task) => task.status !== "done");
+
+    for (const task of actionableTasks) {
+      const descendants = descendantsByTaskId.get(task.id) ?? new Set<string>();
+      const currentBlockers = new Set(task.blockedByTaskIds ?? []);
+
+      result[task.id] = actionableTasks
+        .filter(
+          (candidate) =>
+            candidate.id !== task.id
+            && !descendants.has(candidate.id)
+            && !currentBlockers.has(candidate.id)
+            && !hasTaskDependencyPath(blockerMap, candidate.id, task.id),
+        )
+        .sort((left, right) => compareTasksByAttention(left, right));
+    }
+  }
+
+  return result;
+}
+
+function willTaskPlanChange(
+  task: Task,
+  patch: Partial<Pick<Task, "startDate" | "dueDate" | "plannedMinutes">>,
+): boolean {
+  const nextStartDate = Object.prototype.hasOwnProperty.call(patch, "startDate")
+    ? patch.startDate
+    : task.startDate;
+  const nextDueDate = Object.prototype.hasOwnProperty.call(patch, "dueDate")
+    ? patch.dueDate
+    : task.dueDate;
+  const nextPlannedMinutes = Object.prototype.hasOwnProperty.call(patch, "plannedMinutes")
+    ? patch.plannedMinutes
+    : task.plannedMinutes;
+
+  return (
+    nextStartDate !== task.startDate
+    || nextDueDate !== task.dueDate
+    || nextPlannedMinutes !== task.plannedMinutes
+  );
 }
 
 function getDueOffset(dueDate?: string): number | null {
@@ -716,6 +823,10 @@ export default function TasksPage() {
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects],
   );
+  const taskById = useMemo(
+    () => new Map(tasks.map((task) => [task.id, task])),
+    [tasks],
+  );
   const projectDisplayNameById = useMemo(
     () =>
       new Map(
@@ -937,21 +1048,53 @@ export default function TasksPage() {
 
   const handleSetDue = useCallback(
     (id: string, date: string) => {
-      updateTask(id, { dueDate: date || undefined });
+      const task = taskById.get(id);
+      const patch: Partial<Task> = { dueDate: date || undefined };
+
+      if (
+        task
+        && willTaskPlanChange(task, patch)
+        && !task.baselineStartDate
+        && !task.baselineDueDate
+        && !task.baselinePlannedMinutes
+      ) {
+        const baseline = getTaskTimelineSnapshot(task);
+        patch.baselineStartDate = baseline.startDate;
+        patch.baselineDueDate = baseline.dueDate;
+        patch.baselinePlannedMinutes = baseline.plannedMinutes;
+      }
+
+      updateTask(id, patch);
       reload();
     },
-    [reload],
+    [reload, taskById],
   );
 
   const handleSetRange = useCallback(
     (id: string, patch: { startDate?: string; dueDate?: string }) => {
-      updateTask(id, {
+      const task = taskById.get(id);
+      const nextPatch: Partial<Task> = {
         ...(Object.prototype.hasOwnProperty.call(patch, "startDate") ? { startDate: patch.startDate || undefined } : {}),
         ...(Object.prototype.hasOwnProperty.call(patch, "dueDate") ? { dueDate: patch.dueDate || undefined } : {}),
-      });
+      };
+
+      if (
+        task
+        && willTaskPlanChange(task, nextPatch)
+        && !task.baselineStartDate
+        && !task.baselineDueDate
+        && !task.baselinePlannedMinutes
+      ) {
+        const baseline = getTaskTimelineSnapshot(task);
+        nextPatch.baselineStartDate = baseline.startDate;
+        nextPatch.baselineDueDate = baseline.dueDate;
+        nextPatch.baselinePlannedMinutes = baseline.plannedMinutes;
+      }
+
+      updateTask(id, nextPatch);
       reload();
     },
-    [reload],
+    [reload, taskById],
   );
 
   const handleSetProject = useCallback(
@@ -984,10 +1127,52 @@ export default function TasksPage() {
 
   const handleSetPlannedMinutes = useCallback(
     (id: string, minutes: number | null) => {
-      updateTask(id, { plannedMinutes: minutes ?? undefined });
+      const task = taskById.get(id);
+      const patch: Partial<Task> = { plannedMinutes: minutes ?? undefined };
+
+      if (
+        task
+        && willTaskPlanChange(task, patch)
+        && !task.baselineStartDate
+        && !task.baselineDueDate
+        && !task.baselinePlannedMinutes
+      ) {
+        const baseline = getTaskTimelineSnapshot(task);
+        patch.baselineStartDate = baseline.startDate;
+        patch.baselineDueDate = baseline.dueDate;
+        patch.baselinePlannedMinutes = baseline.plannedMinutes;
+      }
+
+      updateTask(id, patch);
       reload();
     },
-    [reload],
+    [reload, taskById],
+  );
+
+  const handleAddBlocker = useCallback(
+    (taskId: string, blockerId: string) => {
+      const task = taskById.get(taskId);
+      if (!task) return;
+
+      updateTask(taskId, {
+        blockedByTaskIds: Array.from(new Set([...(task.blockedByTaskIds ?? []), blockerId])),
+      });
+      reload();
+    },
+    [reload, taskById],
+  );
+
+  const handleRemoveBlocker = useCallback(
+    (taskId: string, blockerId: string) => {
+      const task = taskById.get(taskId);
+      if (!task) return;
+
+      updateTask(taskId, {
+        blockedByTaskIds: (task.blockedByTaskIds ?? []).filter((currentId) => currentId !== blockerId),
+      });
+      reload();
+    },
+    [reload, taskById],
   );
 
   const handleToggle = useCallback(
@@ -1277,6 +1462,26 @@ export default function TasksPage() {
     return buildTaskProgressMap(tasksForProgress);
   }, [matchesProjectFilter, tasks]);
 
+  const dependencyCandidatesByTaskId = useMemo<Record<string, Task[]>>(
+    () => buildDependencyCandidatesByTaskId(visibleGroups, tasks),
+    [tasks, visibleGroups],
+  );
+
+  const ganttDependencyLinks = useMemo<GanttDependencyLink[]>(() => {
+    const visibleTaskIds = new Set(
+      visible.filter((task) => task.status === "active" || task.status === "inbox").map((task) => task.id),
+    );
+
+    return visible.flatMap((task) =>
+      (task.blockedByTaskIds ?? [])
+        .filter((blockerId) => visibleTaskIds.has(blockerId))
+        .map((blockerId) => ({
+          fromTaskId: blockerId,
+          toTaskId: task.id,
+        })),
+    );
+  }, [visible]);
+
   function renderTaskNode(node: TaskTreeNode): React.ReactNode {
       const task = node.task;
       const badge = dueBadge(task.dueDate);
@@ -1293,6 +1498,10 @@ export default function TasksPage() {
         activeDraggedTaskId != null &&
         task.status !== "done" &&
         canAssignTaskParent(activeDraggedTaskId, task.id, tasks);
+      const blockerTasks = (task.blockedByTaskIds ?? [])
+        .map((blockerId) => taskById.get(blockerId))
+        .filter((blocker): blocker is Task => Boolean(blocker));
+      const dependencyCandidates = dependencyCandidatesByTaskId[task.id] ?? [];
       const dragTitle =
         task.status === "done"
           ? "Готовые задачи не вкладываем — пусть наслаждаются пенсией"
@@ -1429,6 +1638,12 @@ export default function TasksPage() {
                           </span>
                         )}
 
+                        {blockerTasks.length > 0 && (
+                          <span className="shrink-0 rounded-md border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-200">
+                            ⛓ {blockerTasks.length}
+                          </span>
+                        )}
+
                         {task.status !== "done" && (
                           <>
                             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 px-1 py-1">
@@ -1543,6 +1758,46 @@ export default function TasksPage() {
                 {isDropTarget && canNestHere && (
                   <div className="mt-3 rounded-xl border border-dashed border-sky-400/35 bg-sky-500/5 px-3 py-2 text-xs text-sky-200">
                     Отпускай — задача станет подзадачей внутри «{task.title}».
+                  </div>
+                )}
+
+                {task.status !== "done" && (blockerTasks.length > 0 || dependencyCandidates.length > 0) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800/60 bg-zinc-950/25 px-3 py-2">
+                    <span className="text-[10px] uppercase tracking-widest text-zinc-600">⛓ зависимости</span>
+
+                    {blockerTasks.map((blocker) => (
+                      <button
+                        key={`${task.id}-${blocker.id}`}
+                        type="button"
+                        onClick={() => handleRemoveBlocker(task.id, blocker.id)}
+                        className="max-w-full truncate rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[10px] text-sky-100 transition hover:border-sky-400/30 hover:bg-sky-500/15"
+                        title={`Убрать блокер «${blocker.title}»`}
+                      >
+                        ⛓ {blocker.title} ×
+                      </button>
+                    ))}
+
+                    {dependencyCandidates.length > 0 && (
+                      <div className="min-w-[12rem] max-w-full flex-1 sm:flex-none">
+                        <select
+                          defaultValue=""
+                          onChange={(event) => {
+                            const blockerId = event.target.value;
+                            if (!blockerId) return;
+                            handleAddBlocker(task.id, blockerId);
+                            event.currentTarget.value = "";
+                          }}
+                          className="w-full rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-[11px] text-zinc-300 outline-none transition hover:border-zinc-700 focus:border-sky-500/35"
+                        >
+                          <option value="">Добавить blocker…</option>
+                          {dependencyCandidates.map((candidate) => (
+                            <option key={`${task.id}-candidate-${candidate.id}`} value={candidate.id}>
+                              {candidate.title}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1719,6 +1974,7 @@ export default function TasksPage() {
                 groups={ganttGroups}
                 scheduledSlotsByTaskId={ganttScheduledSlotsByTaskId}
                 progressByTaskId={ganttProgressByTaskId}
+                dependencyLinks={ganttDependencyLinks}
                 onTaskRangeChange={handleSetRange}
                 onTaskPlannedMinutesChange={handleSetPlannedMinutes}
               />

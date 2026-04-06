@@ -37,10 +37,16 @@ export type GanttTaskProgress = {
   ratio: number;
 };
 
+export type GanttDependencyLink = {
+  fromTaskId: string;
+  toTaskId: string;
+};
+
 export type TaskGanttChartProps = {
   groups: GanttGroup[];
   scheduledSlotsByTaskId?: Record<string, GanttScheduledSlot>;
   progressByTaskId?: Record<string, GanttTaskProgress>;
+  dependencyLinks?: GanttDependencyLink[];
   onTaskRangeChange: (taskId: string, patch: { startDate?: string; dueDate?: string }) => void;
   onTaskPlannedMinutesChange?: (taskId: string, minutes: number | null) => void;
 };
@@ -129,6 +135,8 @@ type PersistedGanttUiState = {
   collapsedGroups?: string[];
   showNoEstimateOnly?: boolean;
   showPlanVsSlot?: boolean;
+  showBaseline?: boolean;
+  showDependencies?: boolean;
 };
 
 const BAR_BG: Record<ProjectAccent, string> = {
@@ -424,8 +432,28 @@ function buildTaskTooltipWithProgress(
   progress: GanttTaskProgress | undefined,
 ): string {
   const base = buildTaskTooltip(task, slot);
-  if (!progress || progress.total <= 0) return base;
-  return `${base}\nПодзадачи: ${progress.done}/${progress.total}`;
+  const lines = [base];
+
+  if (task.baselineStartDate || task.baselineDueDate || task.baselinePlannedMinutes) {
+    const baselineStart = formatDayLabel(task.baselineStartDate);
+    const baselineDue = formatDayLabel(task.baselineDueDate);
+    const baselinePlanned = durationLabel(task.baselinePlannedMinutes);
+    const baselineParts = [baselineStart ? `старт ${baselineStart}` : null, baselineDue ? `финиш ${baselineDue}` : null, baselinePlanned ? `оценка ${baselinePlanned}` : null].filter(Boolean);
+
+    if (baselineParts.length > 0) {
+      lines.push(`Baseline: ${baselineParts.join(" · ")}`);
+    }
+  }
+
+  if (task.blockedByTaskIds?.length) {
+    lines.push(`Зависит от задач: ${task.blockedByTaskIds.length}`);
+  }
+
+  if (progress && progress.total > 0) {
+    lines.push(`Подзадачи: ${progress.done}/${progress.total}`);
+  }
+
+  return lines.join("\n");
 }
 
 function getOverdueTailSpan(
@@ -555,6 +583,19 @@ function buildPreviewTask(task: Task, interaction: InteractionState | null): Tas
   }
 
   return task;
+}
+
+function buildBaselineTask(task: Task): Task | null {
+  if (!task.baselineStartDate && !task.baselineDueDate && !task.baselinePlannedMinutes) {
+    return null;
+  }
+
+  return {
+    ...task,
+    startDate: task.baselineStartDate,
+    dueDate: task.baselineDueDate,
+    plannedMinutes: task.baselinePlannedMinutes ?? task.plannedMinutes,
+  };
 }
 
 function spanFromVisual(visual: TaskVisual): Span {
@@ -766,6 +807,7 @@ export function TaskGanttChart({
   groups,
   scheduledSlotsByTaskId = {},
   progressByTaskId = {},
+  dependencyLinks = [],
   onTaskRangeChange,
   onTaskPlannedMinutesChange,
 }: TaskGanttChartProps) {
@@ -783,6 +825,14 @@ export function TaskGanttChart({
   const [showNoEstimateOnly, setShowNoEstimateOnly] = useState<boolean>(() => {
     const persisted = readPersistedGanttUiState();
     return Boolean(persisted.showNoEstimateOnly);
+  });
+  const [showBaseline, setShowBaseline] = useState<boolean>(() => {
+    const persisted = readPersistedGanttUiState();
+    return persisted.showBaseline ?? true;
+  });
+  const [showDependencies, setShowDependencies] = useState<boolean>(() => {
+    const persisted = readPersistedGanttUiState();
+    return persisted.showDependencies ?? true;
   });
   const [showPlanVsSlot, setShowPlanVsSlot] = useState<boolean>(() => {
     const persisted = readPersistedGanttUiState();
@@ -856,6 +906,7 @@ export function TaskGanttChart({
     const loadByDay = Array.from({ length: totalDays }, () => 0);
     const orderedRows: DerivedRow[] = [];
     const groupSections: DerivedGroupSection[] = [];
+    const taskRowTopById: Record<string, number> = {};
     let cursorTop = 0;
 
     const collectLoad = (span: Span, task: Task) => {
@@ -913,6 +964,9 @@ export function TaskGanttChart({
       cursorTop += GROUP_H;
 
       if (!collapsed) {
+        groupRows.forEach((row, index) => {
+          taskRowTopById[row.task.id] = cursorTop + index * ROW_H;
+        });
         orderedRows.push(...groupRows);
         cursorTop += groupRows.length * ROW_H;
       }
@@ -930,7 +984,7 @@ export function TaskGanttChart({
 
     const bodyHeight = cursorTop;
 
-    return { orderedRows, bodyHeight, loadByDay, groupSections };
+    return { orderedRows, bodyHeight, loadByDay, groupSections, taskRowTopById };
   }, [buildVisual, collapsedGroups, displayGroups, totalDays]);
 
   const maxLoad = useMemo(() => Math.max(...derived.loadByDay, 0), [derived.loadByDay]);
@@ -961,9 +1015,56 @@ export function TaskGanttChart({
       zoom,
       collapsedGroups: Array.from(collapsedGroups),
       showNoEstimateOnly,
+      showBaseline,
+      showDependencies,
       showPlanVsSlot,
     } satisfies PersistedGanttUiState);
-  }, [collapsedGroups, showNoEstimateOnly, showPlanVsSlot, zoom]);
+  }, [collapsedGroups, showBaseline, showDependencies, showNoEstimateOnly, showPlanVsSlot, zoom]);
+
+  const taskLayoutsById = useMemo(() => {
+    const layouts: Record<string, { top: number; visual: TaskVisual }> = {};
+
+    for (const row of derived.orderedRows) {
+      if (row.kind !== "task") continue;
+
+      const interactionForTask = interaction?.taskId === row.task.id ? interaction : null;
+      const previewTask = buildPreviewTask(row.task, interactionForTask);
+
+      layouts[row.task.id] = {
+        top: derived.taskRowTopById[row.task.id] ?? 0,
+        visual: buildVisual(previewTask),
+      };
+    }
+
+    return layouts;
+  }, [buildVisual, derived.orderedRows, derived.taskRowTopById, interaction]);
+
+  const renderableDependencyLinks = useMemo(() => {
+    if (!showDependencies) return [];
+
+    return dependencyLinks.flatMap((link) => {
+      const from = taskLayoutsById[link.fromTaskId];
+      const to = taskLayoutsById[link.toTaskId];
+      if (!from || !to) return [];
+
+      const fromX = from.visual.left + from.visual.width;
+      const toX = Math.max(to.visual.left - 4, 0);
+      const fromY = from.top + ROW_H / 2;
+      const toY = to.top + ROW_H / 2;
+      const elbowX = toX > fromX + 28
+        ? fromX + Math.min(72, (toX - fromX) / 2)
+        : fromX + 18;
+      const blocked = to.visual.startIndex <= from.visual.endIndex;
+
+      return [{
+        ...link,
+        blocked,
+        path: `M ${fromX} ${fromY} H ${elbowX} V ${toY} H ${toX}`,
+        dotX: toX,
+        dotY: toY,
+      }];
+    });
+  }, [dependencyLinks, showDependencies, taskLayoutsById]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1201,6 +1302,32 @@ export function TaskGanttChart({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => setShowDependencies((current) => !current)}
+            aria-pressed={showDependencies}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
+              showDependencies
+                ? "border-cyan-400/40 bg-cyan-500/12 text-cyan-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+            }`}
+            title="Показать finish-to-start связи между задачами"
+          >
+            Зависимости · {dependencyLinks.length}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowBaseline((current) => !current)}
+            aria-pressed={showBaseline}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
+              showBaseline
+                ? "border-zinc-300/35 bg-zinc-200/10 text-zinc-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+            }`}
+            title="Показать baseline-план до первого сдвига диапазона"
+          >
+            Baseline
+          </button>
+          <button
+            type="button"
             onClick={() => setShowPlanVsSlot((current) => !current)}
             aria-pressed={showPlanVsSlot}
             className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
@@ -1383,6 +1510,33 @@ export function TaskGanttChart({
               })}
             </div>
 
+            {renderableDependencyLinks.length > 0 && (
+              <svg
+                className="pointer-events-none absolute top-0"
+                style={{ left: LABEL_W, width: gridWidth, height: derived.bodyHeight, zIndex: 8 }}
+              >
+                {renderableDependencyLinks.map((link) => (
+                  <g key={`${link.fromTaskId}-${link.toTaskId}`}>
+                    <path
+                      d={link.path}
+                      fill="none"
+                      stroke={link.blocked ? "rgba(251, 191, 36, 0.72)" : "rgba(103, 232, 249, 0.58)"}
+                      strokeDasharray={link.blocked ? "5 4" : "4 3"}
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <circle
+                      cx={link.dotX}
+                      cy={link.dotY}
+                      r={3}
+                      fill={link.blocked ? "rgba(251, 191, 36, 0.9)" : "rgba(165, 243, 252, 0.9)"}
+                    />
+                  </g>
+                ))}
+              </svg>
+            )}
+
             <div
               className="pointer-events-none absolute top-0 bottom-0 w-px bg-amber-400/55"
               style={{ left: LABEL_W + todayIndex * dayWidth + Math.floor(dayWidth / 2), zIndex: 15 }}
@@ -1427,6 +1581,12 @@ export function TaskGanttChart({
                 const interactionForTask = interaction?.taskId === task.id ? interaction : null;
                 const previewTask = buildPreviewTask(task, interactionForTask);
                 const previewVisual = buildVisual(previewTask);
+                const baselineTask = buildBaselineTask(task);
+                const baselineVisual = showBaseline && baselineTask ? buildVisual(baselineTask) : undefined;
+                const showBaselineVisual = Boolean(
+                  baselineVisual
+                  && (Math.abs(baselineVisual.left - previewVisual.left) > 1 || Math.abs(baselineVisual.width - previewVisual.width) > 1),
+                );
                 const scheduledSlot = scheduledSlotsByTaskId[task.id];
                 const scheduledSlotVisual = scheduledSlot
                   ? computeScheduledSlotVisual(scheduledSlot, timelineStart, totalDays, dayWidth)
@@ -1444,6 +1604,7 @@ export function TaskGanttChart({
                 const progress = progressByTaskId[task.id];
                 const progressPct = progress ? Math.max(progress.ratio * 100, progress.done > 0 ? 8 : 0) : 0;
                 const progressLabel = progress && progress.total > 0 ? `${progress.done}/${progress.total}` : null;
+                const blockerCount = task.blockedByTaskIds?.length ?? 0;
                 const slotTone = scheduledSlot
                   ? { bg: SLOT_BG[scheduledSlot.tone], border: SLOT_BD[scheduledSlot.tone] }
                   : null;
@@ -1496,6 +1657,11 @@ export function TaskGanttChart({
                           ✓ {progressLabel}
                         </span>
                       )}
+                      {blockerCount > 0 && (
+                        <span className="shrink-0 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-1.5 py-0.5 text-[8px] text-cyan-100">
+                          ⛓ {blockerCount}
+                        </span>
+                      )}
                     </div>
 
                     <div className="relative" style={{ width: gridWidth }}>
@@ -1521,6 +1687,19 @@ export function TaskGanttChart({
 
                           style={{ left: overdueTail.left, width: overdueTail.width, height: 7 }}
                           title={`Просрочка: ${task.title}`}
+                        />
+                      )}
+
+                      {showBaselineVisual && baselineVisual && (
+                        <div
+                          className="pointer-events-none absolute rounded-lg border border-dashed border-zinc-300/25 bg-zinc-200/8"
+                          style={{
+                            left: baselineVisual.left,
+                            width: baselineVisual.width,
+                            top: 8,
+                            height: ROW_H - 16,
+                          }}
+                          title="Baseline-план до первого сдвига"
                         />
                       )}
 
@@ -1558,6 +1737,8 @@ export function TaskGanttChart({
                           showPlanVsSlot && scheduledSlot ? "opacity-75" : ""
                         } ${
                           task.priority === "p3" ? "opacity-55" : ""
+                        } ${
+                          blockerCount > 0 ? "ring-1 ring-cyan-300/25" : ""
                         } ${interactionForTask?.mode === "move" ? "z-20 shadow-lg shadow-black/30" : ""} transition-shadow`}
                         style={{
                           left: previewVisual.left,
@@ -1645,6 +1826,8 @@ export function TaskGanttChart({
         <span>Левый край — задаёт старт</span>
         {onTaskPlannedMinutesChange && <span>Правый край — финиш или длительность</span>}
         <span>Пунктир — сводный rollup родителя</span>
+        <span>Серый ghost — baseline до первого сдвига</span>
+        <span>Голубой path — dependency-lite finish → start</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
         <span>Зелёная шкала — rollup-progress по подзадачам</span>
