@@ -47,7 +47,10 @@ export type TaskGanttChartProps = {
   scheduledSlotsByTaskId?: Record<string, GanttScheduledSlot>;
   progressByTaskId?: Record<string, GanttTaskProgress>;
   dependencyLinks?: GanttDependencyLink[];
+  dependencyTargetsByTaskId?: Record<string, string[]>;
   onTaskRangeChange: (taskId: string, patch: { startDate?: string; dueDate?: string }) => void;
+  onDependencyLinkCreate?: (taskId: string, blockerId: string) => void;
+  onDependencyLinkRemove?: (taskId: string, blockerId: string) => void;
   onTaskPlannedMinutesChange?: (taskId: string, minutes: number | null) => void;
   onTaskBaselineReset?: (taskId: string) => void;
   onTaskBaselineRebase?: (taskId: string) => void;
@@ -78,6 +81,13 @@ type Span = {
   width: number;
   startIndex: number;
   endIndex: number;
+};
+
+type Rect = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
 };
 
 type TaskVisual = Span & {
@@ -184,6 +194,26 @@ type RepeatSeriesHealth = {
 type DependencyChainSummary = {
   taskIds: string[];
   maxDepth: number;
+};
+
+type TaskLayout = {
+  top: number;
+  visual: TaskVisual;
+  slotVisual?: Span;
+  anchorVisual: Span;
+  anchorCenterY: number;
+  barRect: Rect;
+  slotRect?: Rect;
+  dropRects: Rect[];
+};
+
+type DependencyDraftState = {
+  taskId: string;
+  pointerX: number;
+  pointerY: number;
+  hoveredTaskId: string | null;
+  hoveredInvalidTaskId: string | null;
+  moved: boolean;
 };
 
 const BAR_BG: Record<ProjectAccent, string> = {
@@ -699,6 +729,70 @@ function spanFromVisual(visual: TaskVisual): Span {
   };
 }
 
+function buildDependencyPath(fromX: number, fromY: number, toX: number, toY: number): string {
+  const elbowX = toX > fromX + 28
+    ? fromX + Math.min(72, (toX - fromX) / 2)
+    : fromX + 18;
+
+  return `M ${fromX} ${fromY} H ${elbowX} V ${toY} H ${toX}`;
+}
+
+function sortNodesByDependencies(nodes: GanttTaskNode[]): GanttTaskNode[] {
+  const prepared = nodes.map((node) => ({
+    ...node,
+    children: sortNodesByDependencies(node.children),
+  }));
+
+  if (prepared.length < 2) return prepared;
+
+  const originalIndexById = new Map(prepared.map((node, index) => [node.task.id, index]));
+  const nodeById = new Map(prepared.map((node) => [node.task.id, node]));
+  const indegree = new Map(prepared.map((node) => [node.task.id, 0]));
+  const dependentsById = new Map<string, string[]>();
+
+  for (const node of prepared) {
+    for (const blockerId of node.task.blockedByTaskIds ?? []) {
+      if (!nodeById.has(blockerId)) continue;
+
+      const dependents = dependentsById.get(blockerId) ?? [];
+      dependents.push(node.task.id);
+      dependentsById.set(blockerId, dependents);
+      indegree.set(node.task.id, (indegree.get(node.task.id) ?? 0) + 1);
+    }
+  }
+
+  const ready = prepared
+    .filter((node) => (indegree.get(node.task.id) ?? 0) === 0)
+    .sort(
+      (left, right) =>
+        (originalIndexById.get(left.task.id) ?? 0) - (originalIndexById.get(right.task.id) ?? 0),
+    );
+  const result: GanttTaskNode[] = [];
+
+  while (ready.length > 0) {
+    const current = ready.shift()!;
+    result.push(current);
+
+    for (const dependentId of dependentsById.get(current.task.id) ?? []) {
+      const nextDegree = (indegree.get(dependentId) ?? 0) - 1;
+      indegree.set(dependentId, nextDegree);
+
+      if (nextDegree === 0) {
+        const nextNode = nodeById.get(dependentId);
+        if (!nextNode) continue;
+
+        ready.push(nextNode);
+        ready.sort(
+          (left, right) =>
+            (originalIndexById.get(left.task.id) ?? 0) - (originalIndexById.get(right.task.id) ?? 0),
+        );
+      }
+    }
+  }
+
+  return result.length === prepared.length ? result : prepared;
+}
+
 function mergeSpans(spans: Array<Span | undefined>): Span | undefined {
   const valid = spans.filter((span): span is Span => Boolean(span));
   if (valid.length === 0) return undefined;
@@ -900,12 +994,16 @@ export function TaskGanttChart({
   scheduledSlotsByTaskId = {},
   progressByTaskId = {},
   dependencyLinks = [],
+  dependencyTargetsByTaskId = {},
   onTaskRangeChange,
+  onDependencyLinkCreate,
+  onDependencyLinkRemove,
   onTaskPlannedMinutesChange,
   onTaskBaselineReset,
   onTaskBaselineRebase,
 }: TaskGanttChartProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const gridBodyRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef<string | null>(null);
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
@@ -950,6 +1048,7 @@ export function TaskGanttChart({
     return Boolean(persisted.showPlanVsSlot);
   });
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
+  const [dependencyDraft, setDependencyDraft] = useState<DependencyDraftState | null>(null);
 
   const today = useMemo(() => d0(new Date()), []);
   const timelineStart = useMemo(() => addDays(today, -PAST_DAYS), [today]);
@@ -957,6 +1056,13 @@ export function TaskGanttChart({
   const dayWidth = ZOOM_OPTIONS[zoom].dayWidth;
   const gridWidth = totalDays * dayWidth;
   const todayIndex = PAST_DAYS;
+  const dependencyTargetSetByTaskId = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(dependencyTargetsByTaskId).map(([taskId, targetIds]) => [taskId, new Set(targetIds)]),
+      ) as Record<string, Set<string>>,
+    [dependencyTargetsByTaskId],
+  );
 
   const days = useMemo(
     () => Array.from({ length: totalDays }, (_, index) => addDays(timelineStart, index)),
@@ -1536,7 +1642,8 @@ export function TaskGanttChart({
 
     for (const group of displayGroups) {
       const sectionTop = cursorTop;
-      const nodeResults = group.nodes.map((node) => buildNodeRows(group, node));
+      const orderedGroupNodes = sortNodesByDependencies(group.nodes);
+      const nodeResults = orderedGroupNodes.map((node) => buildNodeRows(group, node));
       const groupRollup = mergeSpans(nodeResults.map((result) => result.span));
       const groupRows = nodeResults.flatMap((result) => result.rows);
       const repeatPreview = collapseRepeatRows(group, groupRows);
@@ -1654,22 +1761,96 @@ export function TaskGanttChart({
   }, [collapseRepeatSeries, collapsedGroups, repeatExceptionsOnly, showBaseline, showCriticalChainOnly, showDependencies, showNoEstimateOnly, showPlanVsSlot, showRiskOnly, zoom]);
 
   const taskLayoutsById = useMemo(() => {
-    const layouts: Record<string, { top: number; visual: TaskVisual }> = {};
+    const layouts: Record<string, TaskLayout> = {};
+    const slotOverlayTop = showPlanVsSlot ? 2 : ROW_H - 8;
+    const slotOverlayHeight = showPlanVsSlot ? 8 : 5;
 
     for (const row of derived.orderedRows) {
       if (row.kind !== "task") continue;
 
       const interactionForTask = interaction?.taskId === row.task.id ? interaction : null;
       const previewTask = buildPreviewTask(row.task, interactionForTask);
+      const visual = buildVisual(previewTask);
+      const scheduledSlot = scheduledSlotsByTaskId[row.task.id];
+      const slotVisual = scheduledSlot
+        ? computeScheduledSlotVisual(scheduledSlot, timelineStart, totalDays, dayWidth)
+        : undefined;
+      const top = derived.taskRowTopById[row.task.id] ?? 0;
+      const barRect: Rect = {
+        left: visual.left,
+        right: visual.left + visual.width,
+        top: top + 4,
+        bottom: top + ROW_H - 4,
+      };
+      const slotRect = slotVisual
+        ? {
+            left: slotVisual.left,
+            right: slotVisual.left + slotVisual.width,
+            top: top + slotOverlayTop - 4,
+            bottom: top + slotOverlayTop + slotOverlayHeight + 4,
+          }
+        : undefined;
+      const anchorVisual = slotVisual ?? visual;
+      const anchorTop = slotVisual ? slotOverlayTop : 4;
+      const anchorHeight = slotVisual ? slotOverlayHeight : ROW_H - 8;
 
       layouts[row.task.id] = {
-        top: derived.taskRowTopById[row.task.id] ?? 0,
-        visual: buildVisual(previewTask),
+        top,
+        visual,
+        slotVisual,
+        anchorVisual,
+        anchorCenterY: top + anchorTop + anchorHeight / 2,
+        barRect,
+        slotRect,
+        dropRects: slotRect ? [slotRect, barRect] : [barRect],
       };
     }
 
     return layouts;
-  }, [buildVisual, derived.orderedRows, derived.taskRowTopById, interaction]);
+  }, [buildVisual, dayWidth, derived.orderedRows, derived.taskRowTopById, interaction, scheduledSlotsByTaskId, showPlanVsSlot, timelineStart, totalDays]);
+
+  const readGridPointer = useCallback((clientX: number, clientY: number) => {
+    const body = gridBodyRef.current;
+    if (!body) return null;
+
+    const rect = body.getBoundingClientRect();
+    return {
+      x: clientX - rect.left - LABEL_W,
+      y: clientY - rect.top,
+    };
+  }, []);
+
+  const findDependencyHoverTarget = useCallback(
+    (sourceTaskId: string, x: number, y: number) => {
+      let hoveredInvalidTaskId: string | null = null;
+      const validTargets = dependencyTargetSetByTaskId[sourceTaskId] ?? new Set<string>();
+
+      for (const [taskId, layout] of Object.entries(taskLayoutsById)) {
+        if (taskId === sourceTaskId) continue;
+
+        const isInside = layout.dropRects.some(
+          (rect) => x >= rect.left - 6 && x <= rect.right + 6 && y >= rect.top && y <= rect.bottom,
+        );
+
+        if (!isInside) continue;
+
+        if (validTargets.has(taskId)) {
+          return {
+            hoveredTaskId: taskId,
+            hoveredInvalidTaskId: null,
+          };
+        }
+
+        hoveredInvalidTaskId = taskId;
+      }
+
+      return {
+        hoveredTaskId: null,
+        hoveredInvalidTaskId,
+      };
+    },
+    [dependencyTargetSetByTaskId, taskLayoutsById],
+  );
 
   const interactionImpact = useMemo(() => {
     if (!interaction) return null;
@@ -1819,25 +2000,54 @@ export function TaskGanttChart({
       const to = taskLayoutsById[link.toTaskId];
       if (!from || !to) return [];
 
-      const fromX = from.visual.left + from.visual.width;
-      const toX = Math.max(to.visual.left - 4, 0);
-      const fromY = from.top + ROW_H / 2;
-      const toY = to.top + ROW_H / 2;
-      const elbowX = toX > fromX + 28
-        ? fromX + Math.min(72, (toX - fromX) / 2)
-        : fromX + 18;
-      const blocked = to.visual.startIndex <= from.visual.endIndex;
+      const fromX = from.anchorVisual.left + from.anchorVisual.width;
+      const toX = Math.max(to.anchorVisual.left - 4, 0);
+      const fromY = from.anchorCenterY;
+      const toY = to.anchorCenterY;
+      const blocked = to.anchorVisual.left <= from.anchorVisual.left + from.anchorVisual.width;
 
       return [{
         ...link,
         blocked,
         critical: riskMeta.criticalLinkIds.has(`${link.fromTaskId}->${link.toTaskId}`),
-        path: `M ${fromX} ${fromY} H ${elbowX} V ${toY} H ${toX}`,
+        path: buildDependencyPath(fromX, fromY, toX, toY),
         dotX: toX,
         dotY: toY,
       }];
     });
   }, [dependencyLinks, riskMeta.criticalLinkIds, showDependencies, taskLayoutsById]);
+
+  const dependencyDraftPreview = useMemo(() => {
+    if (!dependencyDraft) return null;
+
+    const source = taskLayoutsById[dependencyDraft.taskId];
+    if (!source) return null;
+
+    const sourceX = Math.max(source.anchorVisual.left - 2, 0);
+    const sourceY = source.anchorCenterY;
+
+    if (dependencyDraft.hoveredTaskId) {
+      const target = taskLayoutsById[dependencyDraft.hoveredTaskId];
+      if (!target) return null;
+
+      const fromX = target.anchorVisual.left + target.anchorVisual.width;
+      const fromY = target.anchorCenterY;
+
+      return {
+        path: buildDependencyPath(fromX, fromY, sourceX, sourceY),
+        lineEndX: sourceX,
+        lineEndY: sourceY,
+        tone: "valid" as const,
+      };
+    }
+
+    return {
+      path: `M ${sourceX} ${sourceY} L ${Math.max(Math.min(dependencyDraft.pointerX, gridWidth), 0)} ${Math.max(Math.min(dependencyDraft.pointerY, derived.bodyHeight), 0)}`,
+      lineEndX: Math.max(Math.min(dependencyDraft.pointerX, gridWidth), 0),
+      lineEndY: Math.max(Math.min(dependencyDraft.pointerY, derived.bodyHeight), 0),
+      tone: dependencyDraft.hoveredInvalidTaskId ? "invalid" as const : "idle" as const,
+    };
+  }, [dependencyDraft, derived.bodyHeight, gridWidth, taskLayoutsById]);
 
   const bottleneckSummary = useMemo(() => {
     const candidates = Array.from(riskMeta.criticalTaskIds)
@@ -1994,6 +2204,25 @@ export function TaskGanttChart({
     });
   }, [onTaskPlannedMinutesChange]);
 
+  const beginDependencyDraft = useCallback((event: React.PointerEvent<HTMLButtonElement>, taskId: string) => {
+    if (!onDependencyLinkCreate) return;
+
+    const point = readGridPointer(event.clientX, event.clientY);
+    if (!point) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    setDependencyDraft({
+      taskId,
+      pointerX: point.x,
+      pointerY: point.y,
+      hoveredTaskId: null,
+      hoveredInvalidTaskId: null,
+      moved: false,
+    });
+  }, [onDependencyLinkCreate, readGridPointer]);
+
   useEffect(() => {
     if (!interaction) return;
 
@@ -2122,6 +2351,68 @@ export function TaskGanttChart({
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [dayWidth, interaction, onTaskPlannedMinutesChange, onTaskRangeChange]);
+
+  useEffect(() => {
+    if (!dependencyDraft) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const viewport = viewportRef.current;
+      if (viewport) {
+        const rect = viewport.getBoundingClientRect();
+        if (event.clientX < rect.left + AUTO_SCROLL_EDGE) {
+          viewport.scrollLeft -= Math.ceil((rect.left + AUTO_SCROLL_EDGE - event.clientX) / 6);
+        } else if (event.clientX > rect.right - AUTO_SCROLL_EDGE) {
+          viewport.scrollLeft += Math.ceil((event.clientX - (rect.right - AUTO_SCROLL_EDGE)) / 6);
+        }
+      }
+
+      const point = readGridPointer(event.clientX, event.clientY);
+      if (!point) return;
+
+      const hover = findDependencyHoverTarget(dependencyDraft.taskId, point.x, point.y);
+
+      setDependencyDraft((current) =>
+        current
+          ? {
+              ...current,
+              pointerX: point.x,
+              pointerY: point.y,
+              hoveredTaskId: hover.hoveredTaskId,
+              hoveredInvalidTaskId: hover.hoveredInvalidTaskId,
+              moved:
+                current.moved
+                || Math.abs(point.x - current.pointerX) > 2
+                || Math.abs(point.y - current.pointerY) > 2,
+            }
+          : null,
+      );
+    };
+
+    const handlePointerUp = () => {
+      if (dependencyDraft.hoveredTaskId && onDependencyLinkCreate) {
+        onDependencyLinkCreate(dependencyDraft.taskId, dependencyDraft.hoveredTaskId);
+      }
+
+      if (dependencyDraft.moved) {
+        suppressClickRef.current = dependencyDraft.taskId;
+        window.setTimeout(() => {
+          if (suppressClickRef.current === dependencyDraft.taskId) {
+            suppressClickRef.current = null;
+          }
+        }, 180);
+      }
+
+      setDependencyDraft(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [dependencyDraft, findDependencyHoverTarget, onDependencyLinkCreate, readGridPointer]);
 
   const openTaskInList = useCallback((taskId: string) => {
     if (suppressClickRef.current === taskId) return;
@@ -2493,7 +2784,7 @@ export function TaskGanttChart({
             </div>
           </div>
 
-          <div className="relative" style={{ minHeight: derived.bodyHeight }}>
+          <div className="relative" style={{ minHeight: derived.bodyHeight }} ref={gridBodyRef}>
             <div
               className="pointer-events-none absolute top-0"
               style={{ left: LABEL_W, width: gridWidth, height: derived.bodyHeight }}
@@ -2546,13 +2837,36 @@ export function TaskGanttChart({
               })}
             </div>
 
-            {renderableDependencyLinks.length > 0 && (
+            {(renderableDependencyLinks.length > 0 || dependencyDraftPreview) && (
               <svg
-                className="pointer-events-none absolute top-0"
+                className="absolute top-0"
                 style={{ left: LABEL_W, width: gridWidth, height: derived.bodyHeight, zIndex: 8 }}
               >
+                <defs>
+                  <marker
+                    id="gantt-dependency-arrow"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
+                  </marker>
+                </defs>
                 {renderableDependencyLinks.map((link) => (
                   <g key={`${link.fromTaskId}-${link.toTaskId}`}>
+                    {onDependencyLinkRemove && (
+                      <path
+                        d={link.path}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={10}
+                        className="cursor-pointer"
+                        onClick={() => onDependencyLinkRemove(link.toTaskId, link.fromTaskId)}
+                      />
+                    )}
                     <path
                       d={link.path}
                       fill="none"
@@ -2561,6 +2875,7 @@ export function TaskGanttChart({
                       strokeWidth={link.critical ? 2 : 1.5}
                       strokeLinecap="round"
                       strokeLinejoin="round"
+                      markerEnd="url(#gantt-dependency-arrow)"
                     />
                     <circle
                       cx={link.dotX}
@@ -2568,8 +2883,45 @@ export function TaskGanttChart({
                       r={3}
                       fill={link.blocked ? "rgba(251, 191, 36, 0.9)" : link.critical ? "rgba(244, 114, 182, 0.92)" : "rgba(165, 243, 252, 0.9)"}
                     />
+                    <title>
+                      {onDependencyLinkRemove
+                        ? "Клик по стрелке — убрать зависимость"
+                        : "Зависимость finish → start"}
+                    </title>
                   </g>
                 ))}
+                {dependencyDraftPreview && (
+                  <g className="pointer-events-none">
+                    <path
+                      d={dependencyDraftPreview.path}
+                      fill="none"
+                      stroke={
+                        dependencyDraftPreview.tone === "valid"
+                          ? "rgba(103, 232, 249, 0.92)"
+                          : dependencyDraftPreview.tone === "invalid"
+                            ? "rgba(251, 191, 36, 0.92)"
+                            : "rgba(228, 228, 231, 0.58)"
+                      }
+                      strokeDasharray={dependencyDraftPreview.tone === "valid" ? "5 4" : "4 4"}
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      markerEnd="url(#gantt-dependency-arrow)"
+                    />
+                    <circle
+                      cx={dependencyDraftPreview.lineEndX}
+                      cy={dependencyDraftPreview.lineEndY}
+                      r={3.5}
+                      fill={
+                        dependencyDraftPreview.tone === "valid"
+                          ? "rgba(103, 232, 249, 0.98)"
+                          : dependencyDraftPreview.tone === "invalid"
+                            ? "rgba(251, 191, 36, 0.98)"
+                            : "rgba(212, 212, 216, 0.82)"
+                      }
+                    />
+                  </g>
+                )}
               </svg>
             )}
 
@@ -2874,6 +3226,29 @@ export function TaskGanttChart({
                 const slotConnectorWidth = scheduledSlotVisual
                   ? Math.abs((previewVisual.left + previewVisual.width / 2) - (scheduledSlotVisual.left + scheduledSlotVisual.width / 2))
                   : 0;
+                const dependencyTargetState = dependencyDraft
+                  ? dependencyDraft.taskId === task.id
+                    ? "source"
+                    : dependencyDraft.hoveredTaskId === task.id
+                      ? "valid"
+                      : dependencyDraft.hoveredInvalidTaskId === task.id
+                        ? "invalid"
+                        : null
+                  : null;
+                const dependencyHandleTargets = dependencyTargetsByTaskId[task.id] ?? [];
+                const canCreateDependency = Boolean(onDependencyLinkCreate) && dependencyHandleTargets.length > 0;
+                const dependencyAnchorVisual = scheduledSlotVisual ?? previewVisual;
+                const dependencyAnchorTop = scheduledSlotVisual ? slotOverlayTop : 4;
+                const dependencyAnchorHeight = scheduledSlotVisual ? slotOverlayHeight : ROW_H - 8;
+                const dependencyHandleLeft = Math.max(dependencyAnchorVisual.left - 12, 2);
+                const dependencyHandleTop = dependencyAnchorTop + dependencyAnchorHeight / 2 - 5;
+                const dependencyHighlightTone = dependencyTargetState === "valid"
+                  ? "ring-2 ring-cyan-300/40"
+                  : dependencyTargetState === "invalid"
+                    ? "ring-2 ring-amber-300/35"
+                    : dependencyTargetState === "source"
+                      ? "ring-2 ring-cyan-100/35"
+                      : "";
 
                 return (
                   <div key={row.key} className="flex border-b border-zinc-800/20" style={{ height: ROW_H }}>
@@ -3016,7 +3391,7 @@ export function TaskGanttChart({
 
                       {scheduledSlotVisual && slotTone && (
                         <div
-                          className={`pointer-events-none absolute rounded-full border ${slotTone.bg} ${slotTone.border} ${showPlanVsSlot && slotOutsidePlan ? "ring-1 ring-amber-300/35" : ""}`}
+                          className={`pointer-events-none absolute rounded-full border ${slotTone.bg} ${slotTone.border} ${showPlanVsSlot && slotOutsidePlan ? "ring-1 ring-amber-300/35" : ""} ${dependencyHighlightTone}`}
                           style={{
                             left: scheduledSlotVisual.left,
                             width: scheduledSlotVisual.width,
@@ -3029,6 +3404,36 @@ export function TaskGanttChart({
 
                       <button
                         type="button"
+                        onPointerDown={(event) => beginDependencyDraft(event, task.id)}
+                        disabled={!canCreateDependency}
+                        className={`absolute z-30 rounded-full border transition ${
+                          dependencyTargetState === "source"
+                            ? "border-cyan-100/80 bg-cyan-300 shadow-[0_0_0_4px_rgba(34,211,238,0.18)]"
+                            : incomingDependencyCount > 0
+                              ? "border-cyan-300/50 bg-cyan-300/85 hover:border-cyan-100"
+                              : canCreateDependency
+                                ? "border-zinc-400/55 bg-zinc-300/75 hover:border-cyan-200 hover:bg-cyan-200"
+                                : "border-zinc-800/90 bg-zinc-700/35 opacity-40"
+                        }`}
+                        style={{
+                          left: dependencyHandleLeft,
+                          top: dependencyHandleTop,
+                          width: 10,
+                          height: 10,
+                          cursor: canCreateDependency ? "crosshair" : "not-allowed",
+                        }}
+                        aria-label={`Привязать зависимость для ${task.title}`}
+                        title={
+                          canCreateDependency
+                            ? `Потяни точку к другому бару, чтобы ${task.title} стало зависеть от него`
+                            : incomingDependencyCount > 0
+                              ? `У ${task.title} уже есть зависимости. Удалить связь можно кликом по стрелке.`
+                              : `Для ${task.title} сейчас нет доступных целей для зависимости`
+                        }
+                      />
+
+                      <button
+                        type="button"
                         onClick={() => openTaskInList(task.id)}
                         onPointerDown={(event) => beginMove(event, task)}
                         className={`absolute rounded-lg border ${baseTone.bg} ${baseTone.border} ${urgencyTone} ${
@@ -3037,7 +3442,7 @@ export function TaskGanttChart({
                           showPlanVsSlot && scheduledSlot ? "opacity-75" : ""
                         } ${
                           task.priority === "p3" ? "opacity-55" : ""
-                        } ${barRiskTone} ${interactionForTask?.mode === "move" ? "z-20 shadow-lg shadow-black/30" : ""} transition-shadow`}
+                        } ${barRiskTone} ${dependencyHighlightTone} ${interactionForTask?.mode === "move" ? "z-20 shadow-lg shadow-black/30" : ""} transition-shadow`}
                         style={{
                           left: previewVisual.left,
                           width: previewVisual.width,
@@ -3141,7 +3546,8 @@ export function TaskGanttChart({
         {onTaskPlannedMinutesChange && <span>Правый край — финиш или длительность</span>}
         <span>Пунктир — сводный rollup родителя</span>
         <span>Серый ghost — baseline до первого сдвига</span>
-        <span>Голубой path — dependency-lite finish → start</span>
+        <span>Точка слева у слота/бара — потяни к другому бару, чтобы создать зависимость</span>
+        <span>Стрелка — dependency finish → start, клик по ней снимает связь</span>
         <span>Кнопка «Риски / цепочка» — фокус на slip и blocker tasks</span>
         <span>Фуксия — critical chain вокруг risky узлов</span>
         <span>↺ / ◎ — reset и rebase baseline по задаче</span>

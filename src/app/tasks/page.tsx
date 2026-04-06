@@ -19,6 +19,9 @@ import {
   deleteTaskWithScheduledSlot,
   getCustomEvents,
   getScheduledTaskSlot,
+  minutesToTime,
+  timeToMinutes,
+  upsertTaskSlot,
   updateCustomEvent,
   type ScheduleTone,
 } from "@/lib/schedule";
@@ -179,6 +182,10 @@ const QUICK_EFFORT_LABEL_BY_MINUTES = new Map(
   QUICK_EFFORT_OPTIONS.map((option) => [option.minutes, option]),
 );
 const TASKS_GANTT_EXPANDED_KEY = "alphacore_tasks_gantt_expanded_v1";
+const DEFAULT_DEPENDENCY_SLOT_DURATION_MIN = 60;
+const MAX_DEPENDENCY_SLOT_DURATION_MIN = 8 * 60;
+const DEFAULT_DEPENDENCY_SLOT_START_MIN = 9 * 60;
+const DEPENDENCY_SLOT_GAP_MIN = 15;
 
 function pluralizeTasks(count: number): string {
   const mod10 = count % 10;
@@ -415,6 +422,72 @@ function getDueOffset(dueDate?: string): number | null {
   now.setHours(0, 0, 0, 0);
   const due = new Date(`${dueDate}T00:00:00`);
   return Math.floor((due.getTime() - now.getTime()) / 86_400_000);
+}
+
+function shiftDateValue(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+
+  date.setDate(date.getDate() + days);
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function resolveDependencySlotDurationMinutes(
+  task: Task,
+  existingSlot?: Pick<GanttScheduledSlot, "start" | "end"> | null,
+): number {
+  if (existingSlot) {
+    const delta = timeToMinutes(existingSlot.end) - timeToMinutes(existingSlot.start);
+    if (delta > 0) {
+      return Math.min(Math.max(delta, 30), MAX_DEPENDENCY_SLOT_DURATION_MIN);
+    }
+  }
+
+  if (task.plannedMinutes) {
+    return Math.min(Math.max(task.plannedMinutes, 30), MAX_DEPENDENCY_SLOT_DURATION_MIN);
+  }
+
+  return DEFAULT_DEPENDENCY_SLOT_DURATION_MIN;
+}
+
+function buildDependencySlotWindow(
+  anchorDate: string,
+  startMinutes: number,
+  durationMinutes: number,
+): { date: string; start: string; end: string } {
+  const normalizedDuration = Math.min(
+    Math.max(Math.round(durationMinutes / 15) * 15, 30),
+    MAX_DEPENDENCY_SLOT_DURATION_MIN,
+  );
+
+  if (startMinutes + normalizedDuration <= 24 * 60) {
+    return {
+      date: anchorDate,
+      start: minutesToTime(startMinutes),
+      end: minutesToTime(startMinutes + normalizedDuration),
+    };
+  }
+
+  return {
+    date: shiftDateValue(anchorDate, 1),
+    start: minutesToTime(DEFAULT_DEPENDENCY_SLOT_START_MIN),
+    end: minutesToTime(DEFAULT_DEPENDENCY_SLOT_START_MIN + normalizedDuration),
+  };
+}
+
+function buildDependencyTaskRange(
+  startDate: string,
+  plannedMinutes?: number,
+): { startDate: string; dueDate: string } {
+  const plannedDays = plannedMinutes && plannedMinutes > 0
+    ? Math.max(Math.ceil(plannedMinutes / (8 * 60)), 1)
+    : 1;
+
+  return {
+    startDate,
+    dueDate: shiftDateValue(startDate, plannedDays - 1),
+  };
 }
 
 function inferGroupArea(label?: string | null): LifeArea | null {
@@ -1188,14 +1261,58 @@ export default function TasksPage() {
   const handleAddBlocker = useCallback(
     (taskId: string, blockerId: string) => {
       const task = taskById.get(taskId);
-      if (!task) return;
+      const blocker = taskById.get(blockerId);
+      if (!task || !blocker) return;
 
-      updateTask(taskId, {
+      const descendants = buildTaskDescendantsMap(tasks).get(taskId) ?? new Set<string>();
+      const blockerMap = buildTaskBlockerMap(tasks);
+      if (
+        blockerId === taskId
+        || descendants.has(blockerId)
+        || (task.blockedByTaskIds ?? []).includes(blockerId)
+        || hasTaskDependencyPath(blockerMap, blockerId, taskId)
+      ) {
+        return;
+      }
+
+      const blockerSlot = getScheduledTaskSlot(blocker.id);
+      const existingTaskSlot = getScheduledTaskSlot(task.id);
+      const slotDuration = resolveDependencySlotDurationMinutes(task, existingTaskSlot);
+      const blockerTimeline = getTaskTimelineSnapshot(blocker);
+      const anchorDate = blockerSlot?.date ?? blockerTimeline.dueDate ?? blockerTimeline.startDate;
+      const anchorStartMinutes = blockerSlot
+        ? timeToMinutes(blockerSlot.end) + DEPENDENCY_SLOT_GAP_MIN
+        : DEFAULT_DEPENDENCY_SLOT_START_MIN;
+      const nextSlot = buildDependencySlotWindow(anchorDate, anchorStartMinutes, slotDuration);
+      const nextRange = buildDependencyTaskRange(nextSlot.date, task.plannedMinutes ?? slotDuration);
+      const nextPatch: Partial<Task> = {
         blockedByTaskIds: Array.from(new Set([...(task.blockedByTaskIds ?? []), blockerId])),
+        ...nextRange,
+      };
+
+      if (
+        willTaskPlanChange(task, nextPatch)
+        && !task.baselineStartDate
+        && !task.baselineDueDate
+        && !task.baselinePlannedMinutes
+      ) {
+        const baseline = getTaskTimelineSnapshot(task);
+        nextPatch.baselineStartDate = baseline.startDate;
+        nextPatch.baselineDueDate = baseline.dueDate;
+        nextPatch.baselinePlannedMinutes = baseline.plannedMinutes;
+      }
+
+      upsertTaskSlot({
+        taskId: task.id,
+        date: nextSlot.date,
+        start: nextSlot.start,
+        end: nextSlot.end,
       });
+
+      updateTask(taskId, nextPatch);
       reload();
     },
-    [reload, taskById],
+    [reload, taskById, tasks],
   );
 
   const handleRemoveBlocker = useCallback(
@@ -1503,6 +1620,17 @@ export default function TasksPage() {
     [tasks, visibleGroups],
   );
 
+  const dependencyTargetIdsByTaskId = useMemo<Record<string, string[]>>(
+    () =>
+      Object.fromEntries(
+        Object.entries(dependencyCandidatesByTaskId).map(([taskId, candidates]) => [
+          taskId,
+          candidates.map((candidate) => candidate.id),
+        ]),
+      ),
+    [dependencyCandidatesByTaskId],
+  );
+
   const ganttDependencyLinks = useMemo<GanttDependencyLink[]>(() => {
     const visibleTaskIds = new Set(
       visible.filter((task) => task.status === "active" || task.status === "inbox").map((task) => task.id),
@@ -1537,7 +1665,6 @@ export default function TasksPage() {
       const blockerTasks = (task.blockedByTaskIds ?? [])
         .map((blockerId) => taskById.get(blockerId))
         .filter((blocker): blocker is Task => Boolean(blocker));
-      const dependencyCandidates = dependencyCandidatesByTaskId[task.id] ?? [];
       const dragTitle =
         task.status === "done"
           ? "Готовые задачи не вкладываем — пусть наслаждаются пенсией"
@@ -1675,7 +1802,10 @@ export default function TasksPage() {
                         )}
 
                         {blockerTasks.length > 0 && (
-                          <span className="shrink-0 rounded-md border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-200">
+                          <span
+                            className="shrink-0 rounded-md border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-200"
+                            title="Зависимости редактируются в Ганте: тяни точку слева у бара или кликни по стрелке, чтобы снять связь"
+                          >
                             ⛓ {blockerTasks.length}
                           </span>
                         )}
@@ -1796,46 +1926,6 @@ export default function TasksPage() {
                 {isDropTarget && canNestHere && (
                   <div className="mt-3 rounded-xl border border-dashed border-sky-400/35 bg-sky-500/5 px-3 py-2 text-xs text-sky-200">
                     Отпускай — задача станет подзадачей внутри «{task.title}».
-                  </div>
-                )}
-
-                {task.status !== "done" && (blockerTasks.length > 0 || dependencyCandidates.length > 0) && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800/60 bg-zinc-950/25 px-3 py-2">
-                    <span className="text-[10px] uppercase tracking-widest text-zinc-600">⛓ зависимости</span>
-
-                    {blockerTasks.map((blocker) => (
-                      <button
-                        key={`${task.id}-${blocker.id}`}
-                        type="button"
-                        onClick={() => handleRemoveBlocker(task.id, blocker.id)}
-                        className="max-w-full truncate rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[10px] text-sky-100 transition hover:border-sky-400/30 hover:bg-sky-500/15"
-                        title={`Убрать блокер «${blocker.title}»`}
-                      >
-                        ⛓ {blocker.title} ×
-                      </button>
-                    ))}
-
-                    {dependencyCandidates.length > 0 && (
-                      <div className="min-w-48 max-w-full flex-1 sm:flex-none">
-                        <select
-                          defaultValue=""
-                          onChange={(event) => {
-                            const blockerId = event.target.value;
-                            if (!blockerId) return;
-                            handleAddBlocker(task.id, blockerId);
-                            event.currentTarget.value = "";
-                          }}
-                          className="w-full rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-[11px] text-zinc-300 outline-none transition hover:border-zinc-700 focus:border-sky-500/35"
-                        >
-                          <option value="">Добавить blocker…</option>
-                          {dependencyCandidates.map((candidate) => (
-                            <option key={`${task.id}-candidate-${candidate.id}`} value={candidate.id}>
-                              {candidate.title}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -2015,7 +2105,10 @@ export default function TasksPage() {
                 scheduledSlotsByTaskId={ganttScheduledSlotsByTaskId}
                 progressByTaskId={ganttProgressByTaskId}
                 dependencyLinks={ganttDependencyLinks}
+                dependencyTargetsByTaskId={dependencyTargetIdsByTaskId}
                 onTaskRangeChange={handleSetRange}
+                onDependencyLinkCreate={handleAddBlocker}
+                onDependencyLinkRemove={handleRemoveBlocker}
                 onTaskPlannedMinutesChange={handleSetPlannedMinutes}
                 onTaskBaselineReset={handleResetTaskBaseline}
                 onTaskBaselineRebase={handleRebaseTaskBaseline}
