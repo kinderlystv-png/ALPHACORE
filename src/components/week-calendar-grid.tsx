@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useCalendarShellControls } from "@/components/calendar-shell-controls-context";
 import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
@@ -85,7 +85,6 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
 const SCROLLABLE_PAST_DAYS = 1;
 const SCROLLABLE_FUTURE_DAYS = 91;
 const MIN_DAY_COLUMN_WIDTH = 120;
-const CALENDAR_INITIAL_VIEWPORT_OFFSET_REM = 8.5;
 const DEFAULT_DAY_COLUMN_WIDTH: Record<3 | 8, number> = {
   3: 196,
   8: 148,
@@ -113,6 +112,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const [version, setVersion] = useState(0);
   const [hoveredSlotKey, setHoveredSlotKey] = useState<string | null>(null);
   const [gridViewportWidth, setGridViewportWidth] = useState<number | null>(null);
+  const [gridViewportHeight, setGridViewportHeight] = useState<number | null>(null);
   const [shouldCenterNow, setShouldCenterNow] = useState(true);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -217,6 +217,32 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     return () => observer.disconnect();
   }, []);
 
+  useLayoutEffect(() => {
+    const container = gridRef.current;
+    if (!container) return;
+
+    const syncViewportHeight = () => {
+      const rect = container.getBoundingClientRect();
+      const nextHeight = Math.max(Math.floor(window.innerHeight - rect.top), 320);
+      setGridViewportHeight((current) => (current === nextHeight ? current : nextHeight));
+    };
+
+    syncViewportHeight();
+
+    const handleResize = () => {
+      syncViewportHeight();
+    };
+
+    window.addEventListener("resize", handleResize);
+
+    const frame = window.requestAnimationFrame(syncViewportHeight);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [version]);
+
   useEffect(() => {
     visibleColumnsRef.current = visibleColumns;
   }, [visibleColumns]);
@@ -232,7 +258,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   const isMobileGripMode = viewportWidth != null && viewportWidth < 640;
   const overlayWidth = Math.max(visibleGridWidth - 56, visibleColumns.length * dayColumnWidth);
   const overlayColumnWidth = dayColumnWidth;
-  const initialViewportHeight = `calc(100svh - ${CALENDAR_INITIAL_VIEWPORT_OFFSET_REM}rem)`;
+  const initialViewportHeight = gridViewportHeight != null ? `${gridViewportHeight}px` : "calc(100svh - 8.5rem)";
   const maxHeaderTaskCount = useMemo(
     () => visibleColumns.reduce((max, column) => Math.max(max, column.tasks.length), 0),
     [visibleColumns],
