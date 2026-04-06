@@ -1920,13 +1920,17 @@ export function buildRecommendationRuntimeContext(
 	);
 	const unscheduled = actionable.filter((task) => !task.dueDate);
 	const p1 = actionable.filter((task) => task.priority === "p1");
-	const attentionProjects = [...input.projects].filter((project) => project.status !== "green").sort((left, right) => {
-		const leftWeight = (left.status === "red" ? 2 : 1) * 10 + projectOpenDeliverables(left);
-		const rightWeight = (right.status === "red" ? 2 : 1) * 10 + projectOpenDeliverables(right);
-		return rightWeight - leftWeight || left.updatedAt.localeCompare(right.updatedAt);
-	});
+	const attentionProjects = [...input.projects]
+		.filter((project) => project.kind === "project" && project.status !== "green")
+		.sort((left, right) => {
+			const leftWeight = (left.status === "red" ? 2 : 1) * 10 + projectOpenDeliverables(left);
+			const rightWeight = (right.status === "red" ? 2 : 1) * 10 + projectOpenDeliverables(right);
+			return rightWeight - leftWeight || left.updatedAt.localeCompare(right.updatedAt);
+		});
 	const birthdayProject =
-		input.projects.find((project) => /др|день рождения|minecraft/i.test(project.name)) ?? null;
+		input.projects.find(
+			(project) => project.kind === "project" && /др|день рождения|minecraft/i.test(project.name),
+		) ?? null;
 	const recentJournal = [...input.journalEntries]
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 		.slice(0, 4);
@@ -2047,6 +2051,8 @@ function buildWorkRuntimeData(
 ): CandidateRuntimeData {
 	const leadProject = context.projects.attention[0] ?? null;
 	const sicknessCurrent = context.sickness.current;
+	const sicknessSeverity = sicknessCurrent?.severity ?? 0;
+	const hardSickness = sicknessSeverity >= 4;
 	const energyConstrained = context.schedule.today.some(isCleanupLoadSlot) || Boolean(sicknessCurrent);
 	const planningSlot = pickPlanningSlot(context);
 	const preferredTrack = leadProject ? getProjectTrack(leadProject) : null;
@@ -2115,7 +2121,7 @@ function buildWorkRuntimeData(
 
 	if (sicknessCurrent) {
 		signals.unshift(
-			`Идёт период болезни: ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)}`,
+			`Идёт период болезни: ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel})`,
 		);
 	}
 
@@ -2123,17 +2129,21 @@ function buildWorkRuntimeData(
 		candidateId: leadProject ? `advice-project-${leadProject.id}` : undefined,
 		href: leadProject ? `/projects?open=${leadProject.id}` : undefined,
 		title: sicknessCurrent
-			? "Сузить рабочий фронт на время болезни"
+			? hardSickness
+				? "Резко сузить рабочий фронт на время болезни"
+				: "Сузить рабочий фронт на время болезни"
 			: leadProject
 				? `Развернуть ${leadProject.name} без размазывания`
 				: undefined,
 		context: sicknessCurrent
-			? `Сейчас активен период болезни, поэтому рабочий контур должен быть одноходовым: один щадящий шаг вместо обычного execution-марафона.`
+			? `Сейчас активен период болезни, severity ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel}), поэтому рабочий контур должен быть одноходовым: один щадящий шаг вместо обычного execution-марафона.`
 			: leadTask
 				? `Сейчас лучше атаковать не абстрактную работу, а конкретный узел: ${clipText(leadTask.title, 72)}.`
 				: undefined,
 		impact: sicknessCurrent
-			? "Попроси агента оставить один узкий рабочий step, который не спорит с recovery mode, и убрать всё лишнее с сегодня."
+			? hardSickness
+				? "Попроси агента оставить максимум один micro-step, который не спорит с recovery mode, и снять с сегодня всё необязательное."
+				: "Попроси агента оставить один узкий рабочий step, который не спорит с recovery mode, и убрать всё лишнее с сегодня."
 			: queue.length > 0
 				? `Попроси агента превратить ${queue.length} конкурирующих рабочих куска в один понятный план на сегодня.`
 				: undefined,
@@ -2159,7 +2169,9 @@ function buildWorkRuntimeData(
 		],
 		requestLines: [
 			sicknessCurrent
-				? "Если планируешь работу во время болезни, сузь её до черновика / skeleton / одного ответа, без длинного execution-блока."
+				? hardSickness
+					? "Если самочувствие тяжёлое, оставь только один micro-step / ответ / черновик без длинного execution-блока."
+					: "Если планируешь работу во время болезни, сузь её до черновика / skeleton / одного ответа, без длинного execution-блока."
 				: leadProject && energyConstrained
 				? "Если день тяжёлый по энергии, сузь next step до одного черновика или skeleton, а не до полной финализации."
 				: leadProject
@@ -2197,7 +2209,7 @@ function buildWorkRuntimeData(
 			context.tasks.overdue.length * 5 +
 			context.tasks.p1.length * 4 +
 			(leadProject?.status === "red" ? 12 : leadProject ? 6 : 0) +
-			(sicknessCurrent ? 10 : 0),
+			(sicknessCurrent ? 6 + sicknessSeverity * 3 : 0),
 	};
 }
 
@@ -2207,6 +2219,8 @@ function buildHealthRuntimeData(
 	const missing = context.habits.missingToday.slice(0, 3);
 	const flags = context.medical.flags.slice(0, 2);
 	const sicknessCurrent = context.sickness.current;
+	const sicknessSeverity = sicknessCurrent?.severity ?? 0;
+	const hardSickness = sicknessSeverity >= 4;
 	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
 	const hasCleanupLoadToday = cleanupToday.length > 0;
 	const healthJournal =
@@ -2239,7 +2253,7 @@ function buildHealthRuntimeData(
 
 	if (sicknessCurrent) {
 		signals.unshift(
-			`Болею ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)}`,
+			`Болею ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel})`,
 		);
 	}
 
@@ -2260,9 +2274,9 @@ function buildHealthRuntimeData(
 		? `Сегодня cleanup-нагрузка: ${cleanupToday.map((slot) => formatCleanupLoadBrief(slot)).join("; ")}. Считать это существенной физической нагрузкой; отдельное cardio по умолчанию не форсировать.`
 		: null;
 	const sicknessLine = sicknessCurrent
-		? `Сейчас активен период болезни: с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · длительность ${sicknessCurrent.durationLabel} · ${sicknessCurrent.calendarDays} календ. дн.`
+		? `Сейчас активен период болезни: с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · длительность ${sicknessCurrent.durationLabel} · ${sicknessCurrent.calendarDays} календ. дн. · самочувствие ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel}).`
 		: context.sickness.latestClosed
-			? `Последний период болезни: ${formatSicknessDateTime(context.sickness.latestClosed.startedAt)} → ${formatSicknessDateTime(context.sickness.latestClosed.endedAt)} · ${context.sickness.latestClosed.durationLabel}.`
+			? `Последний период болезни: ${formatSicknessDateTime(context.sickness.latestClosed.startedAt)} → ${formatSicknessDateTime(context.sickness.latestClosed.endedAt)} · ${context.sickness.latestClosed.durationLabel} · ${context.sickness.latestClosed.severity}/5 (${context.sickness.latestClosed.severityLabel}).`
 			: null;
 	const selfReportLine = healthJournal
 		? `Свежий self-report: "${clipText(healthJournal.text, 120)}".`
@@ -2271,7 +2285,9 @@ function buildHealthRuntimeData(
 	return {
 		title:
 			sicknessCurrent
-				? "Переключить день в режим болезни"
+				? hardSickness
+					? "Переключить день в жёсткий режим болезни"
+					: "Переключить день в режим болезни"
 				: hasCleanupLoadToday
 				? "Не дублировать cardio на cleanup-дне"
 				: flags.length > 0
@@ -2281,7 +2297,7 @@ function buildHealthRuntimeData(
 					: undefined,
 		context:
 			sicknessCurrent
-				? "Сейчас health floor — это основной режим дня, а не nice to have вокруг productivity."
+				? `Сейчас health floor — это основной режим дня, а не nice to have вокруг productivity. Самочувствие ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel}).`
 				: flags.length > 0
 				? "Есть конкретные медсигналы, поэтому productivity не должна притворяться лечением."
 				: hasCleanupLoadToday
@@ -2291,7 +2307,9 @@ function buildHealthRuntimeData(
 					: undefined,
 		impact:
 			sicknessCurrent
-				? "Попроси агента резко упростить день: recovery, follow-up по самочувствию и один щадящий step без hero mode."
+				? hardSickness
+					? "Попроси агента максимально упростить день: recovery, follow-up по самочувствию и максимум один micro-step без hero mode."
+					: "Попроси агента резко упростить день: recovery, follow-up по самочувствию и один щадящий step без hero mode."
 				: missing.length > 0 || flags.length > 0 || hasCleanupLoadToday
 				? hasCleanupLoadToday
 					? "Попроси агента собрать щадящий health floor и отдельно решить, нужно ли сегодня вообще дополнительное cardio."
@@ -2305,7 +2323,9 @@ function buildHealthRuntimeData(
 		].filter(Boolean) as string[],
 		requestLines: [
 			sicknessCurrent
-				? "Собери режим болезни: щадящий floor, гидратация/сон, только один рабочий micro-step и явный запрет на перегруз."
+				? hardSickness
+					? "Собери режим болезни при тяжёлом самочувствии: щадящий floor, гидратация/сон, максимум один micro-step и явный запрет на перегруз."
+					: "Собери режим болезни: щадящий floor, гидратация/сон, только один рабочий micro-step и явный запрет на перегруз."
 				: hasCleanupLoadToday
 				? "Если сегодня уже есть cleanup-нагрузка, не форсируй отдельное cardio по умолчанию; максимум mobility или walk, если это помогает восстановлению."
 				: "Сделай план щадящим: одна минимальная победа до вечера, один follow-up и один запрет на перегруз.",
@@ -2323,7 +2343,7 @@ function buildHealthRuntimeData(
 			healthJournal ? "self-report" : null,
 		].filter(Boolean) as string[],
 		weightBoost:
-			(sicknessCurrent ? 22 : 0) +
+			(sicknessCurrent ? 10 + sicknessSeverity * 4 : 0) +
 			flags.length * 10 +
 			missing.length * 5 +
 			cleanupToday.length * 6 +
@@ -2609,6 +2629,8 @@ function buildRecoveryRuntimeData(
 	context: RecommendationRuntimeContext,
 ): CandidateRuntimeData {
 	const sicknessCurrent = context.sickness.current;
+	const sicknessSeverity = sicknessCurrent?.severity ?? 0;
+	const hardSickness = sicknessSeverity >= 4;
 	const missingRecovery = context.habits.missingToday.filter((habit) =>
 		["sleep", "stretch", "run"].includes(habit.id),
 	);
@@ -2658,7 +2680,7 @@ function buildRecoveryRuntimeData(
 
 	if (sicknessCurrent) {
 		signals.unshift(
-			`Болею ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)}`,
+			`Болею ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel})`,
 		);
 	}
 
@@ -2671,7 +2693,9 @@ function buildRecoveryRuntimeData(
 	return {
 		title:
 			sicknessCurrent
-				? "Перевести неделю в recovery mode"
+				? hardSickness
+					? "Перевести неделю в строгий recovery mode"
+					: "Перевести неделю в recovery mode"
 				: protectedRecovery
 				? "Не трогать recovery-якорь недели"
 				: overloaded.length > 0
@@ -2681,7 +2705,7 @@ function buildRecoveryRuntimeData(
 					: undefined,
 		context:
 			sicknessCurrent
-				? "Пока идёт болезнь, recovery — это не бонус недели, а базовый управляющий слой расписания."
+				? `Пока идёт болезнь, recovery — это не бонус недели, а базовый управляющий слой расписания. Самочувствие ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel}).`
 				: protectedRecovery
 				? "Recovery-окно уже стоит в календаре — теперь задача не создать новое, а не дать срочности его съесть."
 				: cleanupToday.length > 0
@@ -2693,7 +2717,9 @@ function buildRecoveryRuntimeData(
 					: undefined,
 		impact:
 			sicknessCurrent
-				? "Попроси агента защитить ближайшее recovery-окно и объяснить, что именно лучше не делать, пока длится болезнь."
+				? hardSickness
+					? "Попроси агента защитить ближайшее recovery-окно и жёстко убрать из недели всё, что спорит с восстановлением, пока длится болезнь."
+					: "Попроси агента защитить ближайшее recovery-окно и объяснить, что именно лучше не делать, пока длится болезнь."
 				: protectedRecovery
 				? "Попроси агента защищать уже поставленное recovery-окно и не отдавать его под срочные хвосты."
 				: missingRecovery.length > 0 || overloaded.length > 0 || !nextRecoverySlot || cleanupToday.length > 0 || cleanupUpcoming.length > 0
@@ -2708,7 +2734,7 @@ function buildRecoveryRuntimeData(
 				: null,
 		promptLines: [
 			sicknessCurrent
-				? `Активный период болезни: с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · ${sicknessCurrent.durationLabel} · ${sicknessCurrent.calendarDays} календ. дн.`
+				? `Активный период болезни: с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · ${sicknessCurrent.durationLabel} · ${sicknessCurrent.calendarDays} календ. дн. · самочувствие ${sicknessCurrent.severity}/5 (${sicknessCurrent.severityLabel}).`
 				: null,
 			missingRecovery.length > 0
 				? `Сегодня не закрыты recovery-сигналы: ${missingRecovery.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
@@ -2728,7 +2754,9 @@ function buildRecoveryRuntimeData(
 		].filter(Boolean) as string[],
 		requestLines: [
 			sicknessCurrent
-				? "Во время болезни выбери recovery-окно как обязательное, а не как то, что можно передвинуть ради срочности."
+				? hardSickness
+					? "Во время болезни при тяжёлом самочувствии выбери recovery-окно как обязательное и сними всё, что можно передвинуть без ущерба."
+					: "Во время болезни выбери recovery-окно как обязательное, а не как то, что можно передвинуть ради срочности."
 				: protectedRecovery
 				? "Не предлагай новое recovery-окно поверх существующего: сначала защити уже зафиксированный слот."
 				: "Найди одно невыбиваемое окно восстановления на неделю и привяжи его к текущему графику.",
@@ -2762,7 +2790,7 @@ function buildRecoveryRuntimeData(
 		leadTaskTrack: null,
 		strictScope: null,
 		weightBoost:
-			(sicknessCurrent ? 18 : 0) +
+			(sicknessCurrent ? 8 + sicknessSeverity * 4 : 0) +
 			(sleepMissing ? 8 : 0) +
 			overloaded.length * 6 +
 			cleanupUpcoming.length * 5 +

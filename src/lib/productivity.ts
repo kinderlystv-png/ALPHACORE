@@ -105,7 +105,14 @@ export type WeeklyFocusReport = {
 export function getWeeklyFocusReport(): WeeklyFocusReport {
   const tasks = getTasks();
   const projects = getProjects();
-  const projectNameById = new Map(projects.map((project) => [project.id, project.name]));
+  const groupNameById = new Map(projects.map((project) => [project.id, project.name]));
+  const strategicProjects = projects.filter((project) => project.kind === "project");
+  const strategicProjectById = new Map(
+    strategicProjects.map((project) => [project.id, project]),
+  );
+  const strategicProjectByName = new Map(
+    strategicProjects.map((project) => [project.name, project]),
+  );
   const now = new Date();
   const dates: string[] = [];
 
@@ -150,12 +157,13 @@ export function getWeeklyFocusReport(): WeeklyFocusReport {
       );
 
       const projectLabel = task.projectId
-        ? projectNameById.get(task.projectId) ?? task.project
+        ? groupNameById.get(task.projectId) ?? task.project
         : task.project;
 
       return {
         id: task.id,
         title: task.title,
+        projectId: task.projectId,
         projectLabel,
         minutes: totals.minutes,
         sessions: totals.sessions,
@@ -164,18 +172,29 @@ export function getWeeklyFocusReport(): WeeklyFocusReport {
     .filter((task) => task.minutes > 0 || task.sessions > 0)
     .sort((a, b) => b.minutes - a.minutes || b.sessions - a.sessions);
 
-  const projectTotals = taskTotals.reduce<Map<string, number>>((acc, task) => {
-    if (!task.projectLabel) return acc;
-    acc.set(task.projectLabel, (acc.get(task.projectLabel) ?? 0) + task.minutes);
+  const projectTotals = taskTotals.reduce<
+    Map<string, { id: string; name: string; minutes: number }>
+  >((acc, task) => {
+    const linkedProject =
+      (task.projectId ? strategicProjectById.get(task.projectId) : undefined) ??
+      (task.projectLabel ? strategicProjectByName.get(task.projectLabel) : undefined);
+
+    if (!linkedProject) return acc;
+
+    const current = acc.get(linkedProject.id) ?? {
+      id: linkedProject.id,
+      name: linkedProject.name,
+      minutes: 0,
+    };
+
+    current.minutes += task.minutes;
+    acc.set(linkedProject.id, current);
     return acc;
   }, new Map());
 
-  const topProjectEntry = [...projectTotals.entries()].sort(
-    (a, b) => b[1] - a[1],
-  )[0];
-  const topProject = topProjectEntry
-    ? projects.find((project) => project.name === topProjectEntry[0]) ?? null
-    : null;
+  const topProject = [...projectTotals.values()].sort(
+    (left, right) => right.minutes - left.minutes,
+  )[0] ?? null;
 
   return {
     days,
@@ -183,8 +202,8 @@ export function getWeeklyFocusReport(): WeeklyFocusReport {
     totalFocusSessions: days.reduce((acc, day) => acc + day.focusSessions, 0),
     totalCompletedTasks: days.reduce((acc, day) => acc + day.completedTasks, 0),
     topTask: taskTotals[0] ?? null,
-    topProject: topProjectEntry
-      ? { id: topProject?.id, name: topProjectEntry[0], minutes: topProjectEntry[1] }
+    topProject: topProject
+      ? { id: topProject.id, name: topProject.name, minutes: topProject.minutes }
       : null,
   };
 }
@@ -204,6 +223,8 @@ export type FocusSnapshot = {
     startedLabel: string | null;
     durationLabel: string | null;
     calendarDays: number | null;
+    severity: number | null;
+    severityLabel: string | null;
   };
 };
 
@@ -239,21 +260,23 @@ function compareTasksForFocus(left: Task, right: Task): number {
   );
 }
 
-function recoveryFocusWeight(task: Task): number {
+function recoveryFocusWeight(task: Task, sicknessSeverity = 3): number {
   const due = dueWeight(task.dueDate);
+  const recoveryPenalty = sicknessSeverity * 3;
 
-  if (due < 0 || task.priority === "p1") return 6;
-  if (due === 0) return 4;
-  if (RECOVERY_FRIENDLY_TASK_PATTERN.test(task.title)) return 0;
-  if (task.priority === "p3") return 1;
-  if (task.priority === "p2") return 2;
-  return 3;
+  if (due < 0) return -4;
+  if (task.priority === "p1") return -3;
+  if (due === 0) return -1;
+  if (RECOVERY_FRIENDLY_TASK_PATTERN.test(task.title)) return task.priority === "p3" ? 0 : 1;
+  if (task.priority === "p3") return recoveryPenalty - 1;
+  if (task.priority === "p2") return recoveryPenalty + 1;
+  return recoveryPenalty;
 }
 
 export function getFocusSnapshot(): FocusSnapshot {
   const today = ds(new Date());
   const tasks = getTasks();
-  const projects = getProjects();
+  const projects = getProjects().filter((project) => project.kind === "project");
   const sicknessLog = getSicknessLog();
   const activeSickness = getActiveSicknessSummary(sicknessLog);
   const focusMode = activeSickness ? "recovery" : "normal";
@@ -265,7 +288,7 @@ export function getFocusSnapshot(): FocusSnapshot {
   const orderedCandidates = activeSickness
     ? [...candidateTasks].sort(
         (left, right) =>
-          recoveryFocusWeight(left) - recoveryFocusWeight(right) ||
+          recoveryFocusWeight(left, activeSickness.severity) - recoveryFocusWeight(right, activeSickness.severity) ||
           compareTasksForFocus(left, right),
       )
     : candidateTasks;
@@ -300,12 +323,16 @@ export function getFocusSnapshot(): FocusSnapshot {
     focusToday,
     mode: focusMode,
     modeSummary: activeSickness
-      ? `Болею ${activeSickness.durationLabel} с ${formatSicknessDateTime(activeSickness.startedAt)}. День лучше держать в recovery mode: health floor плюс один щадящий шаг.`
+      ? `Болею ${activeSickness.durationLabel} с ${formatSicknessDateTime(activeSickness.startedAt)}. Самочувствие ${activeSickness.severity}/5 (${activeSickness.severityLabel}), поэтому день лучше держать в recovery mode: health floor плюс один щадящий шаг.`
       : "Один главный рычаг на день, без параллельных треков и лишнего hero mode.",
     taskScopeHint: activeSickness
-      ? orderedCandidates[0]
-        ? "Если работаешь над задачей, сузь её до черновика / skeleton / одного ответа, без длинного execution-блока."
-        : "Не открывай новый тяжёлый фронт: сначала восстановление, потом micro-step."
+      ? activeSickness.severity >= 4
+        ? orderedCandidates[0]
+          ? "Самочувствие тяжёлое: если нет реально горящего дедлайна, сузь работу до одного micro-step / ответа / черновика."
+          : "Самочувствие тяжёлое: лучше не открывать новый тяжёлый фронт, пока не выровнялась база."
+        : orderedCandidates[0]
+          ? "Если работаешь над задачей, сузь её до черновика / skeleton / одного ответа, без длинного execution-блока."
+          : "Не открывай новый тяжёлый фронт: сначала восстановление, потом micro-step."
       : orderedCandidates[0]
         ? "Держи задачу в одном рабочем контуре и не раздувай её параллельными подпроектами."
         : null,
@@ -315,6 +342,8 @@ export function getFocusSnapshot(): FocusSnapshot {
       startedLabel: activeSickness ? formatSicknessDateTime(activeSickness.startedAt) : null,
       durationLabel: activeSickness?.durationLabel ?? null,
       calendarDays: activeSickness?.calendarDays ?? null,
+      severity: activeSickness?.severity ?? null,
+      severityLabel: activeSickness?.severityLabel ?? null,
     },
   };
 }

@@ -89,7 +89,7 @@ export default function SettingsPage() {
   }, []);
 
   const handleClear = useCallback(() => {
-    if (!confirm("Удалить все данные в облаке и локальном кэше (задачи, заметки, привычки, анализы, проекты)?")) return;
+    if (!confirm("Удалить все данные в облаке и локальном кэше (задачи, заметки, привычки, анализы, группы)?")) return;
     clearAllData();
     setMsg({ text: "Все данные удалены", ok: true });
   }, []);

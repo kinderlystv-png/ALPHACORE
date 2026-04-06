@@ -642,7 +642,9 @@ export function projectProgress(project: Project): number {
 }
 
 export function attentionProjects(projects: Project[] = getProjects()): Project[] {
-  return [...projects].filter((project) => project.status !== "green");
+  return [...projects].filter(
+    (project) => project.kind === "project" && project.status !== "green",
+  );
 }
 
 export function convertTaskToSubproject(input: {

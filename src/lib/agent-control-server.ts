@@ -198,6 +198,7 @@ function computeActivityStats(
 
 function computeFocusSnapshot(tasks: Task[], projects: Project[]) {
   const today = ds(new Date());
+  const strategicProjects = projects.filter((project) => project.kind === "project");
 
   const candidateTasks = [...tasks]
     .filter((t) => t.status === "active" || t.status === "inbox")
@@ -210,7 +211,7 @@ function computeFocusSnapshot(tasks: Task[], projects: Project[]) {
     );
 
   const attentionProject =
-    [...projects]
+    [...strategicProjects]
       .sort((a, b) => {
         const aw = a.status === "red" ? 0 : a.status === "yellow" ? 1 : 2;
         const bw = b.status === "red" ? 0 : b.status === "yellow" ? 1 : 2;
@@ -284,6 +285,7 @@ function pushPriority(
 export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null): AgentControlSnapshot {
   const today = ds(new Date());
   const { tasks, projects, journal: journalEntries, medical: medEntries, habits } = raw;
+  const strategicProjects = projects.filter((project) => project.kind === "project");
 
   const stats = computeActivityStats(tasks, habits);
   const focusSnapshot = computeFocusSnapshot(tasks, projects);
@@ -355,7 +357,7 @@ export function getServerSnapshot(raw: RawData, heys?: HeysHealthSignals | null)
 
   const sleepChecked = todayChecks.sleep === true;
   const { attentionProject } = focusSnapshot;
-  const birthdayProject = projects.find((p) =>
+  const birthdayProject = strategicProjects.find((p) =>
     /др|день рождения|minecraft/i.test(p.name),
   );
 

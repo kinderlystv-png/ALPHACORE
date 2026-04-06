@@ -675,6 +675,13 @@ export function AlphacoreDashboard() {
         action: { kind: "route", href: "/tasks" },
       },
       {
+        id: "open-groups",
+        title: "Открыть группы",
+        subtitle: "Проекты и категории задач",
+        keywords: "groups group project category categories",
+        action: { kind: "route", href: "/projects" },
+      },
+      {
         id: "open-journal",
         title: "Открыть дневник",
         subtitle: "Поймать мысль, пока не убежала",
@@ -785,16 +792,21 @@ export function AlphacoreDashboard() {
     [closeCommandPalette, focusQuickInput, handleProjectQuickOpen, handleTaskDoneById, openBriefPanel, pushTaskToPomodoro, router],
   );
 
+  const strategicProjects = useMemo(
+    () => projects.filter((project) => project.kind === "project"),
+    [projects],
+  );
+
   const selectedQuickProject = useMemo(
     () => {
       const resolvedProjectQuickId =
-        (projectQuickId && projects.some((project) => project.id === projectQuickId)
+        (projectQuickId && strategicProjects.some((project) => project.id === projectQuickId)
           ? projectQuickId
-          : focusSnapshot?.attentionProject?.id ?? projects[0]?.id) ?? "";
+          : focusSnapshot?.attentionProject?.id ?? strategicProjects[0]?.id) ?? "";
 
-      return projects.find((project) => project.id === resolvedProjectQuickId) ?? null;
+      return strategicProjects.find((project) => project.id === resolvedProjectQuickId) ?? null;
     },
-    [focusSnapshot, projectQuickId, projects],
+    [focusSnapshot, projectQuickId, strategicProjects],
   );
 
   return (
@@ -843,7 +855,7 @@ export function AlphacoreDashboard() {
                   runCommand(filteredCommandItems[commandActiveIndex]!);
                 }
               }}
-              placeholder="Например: pomodoro, проект, journal, задача…"
+              placeholder="Например: pomodoro, группа, journal, задача…"
               className="mt-4 w-full rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 outline-none focus:border-zinc-600"
             />
 
@@ -866,7 +878,7 @@ export function AlphacoreDashboard() {
 
               {filteredCommandItems.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-zinc-800 px-4 py-6 text-center text-sm text-zinc-500">
-                  Ничего не нашлось. Попробуй “pomodoro”, “проект” или “дневник”.
+                  Ничего не нашлось. Попробуй “pomodoro”, “группа” или “дневник”.
                 </div>
               )}
             </div>
@@ -1318,22 +1330,22 @@ export function AlphacoreDashboard() {
             </div>
 
             <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/30 p-3">
-              <p className="text-[10px] uppercase tracking-widest text-zinc-600">Проектное внимание</p>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-600">Стратегический проект</p>
               <p className="mt-1 text-sm font-medium text-zinc-100">
-                {focusSnapshot.attentionProject?.name ?? "Все группы в зелёной зоне"}
+                {focusSnapshot.attentionProject?.name ?? "Все проекты в спокойной зоне"}
               </p>
               <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">
-                {focusSnapshot.attentionProject?.nextStep ?? "Можно смело идти в execution mode."}
+                {focusSnapshot.attentionProject?.nextStep ?? "Можно вести день через задачи и категории без отдельного project-alert."}
               </p>
 
-              {projects.length > 0 && (
+              {strategicProjects.length > 0 && (
                 <div className="mt-3 space-y-2">
                   <select
                     value={selectedQuickProject?.id ?? ""}
                     onChange={(event) => setProjectQuickId(event.target.value)}
                     className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs text-zinc-100"
                   >
-                    {projects.map((project) => (
+                    {strategicProjects.map((project) => (
                       <option key={project.id} value={project.id}>
                         {project.name} · {project.status}
                       </option>
@@ -1507,7 +1519,7 @@ export function AlphacoreDashboard() {
             <div className="rounded-2xl border border-zinc-800/60 bg-zinc-900/30 p-4">
               <p className="text-[10px] uppercase tracking-widest text-zinc-500">Проект недели</p>
               <p className="mt-2 text-sm font-medium text-zinc-100">
-                {weeklyReport.topProject?.name ?? "Пока без project focus leader"}
+                {weeklyReport.topProject?.name ?? "Пока без лидера среди проектов"}
               </p>
               <p className="mt-1 text-xs text-zinc-500">
                 {weeklyReport.topProject

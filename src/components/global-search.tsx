@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { getJournalEntries } from "@/lib/journal";
 import { getEntries, CATEGORY_LABELS } from "@/lib/medical";
 import { getNotes } from "@/lib/notes";
-import { getProjects } from "@/lib/projects";
+import { getProjects, PROJECT_KIND_LABEL, PROJECT_LIFE_AREA_LABEL } from "@/lib/projects";
 import { subscribeAppDataChange } from "@/lib/storage";
 import { getTasks } from "@/lib/tasks";
 
@@ -21,7 +21,7 @@ const PAGES: Result[] = [
   { type: "page", id: "home", title: "🏠 Главная", href: "/" },
   { type: "page", id: "tasks", title: "📥 Задачи", href: "/tasks" },
   { type: "page", id: "calendar", title: "📅 Календарь", href: "/calendar" },
-  { type: "page", id: "projects", title: "📁 Проекты", href: "/projects" },
+  { type: "page", id: "projects", title: "📁 Группы", href: "/projects" },
   { type: "page", id: "journal", title: "💬 Дневник", href: "/journal" },
   { type: "page", id: "notes", title: "📝 Заметки", href: "/notes" },
   { type: "page", id: "routines", title: "🔔 Ритм", href: "/routines" },
@@ -93,7 +93,13 @@ function search(q: string): Result[] {
         type: "project",
         id: p.id,
         title: p.name,
-        subtitle: p.nextStep,
+        subtitle: [
+          PROJECT_KIND_LABEL[p.kind],
+          PROJECT_LIFE_AREA_LABEL[p.lifeArea],
+          p.nextStep || p.description,
+        ]
+          .filter(Boolean)
+          .join(" · "),
         href: `/projects?open=${p.id}`,
       }),
     );
@@ -245,7 +251,7 @@ export function GlobalSearch() {
               setIdx(0);
             }}
             onKeyDown={onKey}
-            placeholder="Поиск задач, заметок, проектов, анализов, дневника…"
+            placeholder="Поиск задач, заметок, групп, анализов, дневника…"
             className="flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 outline-none"
           />
           <kbd className="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
@@ -277,7 +283,7 @@ export function GlobalSearch() {
                   : r.type === "note"
                     ? "заметк"
                     : r.type === "project"
-                      ? "проект"
+                      ? "группа"
                       : r.type === "medical"
                         ? "анализ"
                           : r.type === "journal"

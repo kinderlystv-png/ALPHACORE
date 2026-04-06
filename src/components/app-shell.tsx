@@ -21,7 +21,7 @@ const routes = [
   { href: "/", icon: "🏠", label: "Дом" },
   { href: "/tasks", icon: "📥", label: "Задачи" },
   { href: "/calendar", icon: "📅", label: "Неделя" },
-  { href: "/projects", icon: "📁", label: "Проекты" },
+  { href: "/projects", icon: "📁", label: "Группы" },
   { href: "/journal", icon: "💬", label: "Дневник" },
   { href: "/notes", icon: "📝", label: "Заметки" },
   { href: "/routines", icon: "🔔", label: "Ритм" },

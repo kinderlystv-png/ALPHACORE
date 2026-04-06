@@ -52,7 +52,7 @@ const TAB_UNDO_SCOPES: Record<string, UndoScope> = {
     ],
   },
   "/projects": {
-    label: "Проекты",
+    label: "Группы",
     keys: ["alphacore_projects", ...GLOBAL_KEYS],
   },
   "/journal": {
@@ -91,9 +91,7 @@ function resolveUndoScope(pathname: string): UndoScope | null {
 
 export function TabUndoControl({ pathname }: { pathname: string }) {
   const scope = useMemo(() => resolveUndoScope(pathname), [pathname]);
-  const [undoState, setUndoState] = useState<UndoStateSnapshot>(() =>
-    scope ? getUndoStateSnapshot(scope.keys) : EMPTY_UNDO_STATE,
-  );
+  const [undoState, setUndoState] = useState<UndoStateSnapshot>(EMPTY_UNDO_STATE);
 
   useEffect(() => {
     if (!scope) {

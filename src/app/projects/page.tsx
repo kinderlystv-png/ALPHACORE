@@ -58,6 +58,8 @@ const KIND_BADGE_CLS: Record<ProjectKind, string> = {
   category: "border-violet-500/20 bg-violet-500/10 text-violet-200",
 };
 
+type GroupFilter = "all" | ProjectKind;
+
 type DraftKpi = ProjectKpi;
 type DraftDeliverable = ProjectDeliverable;
 
@@ -89,22 +91,31 @@ function rowId(): string {
   return Math.random().toString(36).slice(2, 9);
 }
 
+function createEmptyDraft(kind: ProjectKind = "project"): ProjectDraft {
+  const lifeArea: ProjectLifeArea = "work";
+
+  return {
+    name: "",
+    kind,
+    lifeArea,
+    description: "",
+    status: kind === "category" ? "green" : "yellow",
+    accent: projectAccentForLifeArea(lifeArea),
+    nextStep: "",
+    kpis:
+      kind === "project"
+        ? [
+            { id: rowId(), label: "", value: "" },
+            { id: rowId(), label: "", value: "" },
+          ]
+        : [],
+    deliverables: kind === "project" ? [{ id: rowId(), text: "", done: false }] : [],
+  };
+}
+
 function createDraft(project?: Project): ProjectDraft {
   if (!project) {
-    return {
-      name: "",
-      kind: "project",
-      lifeArea: "work",
-      description: "",
-      status: "yellow",
-      accent: "sky",
-      nextStep: "",
-      kpis: [
-        { id: rowId(), label: "", value: "" },
-        { id: rowId(), label: "", value: "" },
-      ],
-      deliverables: [{ id: rowId(), text: "", done: false }],
-    };
+    return createEmptyDraft();
   }
 
   return {
@@ -121,7 +132,7 @@ function createDraft(project?: Project): ProjectDraft {
 }
 
 function createSubprojectDraft(parentProject: Project): ProjectDraft {
-  const base = createDraft();
+  const base = createEmptyDraft("project");
 
   return {
     ...base,
@@ -172,6 +183,7 @@ function SubprojectTree({
   onEdit,
   onDelete,
   onCreateSubproject,
+  onToggleKind,
 }: {
   parentId: string;
   projects: Project[];
@@ -180,6 +192,7 @@ function SubprojectTree({
   onEdit: (project: Project) => void;
   onDelete: (project: Project, directChildrenCount: number) => void;
   onCreateSubproject: (project: Project) => void;
+  onToggleKind: (project: Project) => void;
 }) {
   const children = getChildProjects(parentId, projects);
 
@@ -192,11 +205,14 @@ function SubprojectTree({
         const displayName = getProjectDisplayName(project, projects);
         const nestedChildren = getChildProjects(project.id, projects);
         const isHighlighted = highlightedId === project.id;
+        const isCategory = project.kind === "category";
 
         return (
           <article
             key={project.id}
-            className={`rounded-2xl border p-4 shadow-lg shadow-black/10 ${PROJECT_ACCENT_CLS[project.accent]} ${
+            className={`rounded-2xl border p-4 ${PROJECT_ACCENT_CLS[project.accent]} ${
+              isCategory ? "shadow-md shadow-black/5" : "shadow-lg shadow-black/10"
+            } ${
               isHighlighted ? "ring-1 ring-sky-400/40" : ""
             }`}
           >
@@ -207,7 +223,12 @@ function SubprojectTree({
                 </p>
                 <h3 className="mt-1 text-sm font-semibold text-zinc-100">{project.name}</h3>
                 <p className="mt-1 text-xs text-zinc-500">{displayName}</p>
-                <p className="mt-2 text-xs text-zinc-400">{project.description}</p>
+                <p className="mt-2 text-xs text-zinc-400">
+                  {project.description ||
+                    (isCategory
+                      ? "Лёгкая тематическая группа для связанных задач."
+                      : "У проекта пока нет описания.")}
+                </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -217,21 +238,33 @@ function SubprojectTree({
                 <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
                   {PROJECT_LIFE_AREA_LABEL[project.lifeArea]}
                 </span>
-                <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
-                  {pct}%
-                </span>
+                {!isCategory && (
+                  <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                    {pct}%
+                  </span>
+                )}
                 {nestedChildren.length > 0 && (
                   <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
                     {nestedChildren.length} {pluralizeSubprojects(nestedChildren.length)}
                   </span>
                 )}
+                {!isCategory && (
+                  <button
+                    type="button"
+                    onClick={() => cycleProjectStatus(project.id)}
+                    className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500"
+                  >
+                    <span className={`h-2 w-2 rounded-full ${STATUS_DOT[project.status]}`} />
+                    {STATUS_LABEL[project.status]}
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => cycleProjectStatus(project.id)}
-                  className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500"
+                  onClick={() => onToggleKind(project)}
+                  className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+                  title={project.kind === "project" ? "Сделать категорией" : "Сделать проектом"}
                 >
-                  <span className={`h-2 w-2 rounded-full ${STATUS_DOT[project.status]}`} />
-                  {STATUS_LABEL[project.status]}
+                  {project.kind === "project" ? "⇄ Категория" : "⇄ Проект"}
                 </button>
                 <button
                   type="button"
@@ -258,14 +291,20 @@ function SubprojectTree({
               </div>
             </div>
 
-            <div className="mt-3 h-1.5 rounded-full bg-zinc-800">
-              <div
-                className="h-full rounded-full bg-emerald-400 transition-all duration-500"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
+            {!isCategory ? (
+              <div className="mt-3 h-1.5 rounded-full bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-emerald-400 transition-all duration-500"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-violet-500/15 bg-violet-500/6 px-3 py-2 text-[11px] text-zinc-400">
+                Лёгкая тематическая группа: без KPI и project-pressure по умолчанию.
+              </div>
+            )}
 
-            {project.deliverables.length > 0 && (
+            {!isCategory && project.deliverables.length > 0 && (
               <div className="mt-3 space-y-1.5">
                 {project.deliverables.slice(0, 3).map((item) => (
                   <div
@@ -296,9 +335,13 @@ function SubprojectTree({
             )}
 
             <div className="mt-3 rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3">
-              <p className="text-[10px] uppercase tracking-widest text-zinc-500">Следующий шаг</p>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500">
+                {isCategory ? "Роль категории" : "Следующий шаг"}
+              </p>
               <p className="mt-1.5 text-sm font-medium text-zinc-200">
-                {project.nextStep || "Зафиксировать следующий шаг"}
+                {isCategory
+                  ? project.description || project.nextStep || "Лёгкая группа для задач одной темы."
+                  : project.nextStep || "Зафиксировать следующий шаг"}
               </p>
             </div>
 
@@ -310,6 +353,7 @@ function SubprojectTree({
               onEdit={onEdit}
               onDelete={onDelete}
               onCreateSubproject={onCreateSubproject}
+              onToggleKind={onToggleKind}
             />
           </article>
         );
@@ -333,6 +377,7 @@ function ProjectEditor({
 }) {
   const { draft } = state;
   const isCreatingSubproject = state.mode === "create" && !!parentProjectLabel;
+  const isCategory = draft.kind === "category";
 
   const updateKpi = useCallback(
     (id: string, patch: Partial<DraftKpi>) => {
@@ -389,17 +434,23 @@ function ProjectEditor({
             type="text"
             value={draft.name}
             onChange={(e) => onChange({ ...draft, name: e.target.value })}
-            placeholder="Например, HEYS Growth или Здоровье"
+            placeholder={isCategory ? "Например, Студия / семья" : "Например, HEYS Growth или Kinderly"}
             className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">Следующий шаг</label>
+          <label className="mb-1 block text-xs text-zinc-500">
+            {isCategory ? "Фокус категории" : "Следующий шаг"}
+          </label>
           <input
             type="text"
             value={draft.nextStep}
             onChange={(e) => onChange({ ...draft, nextStep: e.target.value })}
-            placeholder="Что должно быть сделано следующим?"
+            placeholder={
+              isCategory
+                ? "Короткий ориентир: что сюда попадает и что сейчас важно"
+                : "Что должно быть сделано следующим?"
+            }
             className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600"
           />
         </div>
@@ -411,7 +462,11 @@ function ProjectEditor({
           value={draft.description}
           onChange={(e) => onChange({ ...draft, description: e.target.value })}
           rows={3}
-          placeholder="Краткий контекст, цель, зона ответственности..."
+          placeholder={
+            isCategory
+              ? "Для каких задач эта группа нужна и где проходит её граница"
+              : "Краткий контекст, цель, зона ответственности..."
+          }
           className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600"
         />
       </div>
@@ -431,6 +486,7 @@ function ProjectEditor({
                     onChange({
                       ...draft,
                       kind,
+                      status: kind === "category" ? "green" : draft.status,
                       accent: projectAccentForLifeArea(draft.lifeArea),
                     })
                   }
@@ -473,140 +529,152 @@ function ProjectEditor({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="mb-1 block text-xs text-zinc-500">Статус</label>
-          <select
-            value={draft.status}
-            onChange={(e) => onChange({ ...draft, status: e.target.value as StatusTone })}
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100"
-          >
-            {Object.entries(STATUS_LABEL).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
+      {isCategory ? (
+        <div className="mt-4 rounded-2xl border border-violet-500/20 bg-violet-500/8 p-4">
+          <p className="text-sm font-semibold text-violet-100">Категория = лёгкая группа</p>
+          <p className="mt-1.5 text-xs leading-5 text-zinc-300">
+            Обычно ей хватает названия, сферы, короткого описания и одного фокуса. KPI, deliverables и
+            статус остаются проектным слоем и не обязаны шуметь здесь.
+          </p>
         </div>
-        <div>
-          <label className="mb-1 block text-xs text-zinc-500">Акцент карточки</label>
-          <select
-            value={draft.accent}
-            onChange={(e) => onChange({ ...draft, accent: e.target.value as ProjectAccent })}
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100"
-          >
-            {Object.entries(ACCENT_LABEL).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-100">KPI / метрики</h3>
-            <button
-              type="button"
-              onClick={() =>
-                onChange({
-                  ...draft,
-                  kpis: [...draft.kpis, { id: rowId(), label: "", value: "" }],
-                })
-              }
-              className="text-xs text-sky-400 transition hover:text-sky-300"
-            >
-              + KPI
-            </button>
+      ) : (
+        <>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-zinc-500">Статус</label>
+              <select
+                value={draft.status}
+                onChange={(e) => onChange({ ...draft, status: e.target.value as StatusTone })}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100"
+              >
+                {Object.entries(STATUS_LABEL).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-zinc-500">Акцент карточки</label>
+              <select
+                value={draft.accent}
+                onChange={(e) => onChange({ ...draft, accent: e.target.value as ProjectAccent })}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-sm text-zinc-100"
+              >
+                {Object.entries(ACCENT_LABEL).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {draft.kpis.map((item) => (
-            <div key={item.id} className="grid grid-cols-[120px_minmax(0,1fr)_32px] gap-2">
-              <input
-                type="text"
-                value={item.label}
-                onChange={(e) => updateKpi(item.id, { label: e.target.value })}
-                placeholder="CR1"
-                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
-              />
-              <input
-                type="text"
-                value={item.value}
-                onChange={(e) => updateKpi(item.id, { value: e.target.value })}
-                placeholder="lead → confirmed"
-                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
-              />
-              <button
-                type="button"
-                onClick={() =>
-                  onChange({
-                    ...draft,
-                    kpis: draft.kpis.filter((kpi) => kpi.id !== item.id),
-                  })
-                }
-                className="rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-rose-500/30 hover:text-rose-400"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-zinc-100">KPI / метрики</h3>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      ...draft,
+                      kpis: [...draft.kpis, { id: rowId(), label: "", value: "" }],
+                    })
+                  }
+                  className="text-xs text-sky-400 transition hover:text-sky-300"
+                >
+                  + KPI
+                </button>
+              </div>
 
-        <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-100">Deliverables</h3>
-            <button
-              type="button"
-              onClick={() =>
-                onChange({
-                  ...draft,
-                  deliverables: [...draft.deliverables, { id: rowId(), text: "", done: false }],
-                })
-              }
-              className="text-xs text-emerald-400 transition hover:text-emerald-300"
-            >
-              + Пункт
-            </button>
+              {draft.kpis.map((item) => (
+                <div key={item.id} className="grid grid-cols-[120px_minmax(0,1fr)_32px] gap-2">
+                  <input
+                    type="text"
+                    value={item.label}
+                    onChange={(e) => updateKpi(item.id, { label: e.target.value })}
+                    placeholder="CR1"
+                    className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
+                  />
+                  <input
+                    type="text"
+                    value={item.value}
+                    onChange={(e) => updateKpi(item.id, { value: e.target.value })}
+                    placeholder="lead → confirmed"
+                    className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange({
+                        ...draft,
+                        kpis: draft.kpis.filter((kpi) => kpi.id !== item.id),
+                      })
+                    }
+                    className="rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-rose-500/30 hover:text-rose-400"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-zinc-100">Deliverables</h3>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      ...draft,
+                      deliverables: [...draft.deliverables, { id: rowId(), text: "", done: false }],
+                    })
+                  }
+                  className="text-xs text-emerald-400 transition hover:text-emerald-300"
+                >
+                  + Пункт
+                </button>
+              </div>
+
+              {draft.deliverables.map((item) => (
+                <div key={item.id} className="grid grid-cols-[24px_minmax(0,1fr)_32px] items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateDeliverable(item.id, { done: !item.done })}
+                    className={`flex h-5 w-5 items-center justify-center rounded-md border transition ${
+                      item.done
+                        ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                        : "border-zinc-700 text-zinc-500"
+                    }`}
+                  >
+                    {item.done ? "✓" : ""}
+                  </button>
+                  <input
+                    type="text"
+                    value={item.text}
+                    onChange={(e) => updateDeliverable(item.id, { text: e.target.value })}
+                    placeholder="Что должно быть готово"
+                    className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange({
+                        ...draft,
+                        deliverables: draft.deliverables.filter((d) => d.id !== item.id),
+                      })
+                    }
+                    className="rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-rose-500/30 hover:text-rose-400"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-
-          {draft.deliverables.map((item) => (
-            <div key={item.id} className="grid grid-cols-[24px_minmax(0,1fr)_32px] items-center gap-2">
-              <button
-                type="button"
-                onClick={() => updateDeliverable(item.id, { done: !item.done })}
-                className={`flex h-5 w-5 items-center justify-center rounded-md border transition ${
-                  item.done
-                    ? "border-emerald-400 bg-emerald-400 text-zinc-950"
-                    : "border-zinc-700 text-zinc-500"
-                }`}
-              >
-                {item.done ? "✓" : ""}
-              </button>
-              <input
-                type="text"
-                value={item.text}
-                onChange={(e) => updateDeliverable(item.id, { text: e.target.value })}
-                placeholder="Что должно быть готово"
-                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
-              />
-              <button
-                type="button"
-                onClick={() =>
-                  onChange({
-                    ...draft,
-                    deliverables: draft.deliverables.filter((d) => d.id !== item.id),
-                  })
-                }
-                className="rounded-lg border border-zinc-800 text-zinc-500 transition hover:border-rose-500/30 hover:text-rose-400"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
+        </>
+      )}
 
       <div className="mt-4 flex gap-2">
         <button
@@ -639,6 +707,7 @@ function ProjectsPageContent() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [kindFilter, setKindFilter] = useState<GroupFilter>("all");
 
   const reload = useCallback(() => {
     setProjects(getProjects());
@@ -670,6 +739,13 @@ function ProjectsPageContent() {
     () => projects.filter((project) => !project.parentProjectId),
     [projects],
   );
+  const filteredTopLevelProjects = useMemo(
+    () =>
+      topLevelProjects.filter((project) =>
+        kindFilter === "all" ? true : project.kind === kindFilter,
+      ),
+    [kindFilter, topLevelProjects],
+  );
   const subprojectCount = projects.length - topLevelProjects.length;
   const projectCount = useMemo(
     () => projects.filter((project) => project.kind === "project").length,
@@ -692,9 +768,10 @@ function ProjectsPageContent() {
     () => (editorParentProject ? getProjectDisplayName(editorParentProject, projects) : null),
     [editorParentProject, projects],
   );
+  const canReorderTopLevel = kindFilter === "all";
 
-  const openCreateProject = useCallback(() => {
-    setEditor({ mode: "create", draft: createDraft(), isDirty: false });
+  const openCreateGroup = useCallback((kind: ProjectKind = "project") => {
+    setEditor({ mode: "create", draft: createEmptyDraft(kind), isDirty: false });
   }, []);
 
   const openCreateSubproject = useCallback((parentProject: Project) => {
@@ -735,6 +812,19 @@ function ProjectsPageContent() {
     setEditor({ mode: "edit", projectId: project.id, draft: createDraft(project), isDirty: false });
   }, []);
 
+  const handleToggleKind = useCallback(
+    (project: Project) => {
+      const nextKind: ProjectKind = project.kind === "project" ? "category" : "project";
+      updateProject(project.id, {
+        kind: nextKind,
+        status: nextKind === "category" ? "green" : project.status,
+        accent: projectAccentForLifeArea(project.lifeArea),
+      });
+      reload();
+    },
+    [reload],
+  );
+
   const handleDeleteProject = useCallback(
     (project: Project, directChildrenCount: number) => {
       if (!window.confirm(buildDeletePrompt(project, directChildrenCount))) return;
@@ -762,13 +852,51 @@ function ProjectsPageContent() {
               {projectCount} проектов · {categoryCount} категорий · {subprojectCount} вложенных групп · {attentionCount} требуют внимания
             </p>
           </div>
-          <button
-            type="button"
-            onClick={openCreateProject}
-            className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
-          >
-            + Группа
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => openCreateGroup("project")}
+              className="rounded-xl bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
+            >
+              + Проект
+            </button>
+            <button
+              type="button"
+              onClick={() => openCreateGroup("category")}
+              className="rounded-xl border border-violet-500/25 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-500/15"
+            >
+              + Категория
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {([
+            { key: "all", label: "Все" },
+            { key: "project", label: "Проекты" },
+            { key: "category", label: "Категории" },
+          ] as const).map((item) => {
+            const active = kindFilter === item.key;
+
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setKindFilter(item.key)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                  active
+                    ? "border-zinc-200 bg-zinc-50 text-zinc-950"
+                    : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+
+          <span className="text-xs text-zinc-500">
+            Показано: {filteredTopLevelProjects.length} {filteredTopLevelProjects.length === 1 ? "группа" : "группы"}
+          </span>
         </div>
 
         {editor && (
@@ -785,28 +913,40 @@ function ProjectsPageContent() {
         )}
 
         <div className="space-y-4">
-          {topLevelProjects.length === 0 && (
+          {filteredTopLevelProjects.length === 0 && (
             <div className="rounded-4xl border border-zinc-800 bg-zinc-900/30 p-8 text-center">
-              <p className="text-sm text-zinc-500">Групп пока нет</p>
+              <p className="text-sm text-zinc-500">
+                {kindFilter === "all"
+                  ? "Групп пока нет"
+                  : kindFilter === "project"
+                    ? "Проектов пока нет"
+                    : "Категорий пока нет"}
+              </p>
             </div>
           )}
 
-          {topLevelProjects.map((project, index) => {
+          {filteredTopLevelProjects.map((project, index) => {
             const isOpen = openRootId === project.id;
             const pct = projectProgress(project);
             const childProjects = getChildProjects(project.id, projects);
+            const isCategory = project.kind === "category";
 
             return (
               <article
                 key={project.id}
-                onDragOver={(event) => event.preventDefault()}
+                onDragOver={(event) => {
+                  if (canReorderTopLevel) event.preventDefault();
+                }}
                 onDrop={() => {
+                  if (!canReorderTopLevel) return;
                   if (draggedId && draggedId !== project.id) {
                     handleReorder(draggedId, project.id);
                   }
                   setDraggedId(null);
                 }}
-                className={`rounded-4xl border p-5 shadow-2xl shadow-black/20 ${PROJECT_ACCENT_CLS[project.accent]} ${
+                className={`rounded-4xl border p-5 ${PROJECT_ACCENT_CLS[project.accent]} ${
+                  isCategory ? "shadow-lg shadow-black/10" : "shadow-2xl shadow-black/20"
+                } ${
                   draggedId === project.id ? "opacity-60" : "opacity-100"
                 }`}
               >
@@ -825,66 +965,91 @@ function ProjectsPageContent() {
                         <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
                           {PROJECT_LIFE_AREA_LABEL[project.lifeArea]}
                         </span>
-                        <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
-                          {project.kpis.length} KPI
-                        </span>
+                        {!isCategory && project.kpis.length > 0 && (
+                          <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
+                            {project.kpis.length} KPI
+                          </span>
+                        )}
+                        {isCategory && (
+                          <span className="rounded-full border border-violet-500/15 px-2 py-0.5 text-[10px] text-violet-200/80">
+                            лёгкая группа
+                          </span>
+                        )}
                         {childProjects.length > 0 && (
                           <span className="rounded-full border border-zinc-700/80 px-2 py-0.5 text-[10px] text-zinc-400">
                             {childProjects.length} {pluralizeSubprojects(childProjects.length)}
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 line-clamp-2 text-sm text-zinc-400">{project.description}</p>
+                      <p className="mt-1 line-clamp-2 text-sm text-zinc-400">
+                        {project.description ||
+                          (isCategory
+                            ? "Лёгкая тематическая группа для связанных задач."
+                            : "У проекта пока нет описания.")}
+                      </p>
                     </div>
 
                     <div className="flex shrink-0 items-center gap-3">
-                      <span className="text-xs text-zinc-500">{pct}%</span>
+                      <span className="text-xs text-zinc-500">{isCategory ? "theme" : `${pct}%`}</span>
                       <span className={`text-zinc-500 transition ${isOpen ? "rotate-180" : ""}`}>▾</span>
                     </div>
                   </button>
 
                   <div className="flex shrink-0 items-center gap-2 self-start">
+                    {canReorderTopLevel && (
+                      <>
+                        <button
+                          type="button"
+                          draggable
+                          onDragStart={() => setDraggedId(project.id)}
+                          onDragEnd={() => setDraggedId(null)}
+                          className="cursor-grab rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-500 transition hover:border-zinc-500 hover:text-zinc-200 active:cursor-grabbing"
+                          title="Перетащить для приоритизации"
+                        >
+                          ⋮⋮
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            moveProject(project.id, -1);
+                            reload();
+                          }}
+                          disabled={index === 0}
+                          className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
+                          title="Поднять выше"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            moveProject(project.id, 1);
+                            reload();
+                          }}
+                          disabled={index === filteredTopLevelProjects.length - 1}
+                          className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
+                          title="Опустить ниже"
+                        >
+                          ↓
+                        </button>
+                      </>
+                    )}
+                    {!isCategory && (
+                      <button
+                        type="button"
+                        onClick={() => cycleProjectStatus(project.id)}
+                        className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500"
+                      >
+                        <span className={`h-2 w-2 rounded-full ${STATUS_DOT[project.status]}`} />
+                        {STATUS_LABEL[project.status]}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      draggable
-                      onDragStart={() => setDraggedId(project.id)}
-                      onDragEnd={() => setDraggedId(null)}
-                      className="cursor-grab rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-500 transition hover:border-zinc-500 hover:text-zinc-200 active:cursor-grabbing"
-                      title="Перетащить для приоритизации"
+                      onClick={() => handleToggleKind(project)}
+                      className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
                     >
-                      ⋮⋮
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        moveProject(project.id, -1);
-                        reload();
-                      }}
-                      disabled={index === 0}
-                      className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
-                      title="Поднять выше"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        moveProject(project.id, 1);
-                        reload();
-                      }}
-                      disabled={index === topLevelProjects.length - 1}
-                      className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
-                      title="Опустить ниже"
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => cycleProjectStatus(project.id)}
-                      className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500"
-                    >
-                      <span className={`h-2 w-2 rounded-full ${STATUS_DOT[project.status]}`} />
-                      {STATUS_LABEL[project.status]}
+                      {project.kind === "project" ? "⇄ Категория" : "⇄ Проект"}
                     </button>
                     <button
                       type="button"
@@ -904,12 +1069,18 @@ function ProjectsPageContent() {
                   </div>
                 </div>
 
-                <div className="mt-3 h-1.5 rounded-full bg-zinc-800">
-                  <div
-                    className="h-full rounded-full bg-emerald-400 transition-all duration-500"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
+                {!isCategory ? (
+                  <div className="mt-3 h-1.5 rounded-full bg-zinc-800">
+                    <div
+                      className="h-full rounded-full bg-emerald-400 transition-all duration-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-xl border border-violet-500/15 bg-violet-500/6 px-3 py-2 text-[11px] text-zinc-400">
+                    Категория остаётся лёгкой: её задача — держать тему, а не раздуваться в project-дашборд.
+                  </div>
+                )}
 
                 {isOpen && (
                   <div className="mt-5 space-y-4">
@@ -929,57 +1100,76 @@ function ProjectsPageContent() {
                           onEdit={handleEditProject}
                           onDelete={handleDeleteProject}
                           onCreateSubproject={openCreateSubproject}
+                          onToggleKind={handleToggleKind}
                         />
                       </section>
                     )}
 
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      {project.kpis.map((kpi) => (
-                        <div
-                          key={kpi.id}
-                          className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3"
-                        >
-                          <p className="text-[10px] uppercase tracking-widest text-zinc-500">{kpi.label}</p>
-                          <p className="mt-1 text-sm text-zinc-200">{kpi.value}</p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div>
-                      <p className="mb-2 text-[11px] uppercase tracking-widest text-zinc-500">Deliverables</p>
-                      <div className="space-y-1.5">
-                        {project.deliverables.map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => toggleDeliverable(project.id, item.id)}
-                            className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
-                              item.done
-                                ? "border-emerald-500/20 bg-emerald-500/5"
-                                : "border-zinc-800/60 bg-zinc-900/20 hover:border-zinc-700"
-                            }`}
-                          >
-                            <div
-                              className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border transition ${
-                                item.done
-                                  ? "border-emerald-400 bg-emerald-400 text-zinc-950"
-                                  : "border-zinc-600"
-                              }`}
-                            >
-                              {item.done ? "✓" : ""}
-                            </div>
-                            <span className={`text-sm ${item.done ? "text-zinc-500 line-through" : "text-zinc-200"}`}>
-                              {item.text}
-                            </span>
-                          </button>
-                        ))}
+                    {isCategory ? (
+                      <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500">Роль категории</p>
+                        <p className="mt-1.5 text-sm font-medium text-zinc-200">
+                          {project.description || "Лёгкая тематическая группа для связанных задач и календарных слотов."}
+                        </p>
+                        {project.nextStep && (
+                          <p className="mt-2 text-xs text-zinc-500">Сейчас держим в фокусе: {project.nextStep}</p>
+                        )}
                       </div>
-                    </div>
+                    ) : (
+                      <>
+                        {project.kpis.length > 0 && (
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            {project.kpis.map((kpi) => (
+                              <div
+                                key={kpi.id}
+                                className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3"
+                              >
+                                <p className="text-[10px] uppercase tracking-widest text-zinc-500">{kpi.label}</p>
+                                <p className="mt-1 text-sm text-zinc-200">{kpi.value}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
-                    <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3">
-                      <p className="text-[10px] uppercase tracking-widest text-zinc-500">Следующий шаг</p>
-                      <p className="mt-1.5 text-sm font-medium text-zinc-200">{project.nextStep}</p>
-                    </div>
+                        {project.deliverables.length > 0 && (
+                          <div>
+                            <p className="mb-2 text-[11px] uppercase tracking-widest text-zinc-500">Deliverables</p>
+                            <div className="space-y-1.5">
+                              {project.deliverables.map((item) => (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  onClick={() => toggleDeliverable(project.id, item.id)}
+                                  className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
+                                    item.done
+                                      ? "border-emerald-500/20 bg-emerald-500/5"
+                                      : "border-zinc-800/60 bg-zinc-900/20 hover:border-zinc-700"
+                                  }`}
+                                >
+                                  <div
+                                    className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border transition ${
+                                      item.done
+                                        ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                                        : "border-zinc-600"
+                                    }`}
+                                  >
+                                    {item.done ? "✓" : ""}
+                                  </div>
+                                  <span className={`text-sm ${item.done ? "text-zinc-500 line-through" : "text-zinc-200"}`}>
+                                    {item.text}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-3">
+                          <p className="text-[10px] uppercase tracking-widest text-zinc-500">Следующий шаг</p>
+                          <p className="mt-1.5 text-sm font-medium text-zinc-200">{project.nextStep}</p>
+                        </div>
+                      </>
+                    )}
 
                     <div className="flex gap-2">
                       <button
@@ -995,6 +1185,13 @@ function ProjectsPageContent() {
                         className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
                       >
                         Редактировать
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleKind(project)}
+                        className="rounded-xl border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                      >
+                        {project.kind === "project" ? "Сделать категорией" : "Сделать проектом"}
                       </button>
                       <button
                         type="button"
