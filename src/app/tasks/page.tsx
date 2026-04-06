@@ -858,6 +858,7 @@ export default function TasksPage() {
   const [ganttExpanded, setGanttExpanded] = useState<boolean>(() => lsGet<boolean>(TASKS_GANTT_EXPANDED_KEY, true));
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [nestDropTargetId, setNestDropTargetId] = useState<string | null>(null);
+  const [groupDropTargetId, setGroupDropTargetId] = useState<string | null>(null);
   const [taskComposerModal, setTaskComposerModal] = useState<TaskComposerModalState | null>(null);
   const [taskComposerTitle, setTaskComposerTitle] = useState("");
   const [taskComposerPrio, setTaskComposerPrio] = useState<Task["priority"]>("p2");
@@ -1171,9 +1172,10 @@ export default function TasksPage() {
   );
 
   const handleSetProject = useCallback(
-    (id: string, projectId: string) => {
+    (id: string, projectId: string, fallbackProjectLabel?: string) => {
       const project = getProjects().find((item) => item.id === projectId);
-      const updatedTasks = moveTaskTreeToProject(id, project?.id, project?.name);
+      const projectLabel = project?.name ?? (fallbackProjectLabel?.trim() || undefined);
+      const updatedTasks = moveTaskTreeToProject(id, project?.id, projectLabel);
 
       for (const task of updatedTasks) {
         const linkedSlot = getScheduledTaskSlot(task.id);
@@ -1185,6 +1187,9 @@ export default function TasksPage() {
         });
       }
 
+      setDraggedTaskId(null);
+      setNestDropTargetId(null);
+      setGroupDropTargetId(null);
       reload();
     },
     [reload],
@@ -1431,6 +1436,7 @@ export default function TasksPage() {
   const handleTaskDragEnd = useCallback(() => {
     setDraggedTaskId(null);
     setNestDropTargetId(null);
+    setGroupDropTargetId(null);
   }, []);
 
   const handleTaskDragOver = useCallback(
@@ -1461,6 +1467,7 @@ export default function TasksPage() {
       event.stopPropagation();
       setDraggedTaskId(null);
       setNestDropTargetId(null);
+      setGroupDropTargetId(null);
 
       if (!sourceTaskId) return;
       if (targetTask.status === "done") return;
@@ -1471,6 +1478,46 @@ export default function TasksPage() {
       reload();
     },
     [draggedTaskId, reload, syncTaskTreeSlots, tasks],
+  );
+
+  const handleGroupDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>, group: TaskGroup) => {
+      const sourceTaskId = readTaskDragId(event.dataTransfer) ?? draggedTaskId;
+      if (!sourceTaskId) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      setDraggedTaskId(sourceTaskId);
+      setNestDropTargetId(null);
+      setGroupDropTargetId(group.id);
+    },
+    [draggedTaskId],
+  );
+
+  const handleGroupDragLeave = useCallback((groupId: string) => {
+    setGroupDropTargetId((current) => (current === groupId ? null : current));
+  }, []);
+
+  const handleGroupDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>, group: TaskGroup) => {
+      const sourceTaskId = readTaskDragId(event.dataTransfer) ?? draggedTaskId;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggedTaskId(null);
+      setNestDropTargetId(null);
+      setGroupDropTargetId(null);
+
+      if (!sourceTaskId) return;
+
+      handleSetProject(
+        sourceTaskId,
+        group.project?.id ?? "",
+        group.project ? undefined : group.label === "Без группы" ? undefined : group.label,
+      );
+    },
+    [draggedTaskId, handleSetProject],
   );
 
   const visible = tasks.filter(
@@ -1669,7 +1716,11 @@ export default function TasksPage() {
       const dragTitle =
         task.status === "done"
           ? "Готовые задачи не вкладываем — пусть наслаждаются пенсией"
-          : "Перетащи задачу сюда, чтобы сделать её подзадачей";
+          : "Тяни за ручку или за название: можно сделать подзадачу или перекинуть в другую группу";
+      const taskTitleDragHint =
+        task.status === "done"
+          ? task.title
+          : `${task.title} — тяни за название, чтобы переместить задачу в проект, категорию или подпроект`;
       const isActiveSubtaskModal = taskComposerModal?.kind === "subtask" && taskComposerModal.parentTaskId === task.id;
 
     return (
@@ -1747,10 +1798,15 @@ export default function TasksPage() {
 
                       <div className="min-w-0 flex flex-1 items-center gap-2">
                         <p
+                          draggable={task.status !== "done"}
+                          onDragStart={(event) => handleTaskDragStart(event, task.id)}
+                          onDragEnd={handleTaskDragEnd}
                           className={`min-w-0 flex-1 truncate text-sm ${
-                            task.status === "done" ? "text-zinc-500 line-through" : "text-zinc-100"
+                            task.status === "done"
+                              ? "text-zinc-500 line-through"
+                              : "cursor-grab text-zinc-100 active:cursor-grabbing"
                           }`}
-                          title={task.title}
+                          title={taskTitleDragHint}
                         >
                           {task.title}
                         </p>
@@ -1857,6 +1913,7 @@ export default function TasksPage() {
                                 compactValueOnly={showAssignedProjectTrigger}
                                 desktopSingleRow={showQuickProjects}
                                 onChange={(projectId) => handleSetProject(task.id, projectId)}
+                                onTaskDrop={handleSetProject}
                                 onProjectsMutate={() => reload()}
                                 creationContextLabel="редактирования задачи"
                                 suggestedAccent="violet"
@@ -1985,6 +2042,7 @@ export default function TasksPage() {
                 quickProjects={popularProjects}
                 desktopSingleRow
                 onChange={setNewTaskProjectId}
+                onTaskDrop={handleSetProject}
                 onProjectsMutate={(projectId) => {
                   reload();
                   setNewTaskProjectId(projectId);
@@ -2137,11 +2195,17 @@ export default function TasksPage() {
             const hasMorePrimaryTasks = primaryRootTasks.length > TASKS_PER_GROUP;
             const hasCompletedSection = filter !== "done" && group.doneRootTasks.length > 0;
             const isCompletedExpanded = expandedCompletedGroups.has(group.id);
+            const isGroupDropTarget = groupDropTargetId === group.id;
 
             return (
               <section
                 key={group.id}
-                className={`rounded-[1.75rem] border p-4 shadow-2xl shadow-black/10 ${tone.shellCls}`}
+                onDragOver={(event) => handleGroupDragOver(event, group)}
+                onDragLeave={() => handleGroupDragLeave(group.id)}
+                onDrop={(event) => handleGroupDrop(event, group)}
+                className={`rounded-[1.75rem] border p-4 shadow-2xl shadow-black/10 transition ${tone.shellCls} ${
+                  isGroupDropTarget ? "ring-2 ring-sky-400/35 border-sky-400/30 bg-sky-950/15" : ""
+                }`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -2185,6 +2249,12 @@ export default function TasksPage() {
                     )}
                   </div>
                 </div>
+
+                {isGroupDropTarget && (
+                  <div className="mt-3 rounded-2xl border border-dashed border-sky-400/35 bg-sky-500/5 px-3 py-2 text-xs text-sky-200">
+                    Отпускай — задача переедет в группу «{group.label}».
+                  </div>
+                )}
 
                 {primaryRootTasks.length > 0 && (
                   <div className="mt-3 space-y-2">

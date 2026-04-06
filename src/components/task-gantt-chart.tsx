@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { writeTaskDragData } from "@/lib/dashboard-events";
 import { AREA_COLOR, type LifeArea } from "@/lib/life-areas";
 import type { ScheduleTone } from "@/lib/schedule";
 import { lsGet, lsSet } from "@/lib/storage";
@@ -2425,6 +2426,20 @@ export function TaskGanttChart({
     node?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, []);
 
+  const handleTaskExternalDragStart = useCallback((event: React.DragEvent<HTMLElement>, taskId: string) => {
+    writeTaskDragData(event.dataTransfer, taskId);
+    event.dataTransfer.effectAllowed = "move";
+    suppressClickRef.current = taskId;
+  }, []);
+
+  const handleTaskExternalDragEnd = useCallback((taskId: string) => {
+    window.setTimeout(() => {
+      if (suppressClickRef.current === taskId) {
+        suppressClickRef.current = null;
+      }
+    }, 180);
+  }, []);
+
   const totalOpenTasks = useMemo(
     () => displayGroups.reduce((sum, group) => sum + group.openCount, 0),
     [displayGroups],
@@ -3265,7 +3280,17 @@ export function TaskGanttChart({
                         {task.priority}
                       </span>
                       {row.hasChildren && <span className="text-zinc-600">▸</span>}
-                      <span className="truncate text-zinc-300">{task.title}</span>
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(event) => handleTaskExternalDragStart(event, task.id)}
+                        onDragEnd={() => handleTaskExternalDragEnd(task.id)}
+                        onClick={() => openTaskInList(task.id)}
+                        className="min-w-0 flex-1 cursor-grab truncate text-left text-zinc-300 transition hover:text-zinc-100 active:cursor-grabbing"
+                        title={`${task.title} — можно тянуть в другую группу или подпроект`}
+                      >
+                        {task.title}
+                      </button>
                       {isNoEstimate && (
                         <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
                           без оценки
@@ -3490,10 +3515,13 @@ export function TaskGanttChart({
                       {previewVisual.titleOutside && (
                         <button
                           type="button"
+                          draggable
+                          onDragStart={(event) => handleTaskExternalDragStart(event, task.id)}
+                          onDragEnd={() => handleTaskExternalDragEnd(task.id)}
                           onClick={() => openTaskInList(task.id)}
-                          className="absolute top-1 truncate text-left text-[8px] text-zinc-500 hover:text-zinc-300"
+                          className="absolute top-1 cursor-grab truncate text-left text-[8px] text-zinc-500 hover:text-zinc-300 active:cursor-grabbing"
                           style={{ left: previewVisual.left + previewVisual.width + 4, maxWidth: 140 }}
-                          title={taskTooltip}
+                          title={`${taskTooltip}\n\nТяни название, чтобы перекинуть задачу в другую группу.`}
                         >
                           {task.title}
                         </button>
@@ -3546,6 +3574,7 @@ export function TaskGanttChart({
           <span className="h-2 w-2 rounded-full bg-amber-400" /> сегодня
         </span>
         <span>Drag бара — двигает весь диапазон</span>
+        <span>Название слева или снаружи бара — можно тянуть в другую группу / подпроект</span>
         <span>Левый край — задаёт старт</span>
         {onTaskPlannedMinutesChange && <span>Правый край — финиш или длительность</span>}
         <span>Пунктир — сводный rollup родителя</span>

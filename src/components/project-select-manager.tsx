@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
+import { readTaskDragId } from "@/lib/dashboard-events";
 import {
   PROJECT_KIND_LABEL,
   PROJECT_LIFE_AREA_LABEL,
@@ -24,6 +25,7 @@ type ProjectSelectManagerProps = {
   compactValueOnly?: boolean;
   desktopSingleRow?: boolean;
   onChange: (projectId: string) => void;
+  onTaskDrop?: (taskId: string, projectId: string) => void;
   onProjectsMutate?: (projectId: string) => void;
   noneLabel?: string;
   size?: "sm" | "md";
@@ -54,6 +56,8 @@ function normalizeName(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
+const NONE_PROJECT_DROP_TARGET = "__none__";
+
 export function ProjectSelectManager({
   value,
   projects,
@@ -61,6 +65,7 @@ export function ProjectSelectManager({
   compactValueOnly = false,
   desktopSingleRow = false,
   onChange,
+  onTaskDrop,
   onProjectsMutate,
   noneLabel = "Без группы",
   size = "md",
@@ -85,6 +90,7 @@ export function ProjectSelectManager({
   const [draftKind, setDraftKind] = useState<ProjectKind>(suggestedKind);
   const [draftLifeArea, setDraftLifeArea] = useState<ProjectLifeArea>(suggestedLifeArea);
   const [error, setError] = useState<string | null>(null);
+  const [dragOverProjectId, setDragOverProjectId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -150,6 +156,7 @@ export function ProjectSelectManager({
       setShowAllProjects(false);
       setMode(null);
       setError(null);
+      setDragOverProjectId(null);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -157,6 +164,7 @@ export function ProjectSelectManager({
       setShowAllProjects(false);
       setMode(null);
       setError(null);
+      setDragOverProjectId(null);
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
@@ -167,6 +175,20 @@ export function ProjectSelectManager({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isOverlayOpen]);
+
+  useEffect(() => {
+    if (!dragOverProjectId) return;
+
+    const clearDragState = () => setDragOverProjectId(null);
+
+    window.addEventListener("dragend", clearDragState);
+    window.addEventListener("drop", clearDragState);
+
+    return () => {
+      window.removeEventListener("dragend", clearDragState);
+      window.removeEventListener("drop", clearDragState);
+    };
+  }, [dragOverProjectId]);
 
   const duplicateProject = useMemo(() => {
     const normalized = normalizeName(draftName).toLowerCase();
@@ -211,6 +233,58 @@ export function ProjectSelectManager({
     setShowAllProjects(false);
     setMode(null);
     setError(null);
+    setDragOverProjectId(null);
+  }
+
+  function getDropTargetKey(projectId: string): string {
+    return projectId || NONE_PROJECT_DROP_TARGET;
+  }
+
+  function getDraggedTaskId(event: DragEvent<HTMLElement>): string | null {
+    if (!onTaskDrop) return null;
+    return readTaskDragId(event.dataTransfer);
+  }
+
+  function handleProjectTargetDragOver(event: DragEvent<HTMLElement>, projectId: string): void {
+    const taskId = getDraggedTaskId(event);
+    if (!taskId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverProjectId(getDropTargetKey(projectId));
+  }
+
+  function handleProjectTargetDragLeave(projectId: string): void {
+    const targetKey = getDropTargetKey(projectId);
+    setDragOverProjectId((current) => (current === targetKey ? null : current));
+  }
+
+  function handleProjectTargetDrop(event: DragEvent<HTMLElement>, projectId: string): void {
+    const taskId = getDraggedTaskId(event);
+    if (!taskId || !onTaskDrop) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDragOverProjectId(null);
+    onTaskDrop(taskId, projectId);
+    setShowAllProjects(false);
+  }
+
+  function handleShowAllProjectsDragOver(event: DragEvent<HTMLElement>): void {
+    const taskId = getDraggedTaskId(event);
+    if (!taskId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverProjectId(null);
+
+    if (!showAllProjects) {
+      setMode(null);
+      setError(null);
+      setShowAllProjects(true);
+    }
   }
 
   function openCreate(): void {
@@ -297,6 +371,8 @@ export function ProjectSelectManager({
               setError(null);
               setShowAllProjects((current) => !current);
             }}
+            onDragEnter={handleShowAllProjectsDragOver}
+            onDragOver={handleShowAllProjectsDragOver}
             aria-expanded={showAllProjects}
             className={compactValueBtnCls}
             title={selectedProject ? `Сменить группу ${selectedProject.name}` : "Выбрать группу"}
@@ -317,10 +393,16 @@ export function ProjectSelectManager({
                   key={project.id}
                   type="button"
                   onClick={() => onChange(isActive ? "" : project.id)}
+                  onDragEnter={(event) => handleProjectTargetDragOver(event, project.id)}
+                  onDragOver={(event) => handleProjectTargetDragOver(event, project.id)}
+                  onDragLeave={() => handleProjectTargetDragLeave(project.id)}
+                  onDrop={(event) => handleProjectTargetDrop(event, project.id)}
                   aria-pressed={isActive}
                   title={isActive ? `Снять группу ${getFullProjectLabel(project)}` : `Выбрать группу ${getFullProjectLabel(project)}`}
                   className={`${quickProjectBtnCls} ${
-                    isActive
+                    dragOverProjectId === project.id
+                      ? "border-sky-400/45 bg-sky-500/14 text-sky-50 ring-2 ring-sky-400/20"
+                      : isActive
                       ? "border-zinc-100 bg-zinc-100 text-zinc-950 shadow-[0_8px_24px_rgba(255,255,255,0.08)]"
                       : "border-zinc-800 bg-zinc-900/50 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
                   }`}
@@ -338,6 +420,8 @@ export function ProjectSelectManager({
                 setError(null);
                 setShowAllProjects((current) => !current);
               }}
+              onDragEnter={handleShowAllProjectsDragOver}
+              onDragOver={handleShowAllProjectsDragOver}
               aria-expanded={showAllProjects}
               className={quickToggleBtnCls}
             >
@@ -388,9 +472,11 @@ export function ProjectSelectManager({
         <div className={`absolute ${panelAlignCls} top-full z-30 mt-2 w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-[0_14px_48px_rgba(0,0,0,0.38)] backdrop-blur`}>
           <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Все группы</p>
           <p className="mt-1 text-sm font-medium text-zinc-100">
-            {usesCompactValueTrigger
-              ? "Здесь можно быстро перекинуть задачу между проектами и категориями."
-              : "Если нужной группы нет среди быстрых кнопок — она ждёт здесь."}
+            {onTaskDrop
+              ? "Тяни задачу на нужную кнопку — и она сразу переедет в проект, категорию или подпроект."
+              : usesCompactValueTrigger
+                ? "Здесь можно быстро перекинуть задачу между проектами и категориями."
+                : "Если нужной группы нет среди быстрых кнопок — она ждёт здесь."}
           </p>
 
           <div className="mt-3 flex flex-wrap gap-2">
@@ -400,9 +486,15 @@ export function ProjectSelectManager({
                 onChange("");
                 setShowAllProjects(false);
               }}
+              onDragEnter={(event) => handleProjectTargetDragOver(event, "")}
+              onDragOver={(event) => handleProjectTargetDragOver(event, "")}
+              onDragLeave={() => handleProjectTargetDragLeave("")}
+              onDrop={(event) => handleProjectTargetDrop(event, "")}
               aria-pressed={value === ""}
               className={`rounded-xl border px-3 py-2 text-xs transition ${
-                value === ""
+                dragOverProjectId === NONE_PROJECT_DROP_TARGET
+                  ? "border-sky-400/45 bg-sky-500/14 text-sky-50 ring-2 ring-sky-400/20"
+                  : value === ""
                   ? "border-zinc-100 bg-zinc-100 text-zinc-950"
                   : "border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
               }`}
@@ -421,9 +513,15 @@ export function ProjectSelectManager({
                     onChange(project.id);
                     setShowAllProjects(false);
                   }}
+                  onDragEnter={(event) => handleProjectTargetDragOver(event, project.id)}
+                  onDragOver={(event) => handleProjectTargetDragOver(event, project.id)}
+                  onDragLeave={() => handleProjectTargetDragLeave(project.id)}
+                  onDrop={(event) => handleProjectTargetDrop(event, project.id)}
                   aria-pressed={isActive}
                   className={`flex min-w-0 max-w-full items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
-                    isActive
+                    dragOverProjectId === project.id
+                      ? "border-sky-400/45 bg-sky-500/14 text-sky-50 ring-2 ring-sky-400/20"
+                      : isActive
                       ? "border-zinc-100 bg-zinc-100 text-zinc-950"
                       : "border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
                   }`}
