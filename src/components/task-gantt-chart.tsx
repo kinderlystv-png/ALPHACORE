@@ -134,6 +134,7 @@ type PersistedGanttUiState = {
   zoom?: ZoomLevel;
   collapsedGroups?: string[];
   showNoEstimateOnly?: boolean;
+  showRiskOnly?: boolean;
   showPlanVsSlot?: boolean;
   showBaseline?: boolean;
   showDependencies?: boolean;
@@ -379,6 +380,28 @@ function filterNodesByNoEstimate(nodes: GanttTaskNode[]): GanttTaskNode[] {
       children: filteredChildren,
     }];
   });
+}
+
+function filterNodesByTaskIds(nodes: GanttTaskNode[], visibleTaskIds: Set<string>): GanttTaskNode[] {
+  return nodes.flatMap((node) => {
+    const filteredChildren = filterNodesByTaskIds(node.children, visibleTaskIds);
+    const matches = visibleTaskIds.has(node.task.id);
+
+    if (!matches && filteredChildren.length === 0) return [];
+
+    return [{
+      ...node,
+      children: filteredChildren,
+    }];
+  });
+}
+
+function collectNodeTasks(nodes: GanttTaskNode[]): Task[] {
+  return nodes.flatMap((node) => [node.task, ...collectNodeTasks(node.children)]);
+}
+
+function formatSignedDayDelta(value: number): string {
+  return `${value > 0 ? "+" : ""}${value}д`;
 }
 
 function resolveTaskStartDate(task: Task): Date {
@@ -826,6 +849,10 @@ export function TaskGanttChart({
     const persisted = readPersistedGanttUiState();
     return Boolean(persisted.showNoEstimateOnly);
   });
+  const [showRiskOnly, setShowRiskOnly] = useState<boolean>(() => {
+    const persisted = readPersistedGanttUiState();
+    return Boolean(persisted.showRiskOnly);
+  });
   const [showBaseline, setShowBaseline] = useState<boolean>(() => {
     const persisted = readPersistedGanttUiState();
     return persisted.showBaseline ?? true;
@@ -862,6 +889,96 @@ export function TaskGanttChart({
     [dayWidth, timelineStart, totalDays],
   );
 
+  const riskMeta = useMemo(() => {
+    const allTasks = groups.flatMap((group) => collectNodeTasks(group.nodes));
+    const taskById = new Map(allTasks.map((task) => [task.id, task]));
+    const varianceByTaskId: Record<string, { startDeltaDays: number; finishDeltaDays: number; slipDays: number; gainDays: number }> = {};
+    const dependencyByTaskId: Record<
+      string,
+      {
+        incomingCount: number;
+        outgoingCount: number;
+        incomingConflictCount: number;
+        outgoingConflictCount: number;
+      }
+    > = {};
+    const relevantTaskIds = new Set<string>();
+    const slippedTaskIds = new Set<string>();
+    const conflictedTaskIds = new Set<string>();
+
+    const ensureDependencyState = (taskId: string) => {
+      dependencyByTaskId[taskId] ??= {
+        incomingCount: 0,
+        outgoingCount: 0,
+        incomingConflictCount: 0,
+        outgoingConflictCount: 0,
+      };
+
+      return dependencyByTaskId[taskId];
+    };
+
+    for (const task of allTasks) {
+      const baselineTask = buildBaselineTask(task);
+      if (!baselineTask) continue;
+
+      const currentVisual = buildVisual(task);
+      const baselineVisual = buildVisual(baselineTask);
+      const startDeltaDays = currentVisual.startIndex - baselineVisual.startIndex;
+      const finishDeltaDays = currentVisual.endIndex - baselineVisual.endIndex;
+      const slipDays = Math.max(startDeltaDays, finishDeltaDays, 0);
+      const gainDays = Math.max(-(Math.min(startDeltaDays, finishDeltaDays, 0)), 0);
+
+      varianceByTaskId[task.id] = {
+        startDeltaDays,
+        finishDeltaDays,
+        slipDays,
+        gainDays,
+      };
+
+      if (slipDays > 0) {
+        slippedTaskIds.add(task.id);
+        relevantTaskIds.add(task.id);
+      }
+    }
+
+    for (const link of dependencyLinks) {
+      const blocker = taskById.get(link.fromTaskId);
+      const dependent = taskById.get(link.toTaskId);
+      if (!blocker || !dependent) continue;
+
+      const blockerState = ensureDependencyState(link.fromTaskId);
+      const dependentState = ensureDependencyState(link.toTaskId);
+
+      blockerState.outgoingCount += 1;
+      dependentState.incomingCount += 1;
+      relevantTaskIds.add(link.fromTaskId);
+      relevantTaskIds.add(link.toTaskId);
+
+      const blockerVisual = buildVisual(blocker);
+      const dependentVisual = buildVisual(dependent);
+      const gapDays = dependentVisual.startIndex - blockerVisual.endIndex - 1;
+
+      if (gapDays < 0) {
+        blockerState.outgoingConflictCount += 1;
+        dependentState.incomingConflictCount += 1;
+        conflictedTaskIds.add(link.fromTaskId);
+        conflictedTaskIds.add(link.toTaskId);
+      }
+    }
+
+    for (const taskId of conflictedTaskIds) {
+      relevantTaskIds.add(taskId);
+    }
+
+    return {
+      varianceByTaskId,
+      dependencyByTaskId,
+      relevantTaskIds,
+      slippedTaskIds,
+      conflictedTaskIds,
+    };
+  }, [buildVisual, dependencyLinks, groups]);
+
   const months = useMemo(() => {
     const result: Array<{ label: string; left: number; width: number }> = [];
     let monthStart = 0;
@@ -891,7 +1008,11 @@ export function TaskGanttChart({
   const displayGroups = useMemo(() => {
     return groups
       .map((group) => {
-        const nodes = showNoEstimateOnly ? filterNodesByNoEstimate(group.nodes) : group.nodes;
+        let nodes = showNoEstimateOnly ? filterNodesByNoEstimate(group.nodes) : group.nodes;
+
+        if (showRiskOnly) {
+          nodes = filterNodesByTaskIds(nodes, riskMeta.relevantTaskIds);
+        }
 
         return {
           ...group,
@@ -900,7 +1021,41 @@ export function TaskGanttChart({
         } satisfies GanttGroup;
       })
       .filter((group) => group.nodes.length > 0);
-  }, [groups, showNoEstimateOnly]);
+  }, [groups, riskMeta.relevantTaskIds, showNoEstimateOnly, showRiskOnly]);
+
+  const groupRiskStatsByGroupId = useMemo(() => {
+    return Object.fromEntries(
+      displayGroups.map((group) => {
+        const groupTasks = collectNodeTasks(group.nodes);
+        let slipCount = 0;
+        let blockedCount = 0;
+        let blockerCount = 0;
+        let conflictCount = 0;
+
+        for (const task of groupTasks) {
+          const variance = riskMeta.varianceByTaskId[task.id];
+          const dependencyState = riskMeta.dependencyByTaskId[task.id];
+
+          if ((variance?.slipDays ?? 0) > 0) slipCount += 1;
+          if ((dependencyState?.incomingCount ?? 0) > 0) blockedCount += 1;
+          if ((dependencyState?.outgoingCount ?? 0) > 0) blockerCount += 1;
+          if (((dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0)) > 0) {
+            conflictCount += 1;
+          }
+        }
+
+        return [
+          group.id,
+          {
+            slipCount,
+            blockedCount,
+            blockerCount,
+            conflictCount,
+          },
+        ];
+      }),
+    ) as Record<string, { slipCount: number; blockedCount: number; blockerCount: number; conflictCount: number }>;
+  }, [displayGroups, riskMeta.dependencyByTaskId, riskMeta.varianceByTaskId]);
 
   const derived = useMemo(() => {
     const loadByDay = Array.from({ length: totalDays }, () => 0);
@@ -1015,11 +1170,12 @@ export function TaskGanttChart({
       zoom,
       collapsedGroups: Array.from(collapsedGroups),
       showNoEstimateOnly,
+      showRiskOnly,
       showBaseline,
       showDependencies,
       showPlanVsSlot,
     } satisfies PersistedGanttUiState);
-  }, [collapsedGroups, showBaseline, showDependencies, showNoEstimateOnly, showPlanVsSlot, zoom]);
+  }, [collapsedGroups, showBaseline, showDependencies, showNoEstimateOnly, showPlanVsSlot, showRiskOnly, zoom]);
 
   const taskLayoutsById = useMemo(() => {
     const layouts: Record<string, { top: number; visual: TaskVisual }> = {};
@@ -1302,6 +1458,19 @@ export function TaskGanttChart({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => setShowRiskOnly((current) => !current)}
+            aria-pressed={showRiskOnly}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
+              showRiskOnly
+                ? "border-rose-400/40 bg-rose-500/12 text-rose-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+            }`}
+            title="Оставить только задачи с drift по baseline или участием в blocker chain"
+          >
+            Риски / цепочка · {riskMeta.relevantTaskIds.size}
+          </button>
+          <button
+            type="button"
             onClick={() => setShowDependencies((current) => !current)}
             aria-pressed={showDependencies}
             className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
@@ -1374,6 +1543,16 @@ export function TaskGanttChart({
           <span className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-1.5 text-[11px] text-zinc-500">
             {totalOpenTasks} задач
           </span>
+          {riskMeta.slippedTaskIds.size > 0 && (
+            <span className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-[11px] text-rose-200">
+              Δ {riskMeta.slippedTaskIds.size}
+            </span>
+          )}
+          {riskMeta.conflictedTaskIds.size > 0 && (
+            <span className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+              chain ⚠ {riskMeta.conflictedTaskIds.size}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1547,6 +1726,12 @@ export function TaskGanttChart({
                 if (row.kind === "group") {
                   const tone = groupBarTone(row.group);
                   const surface = groupSurfaceTone(row.group);
+                  const groupRisk = groupRiskStatsByGroupId[row.group.id] ?? {
+                    slipCount: 0,
+                    blockedCount: 0,
+                    blockerCount: 0,
+                    conflictCount: 0,
+                  };
                   const collapsed = collapsedGroups.has(row.group.id);
 
                   return (
@@ -1559,6 +1744,21 @@ export function TaskGanttChart({
                       >
                         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${groupDotCls(row.group)}`} />
                         <span className="truncate text-left">{row.group.label}</span>
+                        {groupRisk.slipCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
+                            Δ {groupRisk.slipCount}
+                          </span>
+                        )}
+                        {(groupRisk.blockedCount > 0 || groupRisk.blockerCount > 0) && (
+                          <span className="shrink-0 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 text-[8px] text-cyan-100">
+                            ⛓ {groupRisk.blockedCount + groupRisk.blockerCount}
+                          </span>
+                        )}
+                        {groupRisk.conflictCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                            ⚠ {groupRisk.conflictCount}
+                          </span>
+                        )}
                         <span className="ml-auto shrink-0 text-[10px] text-zinc-500">{row.group.openCount}</span>
                         <span className="shrink-0 text-[10px] text-zinc-600">{collapsed ? "▸" : "▾"}</span>
                       </button>
@@ -1587,6 +1787,7 @@ export function TaskGanttChart({
                   baselineVisual
                   && (Math.abs(baselineVisual.left - previewVisual.left) > 1 || Math.abs(baselineVisual.width - previewVisual.width) > 1),
                 );
+                const variance = riskMeta.varianceByTaskId[task.id];
                 const scheduledSlot = scheduledSlotsByTaskId[task.id];
                 const scheduledSlotVisual = scheduledSlot
                   ? computeScheduledSlotVisual(scheduledSlot, timelineStart, totalDays, dayWidth)
@@ -1604,7 +1805,23 @@ export function TaskGanttChart({
                 const progress = progressByTaskId[task.id];
                 const progressPct = progress ? Math.max(progress.ratio * 100, progress.done > 0 ? 8 : 0) : 0;
                 const progressLabel = progress && progress.total > 0 ? `${progress.done}/${progress.total}` : null;
-                const blockerCount = task.blockedByTaskIds?.length ?? 0;
+                const dependencyState = riskMeta.dependencyByTaskId[task.id];
+                const incomingDependencyCount = dependencyState?.incomingCount ?? 0;
+                const outgoingDependencyCount = dependencyState?.outgoingCount ?? 0;
+                const dependencyConflictCount = (dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0);
+                const slipDays = variance?.slipDays ?? 0;
+                const gainDays = variance?.gainDays ?? 0;
+                const barRiskTone = dependencyConflictCount > 0
+                  ? "ring-1 ring-amber-300/35"
+                  : incomingDependencyCount > 0
+                    ? "ring-1 ring-cyan-300/25"
+                    : outgoingDependencyCount > 0
+                      ? "ring-1 ring-violet-300/20"
+                      : slipDays > 0
+                        ? "ring-1 ring-rose-300/30"
+                        : gainDays > 0
+                          ? "ring-1 ring-emerald-300/20"
+                          : "";
                 const slotTone = scheduledSlot
                   ? { bg: SLOT_BG[scheduledSlot.tone], border: SLOT_BD[scheduledSlot.tone] }
                   : null;
@@ -1657,9 +1874,29 @@ export function TaskGanttChart({
                           ✓ {progressLabel}
                         </span>
                       )}
-                      {blockerCount > 0 && (
+                      {slipDays > 0 && (
+                        <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
+                          {formatSignedDayDelta(slipDays)}
+                        </span>
+                      )}
+                      {slipDays === 0 && gainDays > 0 && (
+                        <span className="shrink-0 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-200">
+                          {formatSignedDayDelta(-gainDays)}
+                        </span>
+                      )}
+                      {incomingDependencyCount > 0 && (
                         <span className="shrink-0 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-1.5 py-0.5 text-[8px] text-cyan-100">
-                          ⛓ {blockerCount}
+                          ⛓ ждёт {incomingDependencyCount}
+                        </span>
+                      )}
+                      {outgoingDependencyCount > 0 && (
+                        <span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-100">
+                          ↠ {outgoingDependencyCount}
+                        </span>
+                      )}
+                      {dependencyConflictCount > 0 && (
+                        <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                          ⚠ chain
                         </span>
                       )}
                     </div>
@@ -1737,9 +1974,7 @@ export function TaskGanttChart({
                           showPlanVsSlot && scheduledSlot ? "opacity-75" : ""
                         } ${
                           task.priority === "p3" ? "opacity-55" : ""
-                        } ${
-                          blockerCount > 0 ? "ring-1 ring-cyan-300/25" : ""
-                        } ${interactionForTask?.mode === "move" ? "z-20 shadow-lg shadow-black/30" : ""} transition-shadow`}
+                        } ${barRiskTone} ${interactionForTask?.mode === "move" ? "z-20 shadow-lg shadow-black/30" : ""} transition-shadow`}
                         style={{
                           left: previewVisual.left,
                           width: previewVisual.width,
@@ -1828,6 +2063,7 @@ export function TaskGanttChart({
         <span>Пунктир — сводный rollup родителя</span>
         <span>Серый ghost — baseline до первого сдвига</span>
         <span>Голубой path — dependency-lite finish → start</span>
+        <span>Кнопка «Риски / цепочка» — фокус на slip и blocker tasks</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
         <span>Зелёная шкала — rollup-progress по подзадачам</span>
