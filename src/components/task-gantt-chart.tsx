@@ -135,6 +135,7 @@ type PersistedGanttUiState = {
   collapsedGroups?: string[];
   showNoEstimateOnly?: boolean;
   showRiskOnly?: boolean;
+  showCriticalChainOnly?: boolean;
   showPlanVsSlot?: boolean;
   showBaseline?: boolean;
   showDependencies?: boolean;
@@ -853,6 +854,10 @@ export function TaskGanttChart({
     const persisted = readPersistedGanttUiState();
     return Boolean(persisted.showRiskOnly);
   });
+  const [showCriticalChainOnly, setShowCriticalChainOnly] = useState<boolean>(() => {
+    const persisted = readPersistedGanttUiState();
+    return Boolean(persisted.showCriticalChainOnly);
+  });
   const [showBaseline, setShowBaseline] = useState<boolean>(() => {
     const persisted = readPersistedGanttUiState();
     return persisted.showBaseline ?? true;
@@ -892,6 +897,8 @@ export function TaskGanttChart({
   const riskMeta = useMemo(() => {
     const allTasks = groups.flatMap((group) => collectNodeTasks(group.nodes));
     const taskById = new Map(allTasks.map((task) => [task.id, task]));
+    const incomingByTaskId = new Map<string, string[]>();
+    const outgoingByTaskId = new Map<string, string[]>();
     const varianceByTaskId: Record<string, { startDeltaDays: number; finishDeltaDays: number; slipDays: number; gainDays: number }> = {};
     const dependencyByTaskId: Record<
       string,
@@ -902,9 +909,14 @@ export function TaskGanttChart({
         outgoingConflictCount: number;
       }
     > = {};
+    const dependencyHeatByDay = Array.from({ length: totalDays }, () => 0);
+    const dependencyConflictHeatByDay = Array.from({ length: totalDays }, () => 0);
+    const criticalChainHeatByDay = Array.from({ length: totalDays }, () => 0);
     const relevantTaskIds = new Set<string>();
     const slippedTaskIds = new Set<string>();
     const conflictedTaskIds = new Set<string>();
+    const criticalTaskIds = new Set<string>();
+    const criticalLinkIds = new Set<string>();
 
     const ensureDependencyState = (taskId: string) => {
       dependencyByTaskId[taskId] ??= {
@@ -949,6 +961,14 @@ export function TaskGanttChart({
       const blockerState = ensureDependencyState(link.fromTaskId);
       const dependentState = ensureDependencyState(link.toTaskId);
 
+      const incoming = incomingByTaskId.get(link.toTaskId) ?? [];
+      incoming.push(link.fromTaskId);
+      incomingByTaskId.set(link.toTaskId, incoming);
+
+      const outgoing = outgoingByTaskId.get(link.fromTaskId) ?? [];
+      outgoing.push(link.toTaskId);
+      outgoingByTaskId.set(link.fromTaskId, outgoing);
+
       blockerState.outgoingCount += 1;
       dependentState.incomingCount += 1;
       relevantTaskIds.add(link.fromTaskId);
@@ -957,6 +977,15 @@ export function TaskGanttChart({
       const blockerVisual = buildVisual(blocker);
       const dependentVisual = buildVisual(dependent);
       const gapDays = dependentVisual.startIndex - blockerVisual.endIndex - 1;
+
+      if (gapDays < 0) {
+        for (let index = Math.max(0, dependentVisual.startIndex); index <= Math.min(totalDays - 1, blockerVisual.endIndex); index += 1) {
+          dependencyHeatByDay[index] += 1;
+          dependencyConflictHeatByDay[index] += 1;
+        }
+      } else {
+        dependencyHeatByDay[Math.max(0, Math.min(totalDays - 1, dependentVisual.startIndex))] += 1;
+      }
 
       if (gapDays < 0) {
         blockerState.outgoingConflictCount += 1;
@@ -970,14 +999,53 @@ export function TaskGanttChart({
       relevantTaskIds.add(taskId);
     }
 
+    const criticalSeeds = Array.from(new Set([...slippedTaskIds, ...conflictedTaskIds]));
+    const criticalQueue = [...criticalSeeds];
+
+    while (criticalQueue.length > 0) {
+      const currentId = criticalQueue.shift();
+      if (!currentId || criticalTaskIds.has(currentId)) continue;
+
+      criticalTaskIds.add(currentId);
+
+      for (const nextId of [
+        ...(incomingByTaskId.get(currentId) ?? []),
+        ...(outgoingByTaskId.get(currentId) ?? []),
+      ]) {
+        if (!criticalTaskIds.has(nextId)) {
+          criticalQueue.push(nextId);
+        }
+      }
+    }
+
+    for (const taskId of criticalTaskIds) {
+      const task = taskById.get(taskId);
+      if (!task) continue;
+
+      const visual = buildVisual(task);
+      for (let index = Math.max(0, visual.startIndex); index <= Math.min(totalDays - 1, visual.endIndex); index += 1) {
+        criticalChainHeatByDay[index] += 1;
+      }
+    }
+
+    for (const link of dependencyLinks) {
+      if (!criticalTaskIds.has(link.fromTaskId) || !criticalTaskIds.has(link.toTaskId)) continue;
+      criticalLinkIds.add(`${link.fromTaskId}->${link.toTaskId}`);
+    }
+
     return {
       varianceByTaskId,
       dependencyByTaskId,
+      dependencyHeatByDay,
+      dependencyConflictHeatByDay,
+      criticalChainHeatByDay,
       relevantTaskIds,
       slippedTaskIds,
       conflictedTaskIds,
+      criticalTaskIds,
+      criticalLinkIds,
     };
-  }, [buildVisual, dependencyLinks, groups]);
+  }, [buildVisual, dependencyLinks, groups, totalDays]);
 
   const months = useMemo(() => {
     const result: Array<{ label: string; left: number; width: number }> = [];
@@ -1014,6 +1082,10 @@ export function TaskGanttChart({
           nodes = filterNodesByTaskIds(nodes, riskMeta.relevantTaskIds);
         }
 
+        if (showCriticalChainOnly) {
+          nodes = filterNodesByTaskIds(nodes, riskMeta.criticalTaskIds);
+        }
+
         return {
           ...group,
           nodes,
@@ -1021,7 +1093,7 @@ export function TaskGanttChart({
         } satisfies GanttGroup;
       })
       .filter((group) => group.nodes.length > 0);
-  }, [groups, riskMeta.relevantTaskIds, showNoEstimateOnly, showRiskOnly]);
+  }, [groups, riskMeta.criticalTaskIds, riskMeta.relevantTaskIds, showCriticalChainOnly, showNoEstimateOnly, showRiskOnly]);
 
   const groupRiskStatsByGroupId = useMemo(() => {
     return Object.fromEntries(
@@ -1031,6 +1103,7 @@ export function TaskGanttChart({
         let blockedCount = 0;
         let blockerCount = 0;
         let conflictCount = 0;
+        let criticalCount = 0;
 
         for (const task of groupTasks) {
           const variance = riskMeta.varianceByTaskId[task.id];
@@ -1042,6 +1115,7 @@ export function TaskGanttChart({
           if (((dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0)) > 0) {
             conflictCount += 1;
           }
+          if (riskMeta.criticalTaskIds.has(task.id)) criticalCount += 1;
         }
 
         return [
@@ -1051,11 +1125,12 @@ export function TaskGanttChart({
             blockedCount,
             blockerCount,
             conflictCount,
+            criticalCount,
           },
         ];
       }),
-    ) as Record<string, { slipCount: number; blockedCount: number; blockerCount: number; conflictCount: number }>;
-  }, [displayGroups, riskMeta.dependencyByTaskId, riskMeta.varianceByTaskId]);
+    ) as Record<string, { slipCount: number; blockedCount: number; blockerCount: number; conflictCount: number; criticalCount: number }>;
+  }, [displayGroups, riskMeta.criticalTaskIds, riskMeta.dependencyByTaskId, riskMeta.varianceByTaskId]);
 
   const derived = useMemo(() => {
     const loadByDay = Array.from({ length: totalDays }, () => 0);
@@ -1164,6 +1239,14 @@ export function TaskGanttChart({
     [dayMetrics],
   );
   const loadScaleMax = Math.max(maxLoad, maxCapacity, WORKDAY_MINUTES);
+  const maxDependencyHeat = useMemo(
+    () => Math.max(...riskMeta.dependencyHeatByDay, 0),
+    [riskMeta.dependencyHeatByDay],
+  );
+  const maxCriticalChainHeat = useMemo(
+    () => Math.max(...riskMeta.criticalChainHeatByDay, 0),
+    [riskMeta.criticalChainHeatByDay],
+  );
 
   useEffect(() => {
     lsSet(GANTT_UI_STATE_KEY, {
@@ -1171,11 +1254,12 @@ export function TaskGanttChart({
       collapsedGroups: Array.from(collapsedGroups),
       showNoEstimateOnly,
       showRiskOnly,
+      showCriticalChainOnly,
       showBaseline,
       showDependencies,
       showPlanVsSlot,
     } satisfies PersistedGanttUiState);
-  }, [collapsedGroups, showBaseline, showDependencies, showNoEstimateOnly, showPlanVsSlot, showRiskOnly, zoom]);
+  }, [collapsedGroups, showBaseline, showCriticalChainOnly, showDependencies, showNoEstimateOnly, showPlanVsSlot, showRiskOnly, zoom]);
 
   const taskLayoutsById = useMemo(() => {
     const layouts: Record<string, { top: number; visual: TaskVisual }> = {};
@@ -1215,12 +1299,13 @@ export function TaskGanttChart({
       return [{
         ...link,
         blocked,
+        critical: riskMeta.criticalLinkIds.has(`${link.fromTaskId}->${link.toTaskId}`),
         path: `M ${fromX} ${fromY} H ${elbowX} V ${toY} H ${toX}`,
         dotX: toX,
         dotY: toY,
       }];
     });
-  }, [dependencyLinks, showDependencies, taskLayoutsById]);
+  }, [dependencyLinks, riskMeta.criticalLinkIds, showDependencies, taskLayoutsById]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1471,6 +1556,19 @@ export function TaskGanttChart({
           </button>
           <button
             type="button"
+            onClick={() => setShowCriticalChainOnly((current) => !current)}
+            aria-pressed={showCriticalChainOnly}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
+              showCriticalChainOnly
+                ? "border-fuchsia-400/40 bg-fuchsia-500/12 text-fuchsia-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+            }`}
+            title="Оставить только задачи из critical chain вокруг drift/conflict узлов"
+          >
+            Critical chain · {riskMeta.criticalTaskIds.size}
+          </button>
+          <button
+            type="button"
             onClick={() => setShowDependencies((current) => !current)}
             aria-pressed={showDependencies}
             className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
@@ -1553,6 +1651,11 @@ export function TaskGanttChart({
               chain ⚠ {riskMeta.conflictedTaskIds.size}
             </span>
           )}
+          {riskMeta.criticalTaskIds.size > 0 && (
+            <span className="rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/10 px-3 py-1.5 text-[11px] text-fuchsia-100">
+              critical {riskMeta.criticalTaskIds.size}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1619,6 +1722,32 @@ export function TaskGanttChart({
                           <div
                             className="absolute bottom-0 left-[20%] w-[60%] rounded-t"
                             style={{ backgroundColor: metric.loadBarColor, height: `${heightPct}%` }}
+                          />
+                        )}
+                        {(riskMeta.dependencyHeatByDay[index] ?? 0) > 0 && (
+                          <div
+                            className="absolute left-[18%] top-0 w-[64%] rounded-b"
+                            style={{
+                              backgroundColor: (riskMeta.dependencyConflictHeatByDay[index] ?? 0) > 0
+                                ? "rgba(251, 191, 36, 0.88)"
+                                : "rgba(103, 232, 249, 0.72)",
+                              height: `${Math.max(
+                                (((riskMeta.dependencyConflictHeatByDay[index] ?? 0) > 0
+                                  ? riskMeta.dependencyConflictHeatByDay[index]
+                                  : riskMeta.dependencyHeatByDay[index]) /
+                                  Math.max(maxDependencyHeat, 1)) * 38,
+                                2,
+                              )}%`,
+                            }}
+                          />
+                        )}
+                        {(riskMeta.criticalChainHeatByDay[index] ?? 0) > 0 && (
+                          <div
+                            className="absolute right-[8%] top-0 w-[14%] rounded-b"
+                            style={{
+                              backgroundColor: "rgba(232, 121, 249, 0.82)",
+                              height: `${Math.max(((riskMeta.criticalChainHeatByDay[index] ?? 0) / Math.max(maxCriticalChainHeat, 1)) * 46, 3)}%`,
+                            }}
                           />
                         )}
                         <div
@@ -1699,9 +1828,9 @@ export function TaskGanttChart({
                     <path
                       d={link.path}
                       fill="none"
-                      stroke={link.blocked ? "rgba(251, 191, 36, 0.72)" : "rgba(103, 232, 249, 0.58)"}
-                      strokeDasharray={link.blocked ? "5 4" : "4 3"}
-                      strokeWidth={1.5}
+                      stroke={link.blocked ? "rgba(251, 191, 36, 0.8)" : link.critical ? "rgba(232, 121, 249, 0.78)" : "rgba(103, 232, 249, 0.58)"}
+                      strokeDasharray={link.blocked ? "5 4" : link.critical ? "6 3" : "4 3"}
+                      strokeWidth={link.critical ? 2 : 1.5}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -1709,7 +1838,7 @@ export function TaskGanttChart({
                       cx={link.dotX}
                       cy={link.dotY}
                       r={3}
-                      fill={link.blocked ? "rgba(251, 191, 36, 0.9)" : "rgba(165, 243, 252, 0.9)"}
+                      fill={link.blocked ? "rgba(251, 191, 36, 0.9)" : link.critical ? "rgba(244, 114, 182, 0.92)" : "rgba(165, 243, 252, 0.9)"}
                     />
                   </g>
                 ))}
@@ -1731,6 +1860,7 @@ export function TaskGanttChart({
                     blockedCount: 0,
                     blockerCount: 0,
                     conflictCount: 0,
+                    criticalCount: 0,
                   };
                   const collapsed = collapsedGroups.has(row.group.id);
 
@@ -1757,6 +1887,11 @@ export function TaskGanttChart({
                         {groupRisk.conflictCount > 0 && (
                           <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
                             ⚠ {groupRisk.conflictCount}
+                          </span>
+                        )}
+                        {groupRisk.criticalCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
+                            ✦ {groupRisk.criticalCount}
                           </span>
                         )}
                         <span className="ml-auto shrink-0 text-[10px] text-zinc-500">{row.group.openCount}</span>
@@ -1809,10 +1944,13 @@ export function TaskGanttChart({
                 const incomingDependencyCount = dependencyState?.incomingCount ?? 0;
                 const outgoingDependencyCount = dependencyState?.outgoingCount ?? 0;
                 const dependencyConflictCount = (dependencyState?.incomingConflictCount ?? 0) + (dependencyState?.outgoingConflictCount ?? 0);
+                const isCriticalChainTask = riskMeta.criticalTaskIds.has(task.id);
                 const slipDays = variance?.slipDays ?? 0;
                 const gainDays = variance?.gainDays ?? 0;
                 const barRiskTone = dependencyConflictCount > 0
                   ? "ring-1 ring-amber-300/35"
+                  : isCriticalChainTask
+                    ? "ring-1 ring-fuchsia-300/25"
                   : incomingDependencyCount > 0
                     ? "ring-1 ring-cyan-300/25"
                     : outgoingDependencyCount > 0
@@ -1897,6 +2035,11 @@ export function TaskGanttChart({
                       {dependencyConflictCount > 0 && (
                         <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
                           ⚠ chain
+                        </span>
+                      )}
+                      {dependencyConflictCount === 0 && isCriticalChainTask && (
+                        <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
+                          ✦ critical
                         </span>
                       )}
                     </div>
@@ -2064,6 +2207,7 @@ export function TaskGanttChart({
         <span>Серый ghost — baseline до первого сдвига</span>
         <span>Голубой path — dependency-lite finish → start</span>
         <span>Кнопка «Риски / цепочка» — фокус на slip и blocker tasks</span>
+        <span>Фуксия — critical chain вокруг risky узлов</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
         <span>Зелёная шкала — rollup-progress по подзадачам</span>
