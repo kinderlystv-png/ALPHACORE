@@ -3485,86 +3485,88 @@ export function TaskGanttChart({
                         onDragStart={(event) => handleTaskExternalDragStart(event, task.id)}
                         onDragEnd={() => handleTaskExternalDragEnd(task.id)}
                         onClick={() => openTaskInList(task.id)}
-                        className="min-w-0 flex-1 cursor-grab truncate text-left text-zinc-300 transition hover:text-zinc-100 active:cursor-grabbing"
+                        className="min-w-18 flex-1 cursor-grab truncate text-left text-zinc-300 transition hover:text-zinc-100 active:cursor-grabbing"
                         title={`${task.title} — можно тянуть в другую группу или подпроект`}
                       >
                         {task.title}
                       </button>
-                      {isNoEstimate && (
-                        <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
-                          без оценки
-                        </span>
-                      )}
-                      {planned && (
-                        <span className="shrink-0 rounded-full border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-200">
-                          {planned}
-                        </span>
-                      )}
-                      {progressLabel && (
-                        <span className="shrink-0 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-200">
-                          ✓ {progressLabel}
-                        </span>
-                      )}
-                      {slipDays > 0 && (
-                        <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
-                          {formatSignedDayDelta(slipDays)}
-                        </span>
-                      )}
-                      {slipDays === 0 && gainDays > 0 && (
-                        <span className="shrink-0 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-200">
-                          {formatSignedDayDelta(-gainDays)}
-                        </span>
-                      )}
-                      {incomingDependencyCount > 0 && (
-                        <span className="shrink-0 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-1.5 py-0.5 text-[8px] text-cyan-100">
-                          ⛓ ждёт {incomingDependencyCount}
-                        </span>
-                      )}
-                      {outgoingDependencyCount > 0 && (
-                        <span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-100">
-                          ↠ {outgoingDependencyCount}
-                        </span>
-                      )}
-                      {dependencyConflictCount > 0 && (
-                        <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
-                          ⚠ chain
-                        </span>
-                      )}
-                      {dependencyConflictCount === 0 && isCriticalChainTask && (
-                        <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
-                          ✦ critical
-                        </span>
-                      )}
-                      {showBaseline && hasBaselineSnapshot && (onTaskBaselineReset || onTaskBaselineRebase) && (
-                        <span className="ml-0.5 inline-flex shrink-0 items-center gap-1">
-                          {onTaskBaselineReset && (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onTaskBaselineReset(task.id);
-                              }}
-                              className="rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-100 transition hover:border-amber-400/30"
-                              title="Вернуть диапазон к baseline"
-                            >
-                              ↺
-                            </button>
-                          )}
-                          {onTaskBaselineRebase && (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onTaskBaselineRebase(task.id);
-                              }}
-                              className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100 transition hover:border-fuchsia-400/30"
-                              title="Сделать текущий план новым baseline"
-                            >
-                              ◎
-                            </button>
-                          )}
-                        </span>
-                      )}
+                      <div className="ml-auto flex min-w-0 max-w-[52%] items-center justify-end gap-1 overflow-hidden">
+                        {isNoEstimate && (
+                          <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                            без оценки
+                          </span>
+                        )}
+                        {planned && (
+                          <span className="shrink-0 rounded-full border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-200">
+                            {planned}
+                          </span>
+                        )}
+                        {progressLabel && (
+                          <span className="shrink-0 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-200">
+                            ✓ {progressLabel}
+                          </span>
+                        )}
+                        {slipDays > 0 && (
+                          <span className="shrink-0 rounded-full border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[8px] text-rose-200">
+                            {formatSignedDayDelta(slipDays)}
+                          </span>
+                        )}
+                        {slipDays === 0 && gainDays > 0 && (
+                          <span className="shrink-0 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-200">
+                            {formatSignedDayDelta(-gainDays)}
+                          </span>
+                        )}
+                        {incomingDependencyCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-1.5 py-0.5 text-[8px] text-cyan-100">
+                            ⛓ ждёт {incomingDependencyCount}
+                          </span>
+                        )}
+                        {outgoingDependencyCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-100">
+                            ↠ {outgoingDependencyCount}
+                          </span>
+                        )}
+                        {dependencyConflictCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                            ⚠ chain
+                          </span>
+                        )}
+                        {dependencyConflictCount === 0 && isCriticalChainTask && (
+                          <span className="shrink-0 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100">
+                            ✦ critical
+                          </span>
+                        )}
+                        {showBaseline && hasBaselineSnapshot && (onTaskBaselineReset || onTaskBaselineRebase) && (
+                          <span className="ml-0.5 inline-flex shrink-0 items-center gap-1">
+                            {onTaskBaselineReset && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onTaskBaselineReset(task.id);
+                                }}
+                                className="rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-100 transition hover:border-amber-400/30"
+                                title="Вернуть диапазон к baseline"
+                              >
+                                ↺
+                              </button>
+                            )}
+                            {onTaskBaselineRebase && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onTaskBaselineRebase(task.id);
+                                }}
+                                className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 text-[8px] text-fuchsia-100 transition hover:border-fuchsia-400/30"
+                                title="Сделать текущий план новым baseline"
+                              >
+                                ◎
+                              </button>
+                            )}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="relative" style={{ width: gridWidth }}>
