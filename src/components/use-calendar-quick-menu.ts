@@ -83,7 +83,8 @@ export function useCalendarQuickMenu({
     (element: HTMLElement, slot: ScheduleSlot) => {
       const rect = element.getBoundingClientRect();
       const mobile = window.innerWidth < 640;
-      const desktopHalfWidth = 192;
+      const desktopPanelWidth = Math.min(48 * 16, Math.max(320, window.innerWidth - 24));
+      const desktopHalfWidth = desktopPanelWidth / 2;
       const maxTop = Math.max(12, window.innerHeight - QUICK_MENU_ESTIMATED_HEIGHT - 12);
       const linkedTask = slot.taskId ? linkedTasksById.get(slot.taskId) ?? null : null;
       const projects = getProjects();

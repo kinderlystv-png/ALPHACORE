@@ -241,8 +241,8 @@ export function CalendarQuickMenu({
     <div
       ref={menuRef}
       className={quickMenu.mobile
-        ? "fixed inset-y-2 left-1/2 z-50 w-[min(24rem,calc(100vw-1rem))] -translate-x-1/2"
-        : "fixed inset-y-3 z-50 w-[min(24rem,calc(100vw-1.5rem))] -translate-x-1/2"
+        ? "fixed inset-y-2 left-1/2 z-50 w-[min(48rem,calc(100vw-1rem))] -translate-x-1/2"
+        : "fixed inset-y-3 z-50 w-[min(48rem,calc(100vw-1.5rem))] -translate-x-1/2"
       }
       style={quickMenu.mobile ? undefined : { left: quickMenu.left }}
     >
@@ -288,9 +288,10 @@ export function CalendarQuickMenu({
           </button>
         </div>
 
-        <div className="mt-2.5 space-y-2">
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-2.5">
-            <div className="space-y-2.5">
+        <div className="mt-2.5 grid gap-2 lg:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.9fr)] lg:items-start">
+          <div className="space-y-2">
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-2.5">
+              <div className="space-y-2.5">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-500">
                   Название
@@ -468,111 +469,114 @@ export function CalendarQuickMenu({
                   />
                 </div>
               )}
+              </div>
             </div>
           </div>
 
-          {shouldShowCarryoverDecision && (
-            <SlotCarryoverDecision
-              slot={slot}
-              todayKey={today}
-              requiresApproval={requiresApproval}
-              isCompleted={isCompletedSlot}
-              compact
-              terse
-              className="mb-0"
-              onApplied={() => {
-                onVersionBump();
-                onClose();
-              }}
-            />
-          )}
+          <div className="space-y-2">
+            {shouldShowCarryoverDecision && (
+              <SlotCarryoverDecision
+                slot={slot}
+                todayKey={today}
+                requiresApproval={requiresApproval}
+                isCompleted={isCompletedSlot}
+                compact
+                terse
+                className="mb-0"
+                onApplied={() => {
+                  onVersionBump();
+                  onClose();
+                }}
+              />
+            )}
 
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-2.5">
-            <div className="space-y-2.5">
-              <div>
-                <p className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-600">Положение</p>
-                {shouldShowQuickReschedule && (
-                  <div className="mb-1.5">
-                    <SlotQuickRescheduleActions
-                      slot={slot}
-                      todayKey={today}
-                      compact
-                      showLabel={false}
-                      className="space-y-0"
-                      onApplied={() => {
-                        onVersionBump();
-                        onClose();
-                      }}
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-2.5">
+              <div className="space-y-2.5">
+                <div>
+                  <p className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-600">Положение</p>
+                  {shouldShowQuickReschedule && (
+                    <div className="mb-1.5">
+                      <SlotQuickRescheduleActions
+                        slot={slot}
+                        todayKey={today}
+                        compact
+                        showLabel={false}
+                        className="space-y-0"
+                        onApplied={() => {
+                          onVersionBump();
+                          onClose();
+                        }}
+                      />
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <QuickActionButton
+                      label="Раньше"
+                      meta="−30 мин"
+                      disabled={earlierDisabled}
+                      onClick={() =>
+                        onApplyPatch(slot, {
+                          start: minutesToCalendarTime(startMin - STEP_MIN),
+                          end: minutesToCalendarTime(endMin - STEP_MIN),
+                        }, activeSeriesScope)
+                      }
+                    />
+                    <QuickActionButton
+                      label="Позже"
+                      meta="+30 мин"
+                      disabled={laterDisabled}
+                      onClick={() =>
+                        onApplyPatch(slot, {
+                          start: minutesToCalendarTime(startMin + STEP_MIN),
+                          end: minutesToCalendarTime(endMin + STEP_MIN),
+                        }, activeSeriesScope)
+                      }
+                    />
+                    <QuickActionButton
+                      label="День назад"
+                      meta="−1 день"
+                      disabled={!prevDay}
+                      onClick={() => prevDay && onApplyPatch(slot, { date: prevDay }, activeSeriesScope)}
+                    />
+                    <QuickActionButton
+                      label="День вперёд"
+                      meta="+1 день"
+                      disabled={!nextDay}
+                      onClick={() => nextDay && onApplyPatch(slot, { date: nextDay }, activeSeriesScope)}
                     />
                   </div>
-                )}
-                <div className="grid grid-cols-2 gap-1.5">
-                  <QuickActionButton
-                    label="Раньше"
-                    meta="−30 мин"
-                    disabled={earlierDisabled}
-                    onClick={() =>
-                      onApplyPatch(slot, {
-                        start: minutesToCalendarTime(startMin - STEP_MIN),
-                        end: minutesToCalendarTime(endMin - STEP_MIN),
-                      }, activeSeriesScope)
-                    }
-                  />
-                  <QuickActionButton
-                    label="Позже"
-                    meta="+30 мин"
-                    disabled={laterDisabled}
-                    onClick={() =>
-                      onApplyPatch(slot, {
-                        start: minutesToCalendarTime(startMin + STEP_MIN),
-                        end: minutesToCalendarTime(endMin + STEP_MIN),
-                      }, activeSeriesScope)
-                    }
-                  />
-                  <QuickActionButton
-                    label="День назад"
-                    meta="−1 день"
-                    disabled={!prevDay}
-                    onClick={() => prevDay && onApplyPatch(slot, { date: prevDay }, activeSeriesScope)}
-                  />
-                  <QuickActionButton
-                    label="День вперёд"
-                    meta="+1 день"
-                    disabled={!nextDay}
-                    onClick={() => nextDay && onApplyPatch(slot, { date: nextDay }, activeSeriesScope)}
-                  />
                 </div>
-              </div>
 
-              <div>
-                <p className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-600">Длительность</p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <QuickActionButton
-                    label="Короче"
-                    meta="−30 мин"
-                    disabled={shorterDisabled}
-                    onClick={() =>
-                      onApplyPatch(slot, {
-                        end: minutesToCalendarTime(endMin - STEP_MIN),
-                      }, activeSeriesScope)
-                    }
-                  />
-                  <QuickActionButton
-                    label="Длиннее"
-                    meta="+30 мин"
-                    disabled={longerDisabled}
-                    onClick={() =>
-                      onApplyPatch(slot, {
-                        end: minutesToCalendarTime(endMin + STEP_MIN),
-                      }, activeSeriesScope)
-                    }
-                  />
+                <div>
+                  <p className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-600">Длительность</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <QuickActionButton
+                      label="Короче"
+                      meta="−30 мин"
+                      disabled={shorterDisabled}
+                      onClick={() =>
+                        onApplyPatch(slot, {
+                          end: minutesToCalendarTime(endMin - STEP_MIN),
+                        }, activeSeriesScope)
+                      }
+                    />
+                    <QuickActionButton
+                      label="Длиннее"
+                      meta="+30 мин"
+                      disabled={longerDisabled}
+                      onClick={() =>
+                        onApplyPatch(slot, {
+                          end: minutesToCalendarTime(endMin + STEP_MIN),
+                        }, activeSeriesScope)
+                      }
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="sticky bottom-0 -mx-2.5 border-t border-zinc-800/80 bg-linear-to-t from-zinc-950 via-zinc-950/98 to-zinc-950/82 px-2.5 pt-2.5">
+          <div className="sticky bottom-0 -mx-2.5 border-t border-zinc-800/80 bg-linear-to-t from-zinc-950 via-zinc-950/98 to-zinc-950/82 px-2.5 pt-2.5 lg:col-span-2">
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
