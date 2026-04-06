@@ -114,7 +114,18 @@ type DerivedGroupSection = {
   collapsed: boolean;
 };
 
-type DerivedRow = DerivedTaskRow | DerivedGroupRow;
+type DerivedRepeatSeriesRow = {
+  kind: "repeat-series";
+  key: string;
+  group: GanttGroup;
+  depth: number;
+  tasks: Task[];
+  visuals: Array<{ task: Task; visual: TaskVisual }>;
+  combinedSpan?: Span;
+  representativeTask: Task;
+};
+
+type DerivedRow = DerivedTaskRow | DerivedGroupRow | DerivedRepeatSeriesRow;
 
 type InteractionState = {
   taskId: string;
@@ -141,6 +152,7 @@ type PersistedGanttUiState = {
   showPlanVsSlot?: boolean;
   showBaseline?: boolean;
   showDependencies?: boolean;
+  collapseRepeatSeries?: boolean;
 };
 
 type DependencyChainSummary = {
@@ -375,6 +387,14 @@ function countNodes(nodes: GanttTaskNode[]): number {
   return nodes.reduce((sum, node) => sum + 1 + countNodes(node.children), 0);
 }
 
+function normalizeRepeatSeriesTitle(title: string): string {
+  return title.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getTaskAnchorDate(task: Task): string {
+  return task.startDate ?? task.dueDate ?? task.createdAt.slice(0, 10);
+}
+
 function countNoEstimateNodes(nodes: GanttTaskNode[]): number {
   return nodes.reduce(
     (sum, node) => sum + (node.task.plannedMinutes ? 0 : 1) + countNoEstimateNodes(node.children),
@@ -454,7 +474,7 @@ function buildTaskTooltip(task: Task, slot?: GanttScheduledSlot): string {
   if (dueLabel) lines.push(`Финиш: ${dueLabel}`);
   if (plannedLabel) lines.push(`Оценка: ${plannedLabel}`);
   else lines.push("Оценка: нет");
-  if (task.project) lines.push(`Проект: ${task.project}`);
+  if (task.project) lines.push(`Группа: ${task.project}`);
   if (slot) {
     const slotDay = formatDayLabel(slot.date);
     lines.push(`Слот: ${slot.start}–${slot.end}${slotDay ? ` · ${slotDay}` : ""}`);
@@ -881,6 +901,10 @@ export function TaskGanttChart({
     const persisted = readPersistedGanttUiState();
     return persisted.showDependencies ?? true;
   });
+  const [collapseRepeatSeries, setCollapseRepeatSeries] = useState<boolean>(() => {
+    const persisted = readPersistedGanttUiState();
+    return persisted.collapseRepeatSeries ?? true;
+  });
   const [showPlanVsSlot, setShowPlanVsSlot] = useState<boolean>(() => {
     const persisted = readPersistedGanttUiState();
     return Boolean(persisted.showPlanVsSlot);
@@ -1195,6 +1219,8 @@ export function TaskGanttChart({
     const orderedRows: DerivedRow[] = [];
     const groupSections: DerivedGroupSection[] = [];
     const taskRowTopById: Record<string, number> = {};
+    let repeatSeriesCount = 0;
+    let repeatTaskCount = 0;
     let cursorTop = 0;
 
     const collectLoad = (span: Span, task: Task) => {
@@ -1236,11 +1262,88 @@ export function TaskGanttChart({
       };
     };
 
+    const isRepeatSeriesCandidate = (row: DerivedTaskRow): boolean => {
+      return row.depth === 0 && !row.hasChildren && !(row.task.blockedByTaskIds?.length);
+    };
+
+    const collapseRepeatRows = (
+      group: GanttGroup,
+      rows: DerivedTaskRow[],
+    ): {
+      rows: Array<DerivedTaskRow | DerivedRepeatSeriesRow>;
+      repeatSeriesCount: number;
+      repeatTaskCount: number;
+    } => {
+      const compactRows: Array<DerivedTaskRow | DerivedRepeatSeriesRow> = [];
+      let localRepeatSeriesCount = 0;
+      let localRepeatTaskCount = 0;
+      let index = 0;
+
+      while (index < rows.length) {
+        const row = rows[index]!;
+
+        if (!isRepeatSeriesCandidate(row)) {
+          compactRows.push(row);
+          index += 1;
+          continue;
+        }
+
+        const normalizedTitle = normalizeRepeatSeriesTitle(row.task.title);
+        const run: DerivedTaskRow[] = [row];
+        let cursor = index + 1;
+
+        while (cursor < rows.length) {
+          const candidate = rows[cursor]!;
+          if (!isRepeatSeriesCandidate(candidate)) break;
+          if (candidate.depth !== row.depth) break;
+          if (candidate.task.priority !== row.task.priority) break;
+          if (normalizeRepeatSeriesTitle(candidate.task.title) !== normalizedTitle) break;
+          run.push(candidate);
+          cursor += 1;
+        }
+
+        if (run.length >= 3) {
+          const visuals = run.map((repeatRow) => ({
+            task: repeatRow.task,
+            visual: repeatRow.ownVisual,
+          }));
+
+          compactRows.push({
+            kind: "repeat-series",
+            key: `repeat-series:${group.id}:${normalizedTitle}:${run[0]!.task.id}`,
+            group,
+            depth: row.depth,
+            tasks: run.map((repeatRow) => repeatRow.task),
+            visuals,
+            combinedSpan: mergeSpans(visuals.map(({ visual }) => spanFromVisual(visual))),
+            representativeTask: row.task,
+          });
+          localRepeatSeriesCount += 1;
+          localRepeatTaskCount += run.length;
+          index = cursor;
+          continue;
+        }
+
+        compactRows.push(row);
+        index += 1;
+      }
+
+      return {
+        rows: compactRows,
+        repeatSeriesCount: localRepeatSeriesCount,
+        repeatTaskCount: localRepeatTaskCount,
+      };
+    };
+
     for (const group of displayGroups) {
       const sectionTop = cursorTop;
       const nodeResults = group.nodes.map((node) => buildNodeRows(group, node));
       const groupRollup = mergeSpans(nodeResults.map((result) => result.span));
       const groupRows = nodeResults.flatMap((result) => result.rows);
+      const repeatPreview = collapseRepeatRows(group, groupRows);
+      const visibleRows = collapseRepeatSeries ? repeatPreview.rows : groupRows;
+      repeatSeriesCount += repeatPreview.repeatSeriesCount;
+      repeatTaskCount += repeatPreview.repeatTaskCount;
       const collapsed = collapsedGroups.has(group.id);
 
       orderedRows.push({
@@ -1252,11 +1355,13 @@ export function TaskGanttChart({
       cursorTop += GROUP_H;
 
       if (!collapsed) {
-        groupRows.forEach((row, index) => {
-          taskRowTopById[row.task.id] = cursorTop + index * ROW_H;
+        visibleRows.forEach((row, index) => {
+          if (row.kind === "task") {
+            taskRowTopById[row.task.id] = cursorTop + index * ROW_H;
+          }
         });
-        orderedRows.push(...groupRows);
-        cursorTop += groupRows.length * ROW_H;
+        orderedRows.push(...visibleRows);
+        cursorTop += visibleRows.length * ROW_H;
       }
 
       groupSections.push({
@@ -1272,8 +1377,16 @@ export function TaskGanttChart({
 
     const bodyHeight = cursorTop;
 
-    return { orderedRows, bodyHeight, loadByDay, groupSections, taskRowTopById };
-  }, [buildVisual, collapsedGroups, displayGroups, totalDays]);
+    return {
+      orderedRows,
+      bodyHeight,
+      loadByDay,
+      groupSections,
+      taskRowTopById,
+      repeatSeriesCount,
+      repeatTaskCount,
+    };
+  }, [buildVisual, collapseRepeatSeries, collapsedGroups, displayGroups, totalDays]);
 
   const maxLoad = useMemo(() => Math.max(...derived.loadByDay, 0), [derived.loadByDay]);
   const dayMetrics = useMemo(
@@ -1316,8 +1429,9 @@ export function TaskGanttChart({
       showBaseline,
       showDependencies,
       showPlanVsSlot,
+      collapseRepeatSeries,
     } satisfies PersistedGanttUiState);
-  }, [collapsedGroups, showBaseline, showCriticalChainOnly, showDependencies, showNoEstimateOnly, showPlanVsSlot, showRiskOnly, zoom]);
+  }, [collapseRepeatSeries, collapsedGroups, showBaseline, showCriticalChainOnly, showDependencies, showNoEstimateOnly, showPlanVsSlot, showRiskOnly, zoom]);
 
   const taskLayoutsById = useMemo(() => {
     const layouts: Record<string, { top: number; visual: TaskVisual }> = {};
@@ -1827,6 +1941,20 @@ export function TaskGanttChart({
           </button>
           <button
             type="button"
+            onClick={() => setCollapseRepeatSeries((current) => !current)}
+            aria-pressed={collapseRepeatSeries}
+            className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
+              collapseRepeatSeries
+                ? "border-violet-400/35 bg-violet-500/12 text-violet-100"
+                : "border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+            }`}
+            title="Схлопнуть подряд идущие повторяющиеся задачи в компактные серии"
+          >
+            Повторы · {collapseRepeatSeries ? "compact" : "full"}
+            {derived.repeatSeriesCount > 0 ? ` · ${derived.repeatSeriesCount}` : ""}
+          </button>
+          <button
+            type="button"
             onClick={() => setShowPlanVsSlot((current) => !current)}
             aria-pressed={showPlanVsSlot}
             className={`rounded-xl border px-3 py-1.5 text-[11px] font-medium transition ${
@@ -2224,6 +2352,89 @@ export function TaskGanttChart({
                   );
                 }
 
+                if (row.kind === "repeat-series") {
+                  const group = row.group;
+                  const surface = groupSurfaceTone(group);
+                  const baseTone = groupBarTone(group);
+                  const firstTask = row.tasks[0]!;
+                  const lastTask = row.tasks[row.tasks.length - 1]!;
+                  const priorityTone =
+                    firstTask.priority === "p1"
+                      ? "text-rose-400"
+                      : firstTask.priority === "p2"
+                        ? "text-amber-400"
+                        : "text-zinc-600";
+                  const noEstimateCount = row.tasks.filter((task) => !task.plannedMinutes).length;
+                  const firstLabel = formatDayLabel(getTaskAnchorDate(firstTask));
+                  const lastLabel = formatDayLabel(getTaskAnchorDate(lastTask));
+                  const seriesTooltip = [
+                    firstTask.title,
+                    `Серия: ${row.tasks.length} повторов`,
+                    firstLabel || lastLabel
+                      ? `Окно: ${firstLabel ?? "?"}${lastLabel && lastLabel !== firstLabel ? ` → ${lastLabel}` : ""}`
+                      : null,
+                    ...row.tasks.slice(0, 6).map((task) => `• ${formatDayLabel(getTaskAnchorDate(task)) ?? task.createdAt.slice(0, 10)}`),
+                    row.tasks.length > 6 ? `… ещё ${row.tasks.length - 6}` : null,
+                    "Переключи Повторы = full, если нужно двигать каждый элемент отдельно.",
+                  ]
+                    .filter(Boolean)
+                    .join("\n");
+
+                  return (
+                    <div key={row.key} className="flex border-b border-zinc-800/20" style={{ height: ROW_H }}>
+                      <button
+                        type="button"
+                        onClick={() => openTaskInList(firstTask.id)}
+                        className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-zinc-800/30 px-2 text-left text-[10px] transition hover:brightness-110"
+                        style={{ width: LABEL_W, paddingLeft: 10 + row.depth * 14, background: surface.labelBg }}
+                        title={seriesTooltip}
+                      >
+                        <span className={`shrink-0 font-bold uppercase ${priorityTone}`} style={{ fontSize: 8 }}>
+                          {firstTask.priority}
+                        </span>
+                        <span className="shrink-0 rounded-full border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[8px] text-violet-100">
+                          ∿ серия ×{row.tasks.length}
+                        </span>
+                        <span className="truncate text-zinc-300">{firstTask.title}</span>
+                        {noEstimateCount > 0 && (
+                          <span className="shrink-0 rounded-full border border-dashed border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">
+                            без оценки {noEstimateCount}
+                          </span>
+                        )}
+                        {(firstLabel || lastLabel) && (
+                          <span className="shrink-0 rounded-full border border-zinc-700/70 bg-zinc-900/60 px-1.5 py-0.5 text-[8px] text-zinc-400">
+                            {firstLabel ?? "?"}{lastLabel && lastLabel !== firstLabel ? ` → ${lastLabel}` : ""}
+                          </span>
+                        )}
+                      </button>
+
+                      <div className="relative" style={{ width: gridWidth }}>
+                        {row.combinedSpan && (
+                          <div
+                            className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full border border-dashed ${baseTone.border} ${baseTone.bg} opacity-35`}
+                            style={{ left: row.combinedSpan.left, width: row.combinedSpan.width, height: 8 }}
+                          />
+                        )}
+
+                        {row.visuals.map(({ task, visual }) => {
+                          const compactWidth = visual.kind === "marker"
+                            ? 10
+                            : Math.max(Math.min(visual.width, 24), 12);
+                          const compactLeft = visual.left + Math.max((visual.width - compactWidth) / 2, 0);
+
+                          return (
+                            <div
+                              key={`${row.key}:${task.id}`}
+                              className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full border ${baseTone.bg} ${baseTone.border}`}
+                              style={{ left: compactLeft, width: compactWidth, height: 12 }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }
+
                 const task = row.task;
                 const group = row.group;
                 const surface = groupSurfaceTone(group);
@@ -2571,6 +2782,7 @@ export function TaskGanttChart({
         <span>Фуксия — critical chain вокруг risky узлов</span>
         <span>↺ / ◎ — reset и rebase baseline по задаче</span>
         <span>Preview последствий — во время drag/resize показывает, кого заденет цепочка</span>
+        <span>Повторы compact — одинаковые подряд идущие задачи схлопываются в серию</span>
         <span>Тонкая цветная плашка — реальный слот в календаре</span>
         <span>Пунктирная рамка — задача без оценки</span>
         <span>Зелёная шкала — rollup-progress по подзадачам</span>
