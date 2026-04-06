@@ -1,14 +1,19 @@
 import { lsGet, lsSet, uid } from "./storage";
 
+export type SicknessSeverity = 1 | 2 | 3 | 4 | 5;
+
 export type ActiveSicknessPeriod = {
   id: string;
   startedAt: string;
+  severity: SicknessSeverity;
 };
 
 export type ClosedSicknessPeriod = {
   id: string;
   startedAt: string;
   endedAt: string;
+  severity: SicknessSeverity;
+  severityLabel: string;
   durationMs: number;
   durationDays: number;
   durationLabel: string;
@@ -18,6 +23,8 @@ export type ClosedSicknessPeriod = {
 
 export type ActiveSicknessSummary = {
   startedAt: string;
+  severity: SicknessSeverity;
+  severityLabel: string;
   durationMs: number;
   durationDays: number;
   durationLabel: string;
@@ -32,9 +39,18 @@ export type SicknessLog = {
 };
 
 export const SICKNESS_KEY = "alphacore_sickness";
+export const DEFAULT_SICKNESS_SEVERITY: SicknessSeverity = 3;
+export const SICKNESS_SEVERITY_SCALE: SicknessSeverity[] = [1, 2, 3, 4, 5];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+const SICKNESS_SEVERITY_LABELS: Record<SicknessSeverity, string> = {
+  1: "слегка",
+  2: "умеренно",
+  3: "заметно",
+  4: "тяжело",
+  5: "очень тяжело",
+};
 
 const EMPTY_LOG: SicknessLog = {
   activePeriod: null,
@@ -90,10 +106,28 @@ function formatDurationLabel(durationMs: number): string {
   return parts.length > 0 ? parts.join(" ") : "0 мин";
 }
 
+function normalizeSicknessSeverity(
+  value: unknown,
+  fallback: SicknessSeverity = DEFAULT_SICKNESS_SEVERITY,
+): SicknessSeverity {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5
+    ? (value as SicknessSeverity)
+    : fallback;
+}
+
+export function getSicknessSeverityLabel(severity: SicknessSeverity): string {
+  return SICKNESS_SEVERITY_LABELS[severity];
+}
+
+export function formatSicknessSeverity(severity: SicknessSeverity): string {
+  return `${severity}/5 · ${getSicknessSeverityLabel(severity)}`;
+}
+
 function buildClosedPeriod(
   id: string,
   startedAt: string,
   endedAt: string,
+  severity: SicknessSeverity = DEFAULT_SICKNESS_SEVERITY,
 ): ClosedSicknessPeriod {
   const start = new Date(startedAt);
   const rawEnd = new Date(endedAt);
@@ -102,12 +136,16 @@ function buildClosedPeriod(
   const durationDays = round(durationMs / DAY_MS, 2);
   const durationLabel = formatDurationLabel(durationMs);
   const calendarDays = countCalendarDays(start, end);
-  const summary = `${durationLabel} • ${formatShortDateTime(start)} → ${formatShortDateTime(end)} • ${calendarDays} календ. дн.`;
+  const normalizedSeverity = normalizeSicknessSeverity(severity);
+  const severityLabel = getSicknessSeverityLabel(normalizedSeverity);
+  const summary = `${durationLabel} • ${formatShortDateTime(start)} → ${formatShortDateTime(end)} • ${calendarDays} календ. дн. • ${formatSicknessSeverity(normalizedSeverity)}`;
 
   return {
     id,
     startedAt: start.toISOString(),
     endedAt: end.toISOString(),
+    severity: normalizedSeverity,
+    severityLabel,
     durationMs,
     durationDays,
     durationLabel,
@@ -116,7 +154,11 @@ function buildClosedPeriod(
   };
 }
 
-function buildActiveSummary(startedAt: string, at: Date = new Date()): ActiveSicknessSummary {
+function buildActiveSummary(
+  startedAt: string,
+  severity: SicknessSeverity = DEFAULT_SICKNESS_SEVERITY,
+  at: Date = new Date(),
+): ActiveSicknessSummary {
   const start = new Date(startedAt);
   const rawEnd = at;
   const end = rawEnd.getTime() >= start.getTime() ? rawEnd : start;
@@ -124,14 +166,18 @@ function buildActiveSummary(startedAt: string, at: Date = new Date()): ActiveSic
   const durationDays = round(durationMs / DAY_MS, 2);
   const durationLabel = formatDurationLabel(durationMs);
   const calendarDays = countCalendarDays(start, end);
+  const normalizedSeverity = normalizeSicknessSeverity(severity);
+  const severityLabel = getSicknessSeverityLabel(normalizedSeverity);
 
   return {
     startedAt: start.toISOString(),
+    severity: normalizedSeverity,
+    severityLabel,
     durationMs,
     durationDays,
     durationLabel,
     calendarDays,
-    summary: `${durationLabel} · с ${formatShortDateTime(start)} · ${calendarDays} календ. дн.`,
+    summary: `${durationLabel} · с ${formatShortDateTime(start)} · ${calendarDays} календ. дн. · ${formatSicknessSeverity(normalizedSeverity)}`,
   };
 }
 
@@ -147,6 +193,7 @@ function normalizeActivePeriod(value: unknown): ActiveSicknessPeriod | null {
         ? value.id
         : `sickness-${startedAt}`,
     startedAt,
+    severity: normalizeSicknessSeverity(value.severity),
   };
 }
 
@@ -163,7 +210,7 @@ function normalizeClosedPeriod(value: unknown): ClosedSicknessPeriod | null {
       ? value.id
       : `sickness-${startedAt}`;
 
-  return buildClosedPeriod(id, startedAt, endedAt);
+  return buildClosedPeriod(id, startedAt, endedAt, normalizeSicknessSeverity(value.severity));
 }
 
 function normalizeLog(value: unknown): SicknessLog {
@@ -180,7 +227,8 @@ function normalizeLog(value: unknown): SicknessLog {
   return {
     activePeriod,
     history,
-    updatedAt: toIsoString(value.updatedAt) ?? activePeriod?.startedAt ?? history[0]?.endedAt ?? null,
+    updatedAt:
+      toIsoString(value.updatedAt) ?? activePeriod?.startedAt ?? history[0]?.endedAt ?? null,
   };
 }
 
@@ -192,19 +240,23 @@ export function getSicknessLog(): SicknessLog {
   return normalizeLog(lsGet<SicknessLog | null>(SICKNESS_KEY, null));
 }
 
-export function startSicknessPeriod(at: Date = new Date()): ActiveSicknessPeriod {
+export function startSicknessPeriod(
+  at: Date = new Date(),
+  severity: SicknessSeverity = DEFAULT_SICKNESS_SEVERITY,
+): ActiveSicknessPeriod {
   const log = getSicknessLog();
   if (log.activePeriod) return log.activePeriod;
 
   const activePeriod: ActiveSicknessPeriod = {
     id: uid(),
     startedAt: at.toISOString(),
+    severity: normalizeSicknessSeverity(severity),
   };
 
   save({
     ...log,
     activePeriod,
-    updatedAt: activePeriod.startedAt,
+    updatedAt: new Date().toISOString(),
   });
 
   return activePeriod;
@@ -216,15 +268,77 @@ export function stopSicknessPeriod(at: Date = new Date()): ClosedSicknessPeriod 
 
   if (!activePeriod) return null;
 
-  const closedPeriod = buildClosedPeriod(activePeriod.id, activePeriod.startedAt, at.toISOString());
+  const closedPeriod = buildClosedPeriod(
+    activePeriod.id,
+    activePeriod.startedAt,
+    at.toISOString(),
+    activePeriod.severity,
+  );
 
   save({
     activePeriod: null,
     history: [closedPeriod, ...log.history],
-    updatedAt: closedPeriod.endedAt,
+    updatedAt: new Date().toISOString(),
   });
 
   return closedPeriod;
+}
+
+export function updateActiveSicknessPeriod(patch: {
+  startedAt?: string;
+  severity?: SicknessSeverity | null;
+}): ActiveSicknessPeriod | null {
+  const log = getSicknessLog();
+  if (!log.activePeriod) return null;
+
+  const nextStartedAt = toIsoString(patch.startedAt) ?? log.activePeriod.startedAt;
+  const nextSeverity = Object.prototype.hasOwnProperty.call(patch, "severity")
+    ? normalizeSicknessSeverity(patch.severity, log.activePeriod.severity)
+    : log.activePeriod.severity;
+  const activePeriod: ActiveSicknessPeriod = {
+    ...log.activePeriod,
+    startedAt: nextStartedAt,
+    severity: nextSeverity,
+  };
+
+  save({
+    ...log,
+    activePeriod,
+    updatedAt: new Date().toISOString(),
+  });
+
+  return activePeriod;
+}
+
+export function updateClosedSicknessPeriod(
+  periodId: string,
+  patch: {
+    startedAt?: string;
+    endedAt?: string;
+    severity?: SicknessSeverity | null;
+  },
+): ClosedSicknessPeriod | null {
+  const log = getSicknessLog();
+  const current = log.history.find((period) => period.id === periodId) ?? null;
+
+  if (!current) return null;
+
+  const nextStartedAt = toIsoString(patch.startedAt) ?? current.startedAt;
+  const nextEndedAt = toIsoString(patch.endedAt) ?? current.endedAt;
+  const nextSeverity = Object.prototype.hasOwnProperty.call(patch, "severity")
+    ? normalizeSicknessSeverity(patch.severity, current.severity)
+    : current.severity;
+  const updated = buildClosedPeriod(periodId, nextStartedAt, nextEndedAt, nextSeverity);
+
+  save({
+    ...log,
+    history: log.history
+      .map((period) => (period.id === periodId ? updated : period))
+      .sort((left, right) => right.endedAt.localeCompare(left.endedAt)),
+    updatedAt: new Date().toISOString(),
+  });
+
+  return updated;
 }
 
 export function getLatestClosedSicknessPeriod(
@@ -240,9 +354,13 @@ export function getActiveSicknessSummary(
   if (!value) return null;
 
   const startedAt = "activePeriod" in value ? value.activePeriod?.startedAt : value.startedAt;
+  const severity = "activePeriod" in value
+    ? value.activePeriod?.severity ?? DEFAULT_SICKNESS_SEVERITY
+    : value.severity ?? DEFAULT_SICKNESS_SEVERITY;
+
   if (!startedAt) return null;
 
-  return buildActiveSummary(startedAt, at);
+  return buildActiveSummary(startedAt, severity, at);
 }
 
 export function formatSicknessDateTime(value: string): string {

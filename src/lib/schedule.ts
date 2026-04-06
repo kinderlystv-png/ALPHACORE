@@ -20,6 +20,8 @@ export type ScheduleTone =
   | "review";
 
 export type ScheduleRepeat = "once" | "weekly" | "monthly";
+export type ScheduleRepeatDay = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export type ScheduleSeriesScope = "single" | "following";
 
 export type ScheduleSource = "template" | "studio" | "derived";
 export type EditableScheduleSource = "template" | "studio" | "derived";
@@ -41,6 +43,7 @@ export type ScheduleSlot = {
   projectId?: string;
   repeat?: ScheduleRepeat;
   repeatGroupId?: string;
+  repeatDays?: ScheduleRepeatDay[];
 };
 
 export type ScheduleOverride = {
@@ -57,6 +60,7 @@ export type ScheduleOverride = {
   hidden?: boolean;
   repeat?: ScheduleRepeat;
   repeatGroupId?: string;
+  repeatDays?: ScheduleRepeatDay[];
 };
 
 type StudioEvent = {
@@ -620,6 +624,10 @@ function shiftDate(dateKey: string, days: number): string {
   return toDateKey(next);
 }
 
+export function getScheduleWeekday(dateKey: string): ScheduleRepeatDay {
+  return parseDate(dateKey).getDay() as ScheduleRepeatDay;
+}
+
 export function timeToMinutes(time: string): number {
   const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
@@ -653,6 +661,24 @@ function normalizeScheduleRepeat(value?: string | null): ScheduleRepeat {
   return "once";
 }
 
+export function normalizeScheduleRepeatDays(
+  repeat: ScheduleRepeat,
+  dateKey: string,
+  value?: readonly number[] | null,
+): ScheduleRepeatDay[] | undefined {
+  if (repeat !== "weekly") return undefined;
+
+  const normalized = Array.isArray(value)
+    ? [...new Set(value)]
+        .filter((day): day is ScheduleRepeatDay => Number.isInteger(day) && day >= 0 && day <= 6)
+        .sort((left, right) => left - right)
+    : [];
+
+  if (normalized.length > 0) return normalized;
+
+  return [getScheduleWeekday(dateKey)];
+}
+
 function sanitizeRepeatGroupId(value?: string | null): string | undefined {
   const next = value?.trim();
   return next ? next : undefined;
@@ -674,14 +700,21 @@ function shiftDateByMonths(dateKey: string, months: number): string {
 function buildFutureRepeatDates(
   dateKey: string,
   repeat: Exclude<ScheduleRepeat, "once">,
+  repeatDays?: readonly ScheduleRepeatDay[],
 ): string[] {
-  const count = repeat === "weekly" ? 26 : 12;
+  if (repeat === "weekly") {
+    const selectedDays = normalizeScheduleRepeatDays(repeat, dateKey, repeatDays) ?? [getScheduleWeekday(dateKey)];
+    const horizonDays = 26 * 7;
+
+    return Array.from({ length: horizonDays }, (_, index) => shiftDate(dateKey, index + 1))
+      .filter((candidateDate) => selectedDays.includes(getScheduleWeekday(candidateDate)));
+  }
+
+  const count = 12;
 
   return Array.from({ length: count }, (_, index) => {
     const step = index + 1;
-    return repeat === "weekly"
-      ? shiftDate(dateKey, step * 7)
-      : shiftDateByMonths(dateKey, step);
+    return shiftDateByMonths(dateKey, step);
   });
 }
 
@@ -691,6 +724,12 @@ function resolveRecurringSlotKind(
   if (slot.kind === "event") return "event";
   if (slot.taskId) return "task";
   return slot.id.startsWith("custom-") ? "task" : "event";
+}
+
+export function isRecurringScheduleSlot(
+  slot: Pick<ScheduleSlot, "repeat" | "repeatGroupId">,
+): boolean {
+  return normalizeScheduleRepeat(slot.repeat) !== "once" && Boolean(sanitizeRepeatGroupId(slot.repeatGroupId));
 }
 
 function inferFactSlotTone(
@@ -1002,6 +1041,7 @@ export type CustomEvent = {
   projectId?: string;
   repeat?: ScheduleRepeat;
   repeatGroupId?: string;
+  repeatDays?: ScheduleRepeatDay[];
 };
 
 const CUSTOM_KEY = "alphacore_schedule_custom";
@@ -1047,6 +1087,11 @@ function applyOverrides(
           origin: override.origin,
           repeat: normalizeScheduleRepeat(override.repeat),
           repeatGroupId: sanitizeRepeatGroupId(override.repeatGroupId),
+          repeatDays: normalizeScheduleRepeatDays(
+            normalizeScheduleRepeat(override.repeat),
+            override.date,
+            override.repeatDays,
+          ),
           source,
         })),
     );
@@ -1079,6 +1124,11 @@ function upsertOverride(
     repeatGroupId: hasRepeatGroupPatch
       ? sanitizeRepeatGroupId(patch.repeatGroupId)
       : sanitizeRepeatGroupId(slot.repeatGroupId),
+    repeatDays: normalizeScheduleRepeatDays(
+      hasRepeatPatch ? normalizeScheduleRepeat(patch.repeat) : normalizeScheduleRepeat(slot.repeat),
+      patch.date ?? slot.date,
+      Object.prototype.hasOwnProperty.call(patch, "repeatDays") ? patch.repeatDays : slot.repeatDays,
+    ),
   };
 
   const index = overrides.findIndex((override) => override.originalId === slot.id);
@@ -1168,14 +1218,21 @@ function normalizeCustomEvents(events: CustomEvent[]): {
     const nextEvent: CustomEvent = nextId === event.id ? event : { ...event, id: nextId };
     const normalizedRepeat = normalizeScheduleRepeat(nextEvent.repeat);
     const normalizedRepeatGroupId = sanitizeRepeatGroupId(nextEvent.repeatGroupId);
+    const normalizedRepeatDays = normalizeScheduleRepeatDays(
+      normalizedRepeat,
+      nextEvent.date,
+      nextEvent.repeatDays,
+    );
 
     if (
       normalizedRepeat !== (nextEvent.repeat ?? "once")
       || normalizedRepeatGroupId !== nextEvent.repeatGroupId
+      || JSON.stringify(normalizedRepeatDays ?? []) !== JSON.stringify(nextEvent.repeatDays ?? [])
     ) {
       changed = true;
       nextEvent.repeat = normalizedRepeat;
       nextEvent.repeatGroupId = normalizedRepeat === "once" ? undefined : normalizedRepeatGroupId;
+      nextEvent.repeatDays = normalizedRepeatDays;
     }
 
     seenEventIds.add(nextEvent.id);
@@ -1245,6 +1302,7 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
   const kind = event.kind ?? "task";
   const repeat = normalizeScheduleRepeat(event.repeat);
   const repeatGroupId = repeat === "once" ? undefined : sanitizeRepeatGroupId(event.repeatGroupId);
+  const repeatDays = normalizeScheduleRepeatDays(repeat, event.date, event.repeatDays);
 
   if (!isTaskLikeCustomEvent({ kind })) {
     return {
@@ -1253,6 +1311,7 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
       taskId: null,
       repeat,
       repeatGroupId,
+      repeatDays,
     };
   }
 
@@ -1296,6 +1355,7 @@ function syncCustomEventTask(event: CustomEvent): CustomEvent {
     taskId: nextTaskId,
     repeat,
     repeatGroupId,
+    repeatDays,
   };
 }
 
@@ -1583,6 +1643,7 @@ export function updateEditableScheduleSlot(
           projectId: updated.projectId,
           repeat: updated.repeat,
           repeatGroupId: updated.repeatGroupId,
+          repeatDays: updated.repeatDays,
           source: "derived",
         }
       : null;
@@ -1602,6 +1663,11 @@ export function updateEditableScheduleSlot(
         origin: override.origin,
         repeat: normalizeScheduleRepeat(override.repeat),
         repeatGroupId: sanitizeRepeatGroupId(override.repeatGroupId),
+        repeatDays: normalizeScheduleRepeatDays(
+          normalizeScheduleRepeat(override.repeat),
+          override.date,
+          override.repeatDays,
+        ),
         source: override.originalSource,
       }
     : null;
@@ -1623,14 +1689,27 @@ function clearFutureRepeatGroupOccurrences(
   }
 }
 
+function getFollowingRepeatGroupCustomEvents(
+  repeatGroupId: string,
+  anchorDate: string,
+  currentEventId?: string | null,
+): CustomEvent[] {
+  return loadCustomEvents().filter((event) => {
+    if (event.repeatGroupId !== repeatGroupId) return false;
+    if (currentEventId && event.id === currentEventId) return false;
+    return event.date > anchorDate || event.date === anchorDate;
+  });
+}
+
 function syncFutureRepeatGroupOccurrences(
   slot: ScheduleSlot,
   repeat: Exclude<ScheduleRepeat, "once">,
   repeatGroupId: string,
+  repeatDays?: readonly ScheduleRepeatDay[],
 ): void {
   const kind = resolveRecurringSlotKind(slot);
 
-  for (const date of buildFutureRepeatDates(slot.date, repeat)) {
+  for (const date of buildFutureRepeatDates(slot.date, repeat, repeatDays)) {
     addCustomEvent({
       date,
       start: slot.start,
@@ -1645,6 +1724,7 @@ function syncFutureRepeatGroupOccurrences(
       origin: slot.origin,
       repeat,
       repeatGroupId,
+      repeatDays: normalizeScheduleRepeatDays(repeat, date, repeatDays),
     });
   }
 }
@@ -1655,6 +1735,12 @@ export function saveEditableScheduleSlot(
 ): ScheduleSlot | null {
   const nextRepeat = normalizeScheduleRepeat(
     Object.prototype.hasOwnProperty.call(patch, "repeat") ? patch.repeat : slot.repeat,
+  );
+  const nextDate = patch.date ?? slot.date;
+  const nextRepeatDays = normalizeScheduleRepeatDays(
+    nextRepeat,
+    nextDate,
+    Object.prototype.hasOwnProperty.call(patch, "repeatDays") ? patch.repeatDays : slot.repeatDays,
   );
   const currentGroupId = sanitizeRepeatGroupId(slot.repeatGroupId);
   const nextGroupId = nextRepeat === "once"
@@ -1669,6 +1755,7 @@ export function saveEditableScheduleSlot(
     ...patch,
     repeat: nextRepeat,
     repeatGroupId: nextGroupId,
+    repeatDays: nextRepeatDays,
   });
 
   if (!updated) return null;
@@ -1683,10 +1770,97 @@ export function saveEditableScheduleSlot(
   }
 
   if (nextRepeat !== "once" && nextGroupId) {
-    syncFutureRepeatGroupOccurrences(updated, nextRepeat, nextGroupId);
+    syncFutureRepeatGroupOccurrences(updated, nextRepeat, nextGroupId, nextRepeatDays);
   }
 
   return updated;
+}
+
+export function saveEditableScheduleSlotWithScope(
+  slot: ScheduleSlot,
+  patch: Partial<Omit<CustomEvent, "id">>,
+  scope: ScheduleSeriesScope,
+): ScheduleSlot | null {
+  if (!isRecurringScheduleSlot(slot) || scope === "following") {
+    return saveEditableScheduleSlot(slot, patch);
+  }
+
+  return updateEditableScheduleSlot(slot, {
+    ...patch,
+    repeat: "once",
+    repeatGroupId: undefined,
+    repeatDays: undefined,
+  });
+}
+
+export function removeEditableScheduleSlotWithScope(
+  slot: ScheduleSlot,
+  scope: ScheduleSeriesScope,
+): boolean {
+  if (!isRecurringScheduleSlot(slot) || scope === "single") {
+    return removeEditableScheduleSlot(slot);
+  }
+
+  const repeatGroupId = sanitizeRepeatGroupId(slot.repeatGroupId);
+  if (!repeatGroupId) {
+    return removeEditableScheduleSlot(slot);
+  }
+
+  const following = getFollowingRepeatGroupCustomEvents(
+    repeatGroupId,
+    slot.date,
+    slot.id.startsWith("custom-") ? slot.id : null,
+  );
+  let changed = removeEditableScheduleSlot(slot);
+
+  for (const occurrence of following) {
+    changed = removeCustomEvent(occurrence.id) || changed;
+  }
+
+  return changed;
+}
+
+export function unscheduleEditableScheduleSlotWithScope(
+  slot: ScheduleSlot,
+  scope: ScheduleSeriesScope,
+): boolean {
+  if (!slot.taskId) return false;
+
+  if (!isRecurringScheduleSlot(slot) || scope === "single") {
+    if (slot.id.startsWith("custom-")) {
+      return unscheduleCustomTaskEvent(slot.id);
+    }
+
+    return removeEditableScheduleSlot(slot);
+  }
+
+  const repeatGroupId = sanitizeRepeatGroupId(slot.repeatGroupId);
+  if (!repeatGroupId) {
+    return slot.id.startsWith("custom-")
+      ? unscheduleCustomTaskEvent(slot.id)
+      : removeEditableScheduleSlot(slot);
+  }
+
+  const following = getFollowingRepeatGroupCustomEvents(
+    repeatGroupId,
+    slot.date,
+    slot.id.startsWith("custom-") ? slot.id : null,
+  );
+
+  let changed = slot.id.startsWith("custom-")
+    ? unscheduleCustomTaskEvent(slot.id)
+    : removeEditableScheduleSlot(slot);
+
+  for (const occurrence of following) {
+    if (occurrence.taskId) {
+      changed = unscheduleCustomTaskEvent(occurrence.id) || changed;
+      continue;
+    }
+
+    changed = removeCustomEvent(occurrence.id) || changed;
+  }
+
+  return changed;
 }
 
 export function removeEditableScheduleSlot(slot: ScheduleSlot): boolean {
@@ -1713,6 +1887,11 @@ function getCustomSlots(dateKey: string): ScheduleSlot[] {
     projectId: e.projectId,
     repeat: normalizeScheduleRepeat(e.repeat),
     repeatGroupId: sanitizeRepeatGroupId(e.repeatGroupId),
+    repeatDays: normalizeScheduleRepeatDays(
+      normalizeScheduleRepeat(e.repeat),
+      e.date,
+      e.repeatDays,
+    ),
     source: "derived" as const,
   }));
 }

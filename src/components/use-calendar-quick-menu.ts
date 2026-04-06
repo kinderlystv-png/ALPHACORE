@@ -21,13 +21,17 @@ import { shiftDateKey } from "@/lib/calendar-slot-attention";
 import { getProjects, type Project } from "@/lib/projects";
 import {
   addCustomEvent,
-  removeEditableScheduleSlot,
-  saveEditableScheduleSlot,
+  getScheduleWeekday,
+  isRecurringScheduleSlot,
+  normalizeScheduleRepeatDays,
+  removeEditableScheduleSlotWithScope,
+  saveEditableScheduleSlotWithScope,
   toggleScheduleSlotApproval,
-  unscheduleCustomTaskEvent,
-  updateEditableScheduleSlot,
+  unscheduleEditableScheduleSlotWithScope,
   timeToMinutes,
   type ScheduleRepeat,
+  type ScheduleRepeatDay,
+  type ScheduleSeriesScope,
   type ScheduleSlot,
 } from "@/lib/schedule";
 import type { Task } from "@/lib/tasks";
@@ -100,6 +104,12 @@ export function useCalendarQuickMenu({
         draftKind: slot.kind === "event" ? "event" : "task",
         draftProjectId: getSlotProjectId(slot, linkedTask, projects),
         draftRepeat: slot.repeat ?? "once",
+        draftRepeatDays: normalizeScheduleRepeatDays(
+          slot.repeat ?? "once",
+          slot.date,
+          slot.repeatDays,
+        ) ?? [getScheduleWeekday(slot.date)],
+        draftSeriesScope: isRecurringScheduleSlot(slot) ? "single" : "following",
       });
     },
     [hideDesktopSlotHint, linkedTasksById, onClearHoveredSlot],
@@ -110,7 +120,13 @@ export function useCalendarQuickMenu({
       patch: Partial<
         Pick<
           QuickMenuState,
-          "draftTitle" | "draftTone" | "draftKind" | "draftProjectId" | "draftRepeat"
+          | "draftTitle"
+          | "draftTone"
+          | "draftKind"
+          | "draftProjectId"
+          | "draftRepeat"
+          | "draftRepeatDays"
+          | "draftSeriesScope"
         >
       >,
     ) => {
@@ -120,15 +136,19 @@ export function useCalendarQuickMenu({
   );
 
   const applyQuickSlotPatch = useCallback(
-    (slot: ScheduleSlot, patch: Partial<EditableSlotDraft>) => {
-      updateEditableScheduleSlot(slot, {
+    (
+      slot: ScheduleSlot,
+      patch: Partial<EditableSlotDraft>,
+      scope: ScheduleSeriesScope = "single",
+    ) => {
+      saveEditableScheduleSlotWithScope(slot, {
         date: patch.date,
         start: patch.start,
         end: patch.end,
         title: patch.title,
         tone: patch.tone,
         tags: patch.tags,
-      });
+      }, scope);
       onVersionBump();
       clearQuickMenu();
     },
@@ -152,26 +172,40 @@ export function useCalendarQuickMenu({
     const isCustomSlot = quickMenu.slot.id.startsWith("custom-");
     const nextKind = isCustomSlot ? quickMenu.draftKind : quickMenu.slot.kind ?? "event";
     const nextRepeat: ScheduleRepeat = quickMenu.draftRepeat;
+    const currentRepeatDays = normalizeScheduleRepeatDays(
+      quickMenu.slot.repeat ?? "once",
+      quickMenu.slot.date,
+      quickMenu.slot.repeatDays,
+    ) ?? [getScheduleWeekday(quickMenu.slot.date)];
+    const nextRepeatDays: ScheduleRepeatDay[] = nextRepeat === "weekly"
+      ? quickMenu.draftRepeatDays
+      : [];
+
+    if (nextRepeat === "weekly" && nextRepeatDays.length === 0) {
+      return;
+    }
 
     if (
       nextTitle === quickMenu.slot.title &&
       quickMenu.draftTone === quickMenu.slot.tone &&
       nextKind === (quickMenu.slot.kind ?? "event") &&
       quickMenu.draftProjectId === currentProjectId &&
-      nextRepeat === (quickMenu.slot.repeat ?? "once")
+      nextRepeat === (quickMenu.slot.repeat ?? "once") &&
+      JSON.stringify(nextRepeatDays) === JSON.stringify(currentRepeatDays)
     ) {
       clearQuickMenu();
       return;
     }
 
-    saveEditableScheduleSlot(quickMenu.slot, {
+    saveEditableScheduleSlotWithScope(quickMenu.slot, {
       title: nextTitle,
       tone: quickMenu.draftTone,
       kind: nextKind,
       projectId: selectedProject?.id,
       project: selectedProject?.name,
       repeat: nextRepeat,
-    });
+      repeatDays: nextRepeat === "weekly" ? nextRepeatDays : undefined,
+    }, quickMenu.draftSeriesScope);
     onVersionBump();
     clearQuickMenu();
   }, [clearQuickMenu, linkedTasksById, onVersionBump, quickMenu]);
@@ -208,8 +242,8 @@ export function useCalendarQuickMenu({
   }, [clearQuickMenu, onVersionBump, quickMenu]);
 
   const unscheduleQuickSlot = useCallback(
-    (slot: ScheduleSlot) => {
-      unscheduleCustomTaskEvent(slot.id);
+    (slot: ScheduleSlot, scope: ScheduleSeriesScope = "single") => {
+      unscheduleEditableScheduleSlotWithScope(slot, scope);
       onVersionBump();
       clearQuickMenu();
     },
@@ -217,8 +251,8 @@ export function useCalendarQuickMenu({
   );
 
   const deleteQuickSlot = useCallback(
-    (slot: ScheduleSlot) => {
-      removeEditableScheduleSlot(slot);
+    (slot: ScheduleSlot, scope: ScheduleSeriesScope = "single") => {
+      removeEditableScheduleSlotWithScope(slot, scope);
       onVersionBump();
       clearQuickMenu();
     },
