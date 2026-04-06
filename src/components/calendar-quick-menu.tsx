@@ -240,10 +240,13 @@ export function CalendarQuickMenu({
   return (
     <div
       ref={menuRef}
-      className={quickMenu.mobile ? "fixed bottom-20 left-1/2 z-50 w-[min(22rem,calc(100vw-1rem))] -translate-x-1/2" : "fixed z-50 w-[min(24rem,calc(100vw-1.5rem))] -translate-x-1/2"}
-      style={quickMenu.mobile ? undefined : { top: quickMenu.top, left: quickMenu.left }}
+      className={quickMenu.mobile
+        ? "fixed inset-y-2 left-1/2 z-50 w-[min(24rem,calc(100vw-1rem))] -translate-x-1/2"
+        : "fixed inset-y-3 z-50 w-[min(24rem,calc(100vw-1.5rem))] -translate-x-1/2"
+      }
+      style={quickMenu.mobile ? undefined : { left: quickMenu.left }}
     >
-      <div className={`overflow-y-auto overscroll-contain rounded-[1.75rem] border border-zinc-800 bg-zinc-950/95 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur ${quickMenu.mobile ? "max-h-[min(70vh,34rem)] p-2.5" : "max-h-[min(72vh,38rem)] p-2.5"}`}>
+      <div className={`h-full overflow-y-auto overscroll-contain rounded-[1.75rem] border border-zinc-800 bg-zinc-950/95 shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur ${quickMenu.mobile ? "p-2.5" : "p-2.5"}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate text-[10px] uppercase tracking-[0.18em] text-zinc-500">Слот</p>
