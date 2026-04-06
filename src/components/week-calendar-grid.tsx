@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useCalendarShellControls } from "@/components/calendar-shell-controls-context";
 import { CalendarDayPressureChip } from "@/components/calendar-day-pressure-chip";
 import { CalendarActiveEditOverlay } from "@/components/calendar-active-edit-overlay";
 import { CalendarDesktopHint } from "@/components/calendar-desktop-hint";
@@ -13,10 +14,6 @@ import { useCalendarPointerEdit } from "@/components/use-calendar-pointer-edit";
 import { useCalendarQuickMenu } from "@/components/use-calendar-quick-menu";
 import { useCalendarTaskDragAndDrop } from "@/components/use-calendar-task-dnd";
 import {
-  useCalendarAnchorNavigation,
-  useCalendarViewWindow,
-} from "@/components/use-calendar-window-state";
-import {
   HEADER_BASE_H,
   HEADER_TASK_GAP,
   HEADER_TASK_MARGIN_TOP,
@@ -25,7 +22,6 @@ import {
   ROW_H,
   TOTAL_HOURS,
   formatHour,
-  getDayModeBadgeClass,
   slotTop as sharedSlotTop,
   centerNowLine,
   type DayColumn,
@@ -51,8 +47,6 @@ import {
   getYesterdayKey,
 } from "@/lib/calendar-slot-attention";
 import {
-  AREA_COLOR,
-  AREA_LEGEND,
   taskColor,
 } from "@/lib/life-areas";
 import {
@@ -88,28 +82,46 @@ function taskBelongsToDay(task: Task, dayKey: string, today: string, isToday: bo
   return isToday && task.dueDate < today;
 }
 
+const SCROLLABLE_PAST_DAYS = 1;
+const SCROLLABLE_FUTURE_DAYS = 91;
+const MIN_DAY_COLUMN_WIDTH = 120;
+const CALENDAR_INITIAL_VIEWPORT_OFFSET_REM = 8.5;
+const DEFAULT_DAY_COLUMN_WIDTH: Record<3 | 8, number> = {
+  3: 196,
+  8: 148,
+};
+
+function buildScrollableDays(todayKey: string): Date[] {
+  const start = new Date(`${todayKey}T00:00:00`);
+  start.setDate(start.getDate() - SCROLLABLE_PAST_DAYS);
+  start.setHours(0, 0, 0, 0);
+
+  return Array.from({ length: SCROLLABLE_PAST_DAYS + SCROLLABLE_FUTURE_DAYS + 1 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+}
+
 /* ── Component ── */
 
 export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
+  void stats;
+
+  const { todayJumpToken, viewDays } = useCalendarShellControls();
   const { signals: heysSignals, snapshot: heysSnapshot } = useHeysSync();
   const [version, setVersion] = useState(0);
   const [hoveredSlotKey, setHoveredSlotKey] = useState<string | null>(null);
+  const [gridViewportWidth, setGridViewportWidth] = useState<number | null>(null);
+  const [shouldCenterNow, setShouldCenterNow] = useState(true);
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const overlayGridRef = useRef<HTMLDivElement>(null);
   const visibleColumnsRef = useRef<DayColumn[]>([]);
   const skipNextClickRef = useRef(false);
   const today = todayKey();
   const yesterdayKey = getYesterdayKey(today);
-
-  const {
-    anchor,
-    days,
-    shouldCenterNow,
-    markNowCentered,
-    shiftWeek,
-    goToday,
-    weekLabel,
-  } = useCalendarAnchorNavigation();
+  const days = useMemo(() => buildScrollableDays(today), [today]);
 
   // subscribe to data changes
   useEffect(() => {
@@ -173,34 +185,54 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     );
   }, [heysSignals, heysSnapshot?.profile?.sleepHoursGoal, version]);
 
-  const {
-    viewMode,
-    compactStart,
-    compactCount,
-    viewportWidth,
-    visibleColumns,
-    visibleWindowLabel,
-    showCompactControls,
-    switchToCompact,
-    switchToFull,
-    shiftCompactWindow,
-    resetCompactWindow,
-  } = useCalendarViewWindow({
-    columns,
-    shiftWeek,
-    goToday,
-  });
+  const visibleColumns = columns;
+
+  useEffect(() => {
+    const syncViewport = () => {
+      setViewportWidth(window.innerWidth);
+    };
+
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
+  }, []);
+
+  useEffect(() => {
+    const container = gridRef.current;
+    if (!container) return;
+
+    const syncWidth = () => {
+      setGridViewportWidth(container.clientWidth);
+    };
+
+    syncWidth();
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      syncWidth();
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     visibleColumnsRef.current = visibleColumns;
   }, [visibleColumns]);
 
-  const visibleGridWidth = 56 + Math.max(visibleColumns.length, 1) * 120;
+  const dayColumnWidth = useMemo(() => {
+    if (!gridViewportWidth) return DEFAULT_DAY_COLUMN_WIDTH[viewDays];
+
+    const availableWidth = Math.max(gridViewportWidth - 56, MIN_DAY_COLUMN_WIDTH * viewDays);
+    return Math.max(MIN_DAY_COLUMN_WIDTH, Math.floor(availableWidth / viewDays));
+  }, [gridViewportWidth, viewDays]);
+
+  const visibleGridWidth = 56 + Math.max(visibleColumns.length, 1) * dayColumnWidth;
   const isMobileGripMode = viewportWidth != null && viewportWidth < 640;
-  const overlayWidth =
-    overlayGridRef.current?.getBoundingClientRect().width ??
-    Math.max(visibleGridWidth - 56, visibleColumns.length * 120);
-  const overlayColumnWidth = visibleColumns.length > 0 ? overlayWidth / visibleColumns.length : 120;
+  const overlayWidth = Math.max(visibleGridWidth - 56, visibleColumns.length * dayColumnWidth);
+  const overlayColumnWidth = dayColumnWidth;
+  const initialViewportHeight = `calc(100svh - ${CALENDAR_INITIAL_VIEWPORT_OFFSET_REM}rem)`;
   const maxHeaderTaskCount = useMemo(
     () => visibleColumns.reduce((max, column) => Math.max(max, column.tasks.length), 0),
     [visibleColumns],
@@ -217,16 +249,16 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   useEffect(() => {
     if (!shouldCenterNow) return;
 
-    const hasTodayColumn = days.some((day) => dateStr(day) === today);
+    const hasTodayColumn = visibleColumns.some((column) => column.isToday);
     if (!hasTodayColumn) return;
 
     const frame = requestAnimationFrame(() => {
       centerNowLine(gridRef.current, headerHeight);
-      markNowCentered();
+      setShouldCenterNow(false);
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [days, headerHeight, markNowCentered, shouldCenterNow, today]);
+  }, [headerHeight, shouldCenterNow, visibleColumns]);
 
   const linkedTasksById = useMemo(
     () => new Map(getTasks().map((task) => [task.id, task])),
@@ -245,8 +277,8 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
   } = useCalendarDesktopSlotHint({
     gridRef,
     version,
-    viewMode,
-    compactStart,
+    viewMode: "full",
+    compactStart: 0,
   });
 
   const {
@@ -322,184 +354,77 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
     onVersionBump: bumpVersion,
   });
 
-  const handleGoToday = useCallback(() => {
-    goToday();
-    resetCompactWindow();
-  }, [goToday, resetCompactWindow]);
+  const scrollToToday = useCallback(
+    (behavior: ScrollBehavior = "auto") => {
+      const container = gridRef.current;
+      if (!container) return;
+
+      const todayIndex = visibleColumns.findIndex((column) => column.isToday);
+      if (todayIndex < 0) return;
+
+      const targetLeft = Math.max(0, (todayIndex - 1) * dayColumnWidth);
+
+      container.scrollTo({
+        left: targetLeft,
+        behavior,
+      });
+      setShouldCenterNow(true);
+    },
+    [dayColumnWidth, visibleColumns],
+  );
+
+  useEffect(() => {
+    if (todayJumpToken === 0) return;
+    scrollToToday();
+  }, [scrollToToday, todayJumpToken]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const container = gridRef.current;
+      if (!container) return;
+
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        container.scrollBy({
+          left: (event.key === "ArrowRight" ? 1 : -1) * dayColumnWidth * 7,
+          behavior: "smooth",
+        });
+      } else if (event.key === "t" || event.key === "T") {
+        event.preventDefault();
+        scrollToToday();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [dayColumnWidth, scrollToToday]);
 
   const toggleSlotApproval = useCallback((slot: ScheduleSlot) => {
     toggleScheduleSlotApproval(slot);
     setVersion((value) => value + 1);
   }, []);
 
-  if (!anchor) {
-    return (
-      <section className="flex flex-col rounded-4xl border border-zinc-800/50 bg-zinc-950/40">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/50 px-4 py-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-700">
-              ←
-            </span>
-            <span className="rounded-xl border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-600">
-              Сегодня
-            </span>
-            <span className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-700">
-              →
-            </span>
-            <span className="ml-2 text-sm font-semibold text-zinc-700">Загрузка…</span>
-
-            {stats && (
-              <div className="ml-2 flex flex-wrap gap-2">
-                <span className="rounded-lg border border-sky-500/10 bg-sky-950/5 px-2 py-1 text-[11px] text-sky-400/60">
-                  {stats.inboxCount} inbox
-                </span>
-                <span className="rounded-lg border border-emerald-500/10 bg-emerald-950/5 px-2 py-1 text-[11px] text-emerald-400/60">
-                  {stats.activeCount} в работе
-                </span>
-                <span className="rounded-lg border border-amber-500/10 bg-amber-950/5 px-2 py-1 text-[11px] text-amber-400/60">
-                  {stats.doneThisWeek} готово/нед
-                </span>
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {AREA_LEGEND.map((a) => (
-              <span
-                key={a.key}
-                className="flex items-center gap-1.5 text-[10px] text-zinc-600"
-              >
-                <span className={`inline-block h-2 w-2 rounded-full ${AREA_COLOR[a.key].dot}`} />
-                {a.emoji} {a.label}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="h-[75vh] min-h-160 animate-pulse bg-zinc-950/20" />
-      </section>
-    );
-  }
-
   return (
     <section className="flex flex-col rounded-4xl border border-zinc-800/50 bg-zinc-950/40">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/50 px-4 py-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => shiftWeek(-1)}
-            aria-label="Предыдущая неделя"
-            className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
-          >
-            ←
-          </button>
-          <button
-            type="button"
-            onClick={handleGoToday}
-            className="rounded-xl border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-600 hover:text-zinc-100"
-          >
-            Сегодня
-          </button>
-          <button
-            type="button"
-            onClick={() => shiftWeek(1)}
-            aria-label="Следующая неделя"
-            className="rounded-xl border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
-          >
-            →
-          </button>
-          <span className="ml-2 text-sm font-semibold text-zinc-100">{weekLabel}</span>
-
-          {viewMode === "compact" && (
-            <span className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[11px] text-zinc-400">
-              {visibleWindowLabel}
-            </span>
-          )}
-
-          {stats && (
-            <div className="ml-2 flex flex-wrap gap-2">
-              <span className="rounded-lg border border-sky-500/20 bg-sky-950/10 px-2 py-1 text-[11px] text-sky-300">
-                {stats.inboxCount} inbox
-              </span>
-              <span className="rounded-lg border border-emerald-500/20 bg-emerald-950/10 px-2 py-1 text-[11px] text-emerald-300">
-                {stats.activeCount} в работе
-              </span>
-              <span className="rounded-lg border border-amber-500/20 bg-amber-950/10 px-2 py-1 text-[11px] text-amber-300">
-                {stats.doneThisWeek} готово/нед
-              </span>
-            </div>
-          )}
-
-          {heysDayMode && (
-            <span
-              title={heysDayMode.summary}
-              className={`ml-2 rounded-lg border px-2 py-1 text-[11px] ${getDayModeBadgeClass(heysDayMode)}`}
-            >
-              HEYS · {heysDayMode.label}
-            </span>
-          )}
-        </div>
-
-        {/* Legend */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="mr-1 flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/40 p-1">
-            <button
-              type="button"
-              onClick={switchToCompact}
-              className={`rounded-full px-2 py-1 text-[10px] transition ${
-                viewMode === "compact" ? "bg-zinc-50 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"
-              }`}
-            >
-              {compactCount}д
-            </button>
-            <button
-              type="button"
-              onClick={switchToFull}
-              className={`rounded-full px-2 py-1 text-[10px] transition ${
-                viewMode === "full" ? "bg-zinc-50 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"
-              }`}
-            >
-              8д
-            </button>
-          </div>
-
-          {showCompactControls && (
-            <div className="mr-2 flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/40 p-1">
-              <button
-                type="button"
-                onClick={() => shiftCompactWindow(-1)}
-                className="rounded-full px-2 py-1 text-[10px] text-zinc-400 transition hover:text-zinc-100"
-              >
-                ← окно
-              </button>
-              <button
-                type="button"
-                onClick={() => shiftCompactWindow(1)}
-                className="rounded-full px-2 py-1 text-[10px] text-zinc-400 transition hover:text-zinc-100"
-              >
-                окно →
-              </button>
-            </div>
-          )}
-          {AREA_LEGEND.map((a) => (
-            <span
-              key={a.key}
-              className="flex items-center gap-1.5 text-[10px] text-zinc-500"
-            >
-              <span className={`inline-block h-2 w-2 rounded-full ${AREA_COLOR[a.key].dot}`} />
-              {a.emoji} {a.label}
-            </span>
-          ))}
-        </div>
-      </div>
-
       {/* Grid */}
-      <div ref={gridRef} className="relative overflow-auto" style={{ maxHeight: "75vh" }}>
+      <div
+        ref={gridRef}
+        className="relative overflow-auto"
+        style={{
+          height: initialViewportHeight,
+          maxHeight: initialViewportHeight,
+          overscrollBehaviorX: "contain",
+          scrollSnapType: "x proximity",
+        }}
+      >
         <div
           className="relative grid"
           style={{
-            gridTemplateColumns: `56px repeat(${visibleColumns.length}, minmax(120px, 1fr))`,
+            gridTemplateColumns: `56px repeat(${visibleColumns.length}, ${dayColumnWidth}px)`,
             minWidth: `${visibleGridWidth}px`,
           }}
         >
@@ -522,7 +447,7 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
               } ${
                 col.isToday ? "border-r-sky-400/35" : "border-r-zinc-700/70"
               }`}
-              style={{ height: headerHeight }}
+              style={{ height: headerHeight, scrollSnapAlign: "start" }}
               onDragOver={(e) => !col.isPast && handleDragOver(e, col.key)}
               onDragLeave={!col.isPast ? handleDragLeave : undefined}
               onDrop={(e) => !col.isPast && handleDropToDayHeader(e, col.key)}
@@ -646,14 +571,14 @@ export function WeekCalendarGrid({ stats }: WeekCalendarGridProps) {
           style={{
             top: headerHeight,
             left: 56,
-            width: "calc(100% - 56px)",
+            width: overlayWidth,
             height: TOTAL_HOURS * ROW_H,
-            minWidth: visibleGridWidth - 56,
+            minWidth: overlayWidth,
           }}
         >
           <div
             className="relative grid h-full"
-            style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(120px, 1fr))` }}
+            style={{ gridTemplateColumns: `repeat(${visibleColumns.length}, ${dayColumnWidth}px)` }}
           >
             {visibleColumns.map((col) => (
               <CalendarOverlayColumn
