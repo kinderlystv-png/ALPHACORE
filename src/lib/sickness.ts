@@ -16,6 +16,15 @@ export type ClosedSicknessPeriod = {
   summary: string;
 };
 
+export type ActiveSicknessSummary = {
+  startedAt: string;
+  durationMs: number;
+  durationDays: number;
+  durationLabel: string;
+  calendarDays: number;
+  summary: string;
+};
+
 export type SicknessLog = {
   activePeriod: ActiveSicknessPeriod | null;
   history: ClosedSicknessPeriod[];
@@ -104,6 +113,25 @@ function buildClosedPeriod(
     durationLabel,
     calendarDays,
     summary,
+  };
+}
+
+function buildActiveSummary(startedAt: string, at: Date = new Date()): ActiveSicknessSummary {
+  const start = new Date(startedAt);
+  const rawEnd = at;
+  const end = rawEnd.getTime() >= start.getTime() ? rawEnd : start;
+  const durationMs = Math.max(0, end.getTime() - start.getTime());
+  const durationDays = round(durationMs / DAY_MS, 2);
+  const durationLabel = formatDurationLabel(durationMs);
+  const calendarDays = countCalendarDays(start, end);
+
+  return {
+    startedAt: start.toISOString(),
+    durationMs,
+    durationDays,
+    durationLabel,
+    calendarDays,
+    summary: `${durationLabel} · с ${formatShortDateTime(start)} · ${calendarDays} календ. дн.`,
   };
 }
 
@@ -199,7 +227,25 @@ export function stopSicknessPeriod(at: Date = new Date()): ClosedSicknessPeriod 
   return closedPeriod;
 }
 
-export function formatSicknessStartedAt(value: string): string {
+export function getLatestClosedSicknessPeriod(
+  log: SicknessLog = getSicknessLog(),
+): ClosedSicknessPeriod | null {
+  return log.history[0] ?? null;
+}
+
+export function getActiveSicknessSummary(
+  value: SicknessLog | ActiveSicknessPeriod | null,
+  at: Date = new Date(),
+): ActiveSicknessSummary | null {
+  if (!value) return null;
+
+  const startedAt = "activePeriod" in value ? value.activePeriod?.startedAt : value.startedAt;
+  if (!startedAt) return null;
+
+  return buildActiveSummary(startedAt, at);
+}
+
+export function formatSicknessDateTime(value: string): string {
   const parsed = new Date(value);
 
   if (Number.isNaN(parsed.getTime())) {
@@ -212,4 +258,8 @@ export function formatSicknessStartedAt(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parsed);
+}
+
+export function formatSicknessStartedAt(value: string): string {
+  return formatSicknessDateTime(value);
 }

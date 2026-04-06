@@ -11,6 +11,13 @@ import type { JournalEntry } from "./journal";
 import { paramStatus, type MedEntry, type MedParam } from "./medical";
 import type { Project, StatusTone } from "./projects";
 import {
+	formatSicknessDateTime,
+	getActiveSicknessSummary,
+	getLatestClosedSicknessPeriod,
+	type ClosedSicknessPeriod,
+	type SicknessLog,
+} from "./sickness";
+import {
 	isEditableScheduleSlot,
 	minutesToTime,
 	timeToMinutes,
@@ -133,6 +140,7 @@ export type RecommendationRuntimeInput = {
 	upcomingSchedule: ScheduleSlot[];
 	heysDayMode?: DayMode | null;
 	heysIntradaySignal?: HeysIntradaySignal | null;
+	sicknessLog: SicknessLog;
 };
 
 export type RecommendationDayModeContext = {
@@ -179,6 +187,11 @@ export type RecommendationRuntimeContext = {
 	medical: {
 		latestEntry: MedEntry | null;
 		flags: RecommendationMedicalFlag[];
+	};
+	sickness: {
+		current: ReturnType<typeof getActiveSicknessSummary>;
+		latestClosed: ClosedSicknessPeriod | null;
+		historyCount: number;
 	};
 	schedule: {
 		all: ScheduleSlot[];
@@ -1924,6 +1937,8 @@ export function buildRecommendationRuntimeContext(
 		(habit) => !!input.habitChecksToday[habit.id],
 	);
 	const latestEntry = [...input.medicalEntries].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
+	const currentSickness = getActiveSicknessSummary(input.sicknessLog);
+	const latestClosedSickness = getLatestClosedSicknessPeriod(input.sicknessLog);
 	const flags = [...input.medicalEntries]
 		.sort((a, b) => b.date.localeCompare(a.date))
 		.flatMap((entry) => {
@@ -1978,6 +1993,11 @@ export function buildRecommendationRuntimeContext(
 			latestEntry,
 			flags,
 		},
+		sickness: {
+			current: currentSickness,
+			latestClosed: latestClosedSickness,
+			historyCount: input.sicknessLog.history.length,
+		},
 		schedule: {
 			all: upcomingSchedule,
 			today: sortSlots(input.todaySchedule),
@@ -1997,6 +2017,7 @@ function findPriorityForArea(
 	heysContext?: RecommendationDayModeContext | null,
 ): AgentPriority | null {
 	const dayModePriority = priorities.find((priority) => priority.id.startsWith("heys-day-mode-")) ?? null;
+	const sicknessPriority = priorities.find((priority) => priority.id === "sickness-active") ?? null;
 	if (dayModePriority && heysContext?.focusArea === area.key) {
 		return dayModePriority;
 	}
@@ -2007,7 +2028,7 @@ function findPriorityForArea(
 				priorities.find((priority) => priority.id.startsWith("project-")) ?? null
 			);
 		case "health":
-			return priorities.find((priority) => priority.id === "health-floor") ?? null;
+				return sicknessPriority ?? priorities.find((priority) => priority.id === "health-floor") ?? null;
 		case "family":
 			return priorities.find((priority) => priority.id === "family-protection") ?? null;
 		case "operations":
@@ -2025,7 +2046,8 @@ function buildWorkRuntimeData(
 	context: RecommendationRuntimeContext,
 ): CandidateRuntimeData {
 	const leadProject = context.projects.attention[0] ?? null;
-	const energyConstrained = context.schedule.today.some(isCleanupLoadSlot);
+	const sicknessCurrent = context.sickness.current;
+	const energyConstrained = context.schedule.today.some(isCleanupLoadSlot) || Boolean(sicknessCurrent);
 	const planningSlot = pickPlanningSlot(context);
 	const preferredTrack = leadProject ? getProjectTrack(leadProject) : null;
 	const alignedTasks = preferredTrack
@@ -2091,17 +2113,28 @@ function buildWorkRuntimeData(
 		);
 	}
 
+	if (sicknessCurrent) {
+		signals.unshift(
+			`Идёт период болезни: ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)}`,
+		);
+	}
+
 	return {
 		candidateId: leadProject ? `advice-project-${leadProject.id}` : undefined,
 		href: leadProject ? `/projects?open=${leadProject.id}` : undefined,
-		title: leadProject
-			? `Развернуть ${leadProject.name} без размазывания`
-			: undefined,
-		context: leadTask
-			? `Сейчас лучше атаковать не абстрактную работу, а конкретный узел: ${clipText(leadTask.title, 72)}.`
-			: undefined,
-		impact:
-			queue.length > 0
+		title: sicknessCurrent
+			? "Сузить рабочий фронт на время болезни"
+			: leadProject
+				? `Развернуть ${leadProject.name} без размазывания`
+				: undefined,
+		context: sicknessCurrent
+			? `Сейчас активен период болезни, поэтому рабочий контур должен быть одноходовым: один щадящий шаг вместо обычного execution-марафона.`
+			: leadTask
+				? `Сейчас лучше атаковать не абстрактную работу, а конкретный узел: ${clipText(leadTask.title, 72)}.`
+				: undefined,
+		impact: sicknessCurrent
+			? "Попроси агента оставить один узкий рабочий step, который не спорит с recovery mode, и убрать всё лишнее с сегодня."
+			: queue.length > 0
 				? `Попроси агента превратить ${queue.length} конкурирующих рабочих куска в один понятный план на сегодня.`
 				: undefined,
 		replacementAction: planningSlot
@@ -2125,7 +2158,9 @@ function buildWorkRuntimeData(
 					: "Пока нет явного распределения задач по окнам недели.",
 		],
 		requestLines: [
-			leadProject && energyConstrained
+			sicknessCurrent
+				? "Если планируешь работу во время болезни, сузь её до черновика / skeleton / одного ответа, без длинного execution-блока."
+				: leadProject && energyConstrained
 				? "Если день тяжёлый по энергии, сузь next step до одного черновика или skeleton, а не до полной финализации."
 				: leadProject
 					? "Свяжи план с текущим next step проекта, а не придумывай новый параллельный трек."
@@ -2135,6 +2170,7 @@ function buildWorkRuntimeData(
 		],
 		signals,
 		tags: [
+			sicknessCurrent ? "sickness-active" : null,
 			leadProject?.id,
 			leadTask?.priority,
 			leadTask?.dueDate ? "deadline" : null,
@@ -2160,7 +2196,8 @@ function buildWorkRuntimeData(
 		weightBoost:
 			context.tasks.overdue.length * 5 +
 			context.tasks.p1.length * 4 +
-			(leadProject?.status === "red" ? 12 : leadProject ? 6 : 0),
+			(leadProject?.status === "red" ? 12 : leadProject ? 6 : 0) +
+			(sicknessCurrent ? 10 : 0),
 	};
 }
 
@@ -2169,6 +2206,7 @@ function buildHealthRuntimeData(
 ): CandidateRuntimeData {
 	const missing = context.habits.missingToday.slice(0, 3);
 	const flags = context.medical.flags.slice(0, 2);
+	const sicknessCurrent = context.sickness.current;
 	const cleanupToday = context.schedule.today.filter(isCleanupLoadSlot);
 	const hasCleanupLoadToday = cleanupToday.length > 0;
 	const healthJournal =
@@ -2199,6 +2237,12 @@ function buildHealthRuntimeData(
 		signals.push(`Self-report: “${clipText(healthJournal.text, 64)}”`);
 	}
 
+	if (sicknessCurrent) {
+		signals.unshift(
+			`Болею ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)}`,
+		);
+	}
+
 	const habitsLine = missing.length > 0
 		? `Сегодня не закрыты привычки: ${missing.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
 		: `Сегодня уже закрыто: ${
@@ -2215,13 +2259,20 @@ function buildHealthRuntimeData(
 	const cleanupLine = hasCleanupLoadToday
 		? `Сегодня cleanup-нагрузка: ${cleanupToday.map((slot) => formatCleanupLoadBrief(slot)).join("; ")}. Считать это существенной физической нагрузкой; отдельное cardio по умолчанию не форсировать.`
 		: null;
+	const sicknessLine = sicknessCurrent
+		? `Сейчас активен период болезни: с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · длительность ${sicknessCurrent.durationLabel} · ${sicknessCurrent.calendarDays} календ. дн.`
+		: context.sickness.latestClosed
+			? `Последний период болезни: ${formatSicknessDateTime(context.sickness.latestClosed.startedAt)} → ${formatSicknessDateTime(context.sickness.latestClosed.endedAt)} · ${context.sickness.latestClosed.durationLabel}.`
+			: null;
 	const selfReportLine = healthJournal
 		? `Свежий self-report: "${clipText(healthJournal.text, 120)}".`
 		: "Если строишь план, считай его через реальную энергию дня, а не через идеальную версию меня.";
 
 	return {
 		title:
-			hasCleanupLoadToday
+			sicknessCurrent
+				? "Переключить день в режим болезни"
+				: hasCleanupLoadToday
 				? "Не дублировать cardio на cleanup-дне"
 				: flags.length > 0
 				? "Собрать health floor с учётом анализов"
@@ -2229,7 +2280,9 @@ function buildHealthRuntimeData(
 					? "Вернуть телесную базу до вечера"
 					: undefined,
 		context:
-			flags.length > 0
+			sicknessCurrent
+				? "Сейчас health floor — это основной режим дня, а не nice to have вокруг productivity."
+				: flags.length > 0
 				? "Есть конкретные медсигналы, поэтому productivity не должна притворяться лечением."
 				: hasCleanupLoadToday
 					? "Сегодня в расписании уже есть cleanup-нагрузка, поэтому бег не должен считаться обязательным по умолчанию."
@@ -2237,18 +2290,23 @@ function buildHealthRuntimeData(
 					? "Сегодня база проседает на уровне привычек, а не на уровне мотивационных речей."
 					: undefined,
 		impact:
-			missing.length > 0 || flags.length > 0 || hasCleanupLoadToday
+			sicknessCurrent
+				? "Попроси агента резко упростить день: recovery, follow-up по самочувствию и один щадящий step без hero mode."
+				: missing.length > 0 || flags.length > 0 || hasCleanupLoadToday
 				? hasCleanupLoadToday
 					? "Попроси агента собрать щадящий health floor и отдельно решить, нужно ли сегодня вообще дополнительное cardio."
 					: "Попроси агента зафиксировать реалистичный health floor без героизма и без потери медицинского контекста."
 				: undefined,
 		promptLines: [
+			sicknessLine,
 			habitsLine,
 			cleanupLine ?? medicalLine,
 			hasCleanupLoadToday ? selfReportLine : selfReportLine,
-		],
+		].filter(Boolean) as string[],
 		requestLines: [
-			hasCleanupLoadToday
+			sicknessCurrent
+				? "Собери режим болезни: щадящий floor, гидратация/сон, только один рабочий micro-step и явный запрет на перегруз."
+				: hasCleanupLoadToday
 				? "Если сегодня уже есть cleanup-нагрузка, не форсируй отдельное cardio по умолчанию; максимум mobility или walk, если это помогает восстановлению."
 				: "Сделай план щадящим: одна минимальная победа до вечера, один follow-up и один запрет на перегруз.",
 			flags.length > 0
@@ -2257,6 +2315,7 @@ function buildHealthRuntimeData(
 		],
 		signals,
 		tags: [
+			sicknessCurrent ? "sickness-active" : null,
 			...missing.map((habit) => habit.id),
 			flags.length > 0 ? "medical-flag" : null,
 			hasCleanupLoadToday ? "cleanup-load" : null,
@@ -2264,6 +2323,7 @@ function buildHealthRuntimeData(
 			healthJournal ? "self-report" : null,
 		].filter(Boolean) as string[],
 		weightBoost:
+			(sicknessCurrent ? 22 : 0) +
 			flags.length * 10 +
 			missing.length * 5 +
 			cleanupToday.length * 6 +
@@ -2548,6 +2608,7 @@ function buildReflectionRuntimeData(
 function buildRecoveryRuntimeData(
 	context: RecommendationRuntimeContext,
 ): CandidateRuntimeData {
+	const sicknessCurrent = context.sickness.current;
 	const missingRecovery = context.habits.missingToday.filter((habit) =>
 		["sleep", "stretch", "run"].includes(habit.id),
 	);
@@ -2595,6 +2656,12 @@ function buildRecoveryRuntimeData(
 		signals.push(`Recovery уже защищён: ${formatSlotBrief(protectedRecovery)}`);
 	}
 
+	if (sicknessCurrent) {
+		signals.unshift(
+			`Болею ${sicknessCurrent.durationLabel} с ${formatSicknessDateTime(sicknessCurrent.startedAt)}`,
+		);
+	}
+
 	const cleanupPriorityLine = cleanupToday.length > 0 || cleanupUpcoming.length > 0
 		? `Cleanup-нагрузка: ${(cleanupToday.length > 0 ? cleanupToday : cleanupUpcoming)
 			.map((slot) => formatCleanupLoadBrief(slot))
@@ -2603,7 +2670,9 @@ function buildRecoveryRuntimeData(
 
 	return {
 		title:
-			protectedRecovery
+			sicknessCurrent
+				? "Перевести неделю в recovery mode"
+				: protectedRecovery
 				? "Не трогать recovery-якорь недели"
 				: overloaded.length > 0
 				? "Выбить окно восстановления в плотной неделе"
@@ -2611,7 +2680,9 @@ function buildRecoveryRuntimeData(
 					? "Не отдать recovery случайной срочности"
 					: undefined,
 		context:
-			protectedRecovery
+			sicknessCurrent
+				? "Пока идёт болезнь, recovery — это не бонус недели, а базовый управляющий слой расписания."
+				: protectedRecovery
 				? "Recovery-окно уже стоит в календаре — теперь задача не создать новое, а не дать срочности его съесть."
 				: cleanupToday.length > 0
 				? "После cleanup-дня recovery надо бронировать на неделе заранее, а не решать постфактум."
@@ -2621,7 +2692,9 @@ function buildRecoveryRuntimeData(
 					? "Неделя уже местами перегрета — окно отдыха нужно поставить сейчас."
 					: undefined,
 		impact:
-			protectedRecovery
+			sicknessCurrent
+				? "Попроси агента защитить ближайшее recovery-окно и объяснить, что именно лучше не делать, пока длится болезнь."
+				: protectedRecovery
 				? "Попроси агента защищать уже поставленное recovery-окно и не отдавать его под срочные хвосты."
 				: missingRecovery.length > 0 || overloaded.length > 0 || !nextRecoverySlot || cleanupToday.length > 0 || cleanupUpcoming.length > 0
 				? cleanupToday.length > 0 || cleanupUpcoming.length > 0
@@ -2634,6 +2707,9 @@ function buildRecoveryRuntimeData(
 				? `Вместо старого совета зафиксируй recovery в ${formatRecoveryAnchorBrief(recoveryAnchor)}.`
 				: null,
 		promptLines: [
+			sicknessCurrent
+				? `Активный период болезни: с ${formatSicknessDateTime(sicknessCurrent.startedAt)} · ${sicknessCurrent.durationLabel} · ${sicknessCurrent.calendarDays} календ. дн.`
+				: null,
 			missingRecovery.length > 0
 				? `Сегодня не закрыты recovery-сигналы: ${missingRecovery.map((habit) => `${habit.emoji} ${habit.name}`).join("; ")}.`
 				: "Ключевые recovery-привычки сегодня уже частично отмечены.",
@@ -2649,9 +2725,11 @@ function buildRecoveryRuntimeData(
 				: cleanupUpcoming.length > 0
 					? `Впереди cleanup-нагрузка: ${cleanupUpcoming.map((slot) => formatCleanupLoadBrief(slot)).join("; ")}.`
 					: "Перегруженных дней на горизонте недели не найдено.",
-		],
+		].filter(Boolean) as string[],
 		requestLines: [
-			protectedRecovery
+			sicknessCurrent
+				? "Во время болезни выбери recovery-окно как обязательное, а не как то, что можно передвинуть ради срочности."
+				: protectedRecovery
 				? "Не предлагай новое recovery-окно поверх существующего: сначала защити уже зафиксированный слот."
 				: "Найди одно невыбиваемое окно восстановления на неделю и привяжи его к текущему графику.",
 			cleanupToday.length > 0 || cleanupUpcoming.length > 0
@@ -2661,6 +2739,7 @@ function buildRecoveryRuntimeData(
 		],
 		signals,
 		tags: [
+			sicknessCurrent ? "sickness-active" : null,
 			sleepMissing ? "sleep" : null,
 			overloaded.length > 0 ? "overload" : null,
 			cleanupToday.length > 0 || cleanupUpcoming.length > 0 ? "cleanup-load" : null,
@@ -2671,7 +2750,7 @@ function buildRecoveryRuntimeData(
 		riskReasons: [
 			recoveryAnchor ? "timing-stale" : null,
 			protectedRecovery ? "duplicate" : null,
-			cleanupToday.length > 0 ? "energy-mismatch" : null,
+			cleanupToday.length > 0 || sicknessCurrent ? "energy-mismatch" : null,
 		].filter(Boolean) as RecommendationFeedbackReason[],
 		contextHash: buildContextHash([
 			recoveryAnchor ? `${recoveryAnchor.date}:${recoveryAnchor.start}-${recoveryAnchor.end}:${recoveryAnchor.mode}` : null,
@@ -2683,6 +2762,7 @@ function buildRecoveryRuntimeData(
 		leadTaskTrack: null,
 		strictScope: null,
 		weightBoost:
+			(sicknessCurrent ? 18 : 0) +
 			(sleepMissing ? 8 : 0) +
 			overloaded.length * 6 +
 			cleanupUpcoming.length * 5 +

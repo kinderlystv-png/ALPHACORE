@@ -37,6 +37,7 @@ import { getJournalEntries } from "@/lib/journal";
 import { getEntries as getMedicalEntries } from "@/lib/medical";
 import { getProjects } from "@/lib/projects";
 import { getScheduleForDate } from "@/lib/schedule";
+import { getSicknessLog } from "@/lib/sickness";
 import { subscribeAppDataChange } from "@/lib/storage";
 import { getTasks } from "@/lib/tasks";
 
@@ -94,6 +95,7 @@ const RUNTIME_CONTEXT_KEYS = new Set([
   "alphacore_journal",
   "alphacore_habits",
   "alphacore_medical",
+  "alphacore_sickness",
   "alphacore_schedule_custom",
   "alphacore_schedule_overrides",
 ]);
@@ -129,6 +131,7 @@ function loadRuntimeContext(snapshot: AgentControlSnapshot): RecommendationRunti
     habitChecksToday: getChecks(today),
     habitStreak: streak(),
     medicalEntries: getMedicalEntries(),
+    sicknessLog: getSicknessLog(),
     todaySchedule: getScheduleForDate(today),
     upcomingSchedule: collectUpcomingSchedule(today, 7),
     heysDayMode: snapshot.heysDayMode,
@@ -1192,21 +1195,15 @@ export function AgentControlPanel({
   snapshot: AgentControlSnapshot;
   onFlash?: (payload: FlashPayload) => void;
 }) {
-  const [feedbackEvents, setFeedbackEvents] = useState<RecommendationFeedbackEvent[]>([]);
-  const [clarificationAnswerEvents, setClarificationAnswerEvents] = useState<AgentClarificationAnswerEvent[]>([]);
-  const [runtimeContext, setRuntimeContext] = useState<RecommendationRuntimeContext | null>(null);
+  const [feedbackEvents, setFeedbackEvents] = useState<RecommendationFeedbackEvent[]>(() => getRecommendationFeedbackEvents());
+  const [clarificationAnswerEvents, setClarificationAnswerEvents] = useState<AgentClarificationAnswerEvent[]>(() => getClarificationAnswerEvents());
+  const [, setRuntimeContextVersion] = useState(0);
   const [inlineFlash, setInlineFlash] = useState<FlashPayload | null>(null);
   const [reasonPickerId, setReasonPickerId] = useState<string | null>(null);
 
-  const refreshRuntimeContext = useCallback(() => {
-    setRuntimeContext(loadRuntimeContext(snapshot));
-  }, [snapshot]);
+  const runtimeContext = loadRuntimeContext(snapshot);
 
   useEffect(() => {
-    setFeedbackEvents(getRecommendationFeedbackEvents());
-    setClarificationAnswerEvents(getClarificationAnswerEvents());
-    refreshRuntimeContext();
-
     return subscribeAppDataChange((keys) => {
       if (keys.includes(AGENT_PROMPT_FEEDBACK_KEY)) {
         setFeedbackEvents(getRecommendationFeedbackEvents());
@@ -1217,10 +1214,10 @@ export function AgentControlPanel({
       }
 
       if (keys.some((key) => RUNTIME_CONTEXT_KEYS.has(key))) {
-        refreshRuntimeContext();
+        setRuntimeContextVersion((current) => current + 1);
       }
     });
-  }, [refreshRuntimeContext]);
+  }, []);
 
   useEffect(() => {
     if (!inlineFlash) return;
@@ -1323,12 +1320,12 @@ export function AgentControlPanel({
 
   const handleApplyRescheduleMove = useCallback((move: PracticalPlanRescheduleMove) => {
     const result = applyIntradayRescheduleAction(move.action);
-    refreshRuntimeContext();
+    setRuntimeContextVersion((current) => current + 1);
     notify({
       tone: result.outcome === "applied" ? "success" : "info",
       text: result.message,
     });
-  }, [notify, refreshRuntimeContext]);
+  }, [notify]);
 
   return (
     <section className="rounded-4xl border border-zinc-800/60 bg-linear-to-br from-zinc-900/50 to-zinc-950/90 p-5 shadow-2xl shadow-black/20 sm:p-6">

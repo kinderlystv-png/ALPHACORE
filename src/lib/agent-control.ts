@@ -7,6 +7,12 @@ import { getScheduleForDate, type ScheduleSlot } from "./schedule";
 import { dateStr } from "./storage";
 import { getTasks } from "./tasks";
 import { getHeysSignals } from "./use-heys-sync";
+import {
+  formatSicknessDateTime,
+  getActiveSicknessSummary,
+  getLatestClosedSicknessPeriod,
+  getSicknessLog,
+} from "./sickness";
 import type { HeysHealthSignals, HeysIntradaySignal } from "./heys-bridge";
 import {
   buildBundleContextProfile,
@@ -179,6 +185,17 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
   const weeklyReport = getWeeklyFocusReport();
   const journalEntries = getJournalEntries();
   const medEntries = getEntries();
+  const sicknessLog = getSicknessLog();
+  const activeSickness = getActiveSicknessSummary(sicknessLog);
+  const latestClosedSickness = getLatestClosedSicknessPeriod(sicknessLog);
+  const sicknessActive = Boolean(activeSickness);
+  const recentSicknessCooldown =
+    !sicknessActive && latestClosedSickness && daysSince(latestClosedSickness.endedAt) <= 2;
+  const sicknessPenalty = sicknessActive
+    ? Math.min(28, 14 + (activeSickness?.calendarDays ?? 1) * 4)
+    : recentSicknessCooldown
+      ? 6
+      : 0;
   const h: HeysHealthSignals | null = getHeysSignals();
   const upcomingSlots = collectUpcomingSchedule(7);
   const upcoming = getUpcomingScheduleStats(upcomingSlots);
@@ -244,7 +261,8 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       Math.min(stats.doneThisWeek, 5) * 4 +
       (focusSnapshot.primaryTask ? 8 : 0) -
       focusSnapshot.overdueCount * 8 -
-      (attentionProject ? 10 : 0),
+      (attentionProject ? 10 : 0) -
+      (sicknessActive ? 8 : 0),
   );
   // Health: blend ALPHACORE habits with real HEYS biometrics
   const heysHealthBonus = h
@@ -262,7 +280,8 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       intradayHealthAdjustment +
       Math.min(upcoming.health, 3) * 8 +
       (latestMedicalDate && daysSince(latestMedicalDate) <= 60 ? 8 : 0) -
-      flaggedMedicalParams * 10,
+      flaggedMedicalParams * 10 -
+      sicknessPenalty,
   );
   const familyScore = clamp(
     50 +
@@ -301,7 +320,9 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       (sleepChecked ? (h ? 10 : 22) : 0) +
       Math.min(upcoming.health, 2) * 5 -
       Math.min(upcoming.cleanup, 2) * 6 -
-      Math.max(0, upcoming.studio - upcoming.personal - upcoming.family) * 4,
+      Math.max(0, upcoming.studio - upcoming.personal - upcoming.family) * 4 -
+      sicknessPenalty -
+      (sicknessActive ? 4 : 0),
   );
 
   const workLevel: AttentionLevel =
@@ -311,10 +332,12 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
         ? "watch"
         : levelFromScore(workScore);
   const healthLevel: AttentionLevel =
+    sicknessActive ||
     intraday?.status === "critical" ||
     habitRatio < 0.34 || flaggedMedicalParams >= 2 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.5 && h.trainingDaysWeek <= 1)
       ? "critical"
-      : intradayWorsening ||
+      : recentSicknessCooldown ||
+          intradayWorsening ||
           habitRatio < 0.67 || flaggedMedicalParams > 0 || (h && h.stepsGoalRatio != null && h.stepsGoalRatio < 0.7)
         ? "watch"
         : levelFromScore(healthScore);
@@ -337,10 +360,11 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
         ? "watch"
         : levelFromScore(reflectionScore);
   const recoveryLevel: AttentionLevel =
+    sicknessActive ||
     intraday?.status === "critical" ||
     (!sleepChecked && upcoming.personal === 0) || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.8 && (h.sleepQualityAvg ?? 10) < 5)
       ? "critical"
-      : intradayWorsening || upcoming.personal < 2 || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.5)
+      : recentSicknessCooldown || intradayWorsening || upcoming.personal < 2 || (h && h.lateBedtimeRatio != null && h.lateBedtimeRatio > 0.5)
         ? "watch"
         : levelFromScore(recoveryScore);
 
@@ -353,7 +377,11 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       score: workScore,
       level: workLevel,
       summary: `${stats.activeCount} active · ${stats.inboxCount} inbox · ${weeklyReport.totalFocusMinutes} мин фокуса`,
-      insight: attentionProject
+      insight: sicknessActive
+        ? focusSnapshot.primaryTask
+          ? `Пока идёт болезнь, рабочий шаг держим щадящим: ${focusSnapshot.primaryTask.title}. Не execution-марафон, а один узкий next step.`
+          : "Пока идёт болезнь, работа должна ужаться до одного щадящего узла, а не множиться параллельными фронтами."
+        : attentionProject
         ? `Следующий рычаг — ${attentionProject.name}: ${attentionProject.nextStep}`
         : focusSnapshot.primaryTask
           ? `Держи один главный рычаг: ${focusSnapshot.primaryTask.title}`
@@ -372,10 +400,14 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       href: AREA_META.health.href,
       score: healthScore,
       level: healthLevel,
-      summary: h
+      summary: sicknessActive
+        ? `Болею ${activeSickness?.durationLabel ?? ""} · с ${formatSicknessDateTime(activeSickness?.startedAt ?? today)} · ${stats.habitsToday.done}/${stats.habitsToday.total} привычек`
+        : h
         ? `Сон ${h.sleepHoursAvg ?? "?"}ч (${h.sleepQualityAvg ?? "?"}/10) · шаги ${h.stepsAvg ?? "?"} · ${h.trainingDaysWeek} тренировок · ${stats.habitsToday.done}/${stats.habitsToday.total} привычек`
         : `${stats.habitsToday.done}/${stats.habitsToday.total} привычек сегодня · ${flaggedMedicalParams} флагов`,
-      insight: h
+      insight: sicknessActive
+        ? "Сейчас не время выжимать из дня максимум. Приоритет — режим болезни: вода, сон, щадящий floor и только один рабочий узел без hero mode."
+        : h
         ? intradayWorsening
           ? intraday.summary
           : intradayImproving
@@ -393,6 +425,15 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
             ? "Минимальный health floor на день: сон, растяжка и один телесный блок."
             : "База держится — агенту важно лишь не дать здоровью снова исчезнуть из поля зрения.",
       evidence: [
+        ...(sicknessActive
+          ? [
+              `Активный период болезни: ${formatSicknessDateTime(activeSickness?.startedAt ?? today)} · ${activeSickness?.durationLabel ?? ""}`,
+            ]
+          : recentSicknessCooldown && latestClosedSickness
+            ? [
+                `Недавний период болезни завершился ${formatSicknessDateTime(latestClosedSickness.endedAt)}`,
+              ]
+            : []),
         ...(h
           ? [
               ...(heysDayMode
@@ -479,10 +520,14 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
       href: AREA_META.recovery.href,
       score: recoveryScore,
       level: recoveryLevel,
-      summary: h
+      summary: sicknessActive
+        ? `Режим болезни ${activeSickness?.durationLabel ?? ""} · ${activeSickness?.calendarDays ?? 1} календ. дн. · ${upcoming.personal} личных окон`
+        : h
         ? `Сон ${h.sleepHoursAvg ?? "?"}ч · качество ${h.sleepQualityAvg ?? "?"}/10 · поздний отход ${h.lateBedtimeRatio != null ? Math.round(h.lateBedtimeRatio * 100) : "?"}% · ${upcoming.personal} личных окон`
         : `${upcoming.personal} личных окон · сон ${sleepChecked ? "отмечен" : "не отмечен"}`,
-      insight: h
+      insight: sicknessActive
+        ? `Болею с ${formatSicknessDateTime(activeSickness?.startedAt ?? today)} — recovery сейчас должен быть главным слоем дня, а не тем, что «если останется время».`
+        : h
         ? intradayWorsening
           ? `${intraday.summary} ${intraday.detail}`
           : intradayImproving
@@ -504,6 +549,9 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
             ? "Восстановление есть, но пока слишком хрупкое — агенту стоит сделать его невыбиваемым."
             : "Ритм восстановления уже заметен. Важно не разменять его на случайные срочности.",
       evidence: [
+        ...(sicknessActive
+          ? [`Период болезни активен ${activeSickness?.durationLabel ?? ""}`]
+          : []),
         ...(h
           ? [
               ...(heysDayMode
@@ -524,6 +572,21 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
   ];
 
   const priorityCandidates: PriorityCandidate[] = [];
+
+  pushPriority(
+    priorityCandidates,
+    sicknessActive
+      ? {
+          id: "sickness-active",
+          title: "Переключить день в режим болезни",
+          reason: `Идёт активный период болезни: ${activeSickness?.durationLabel ?? ""} с ${formatSicknessDateTime(activeSickness?.startedAt ?? today)}. Обычный execution-ритм сейчас только удлиняет восстановление.`,
+          action: "Попроси агента срезать день до health floor, одного щадящего рабочего шага и защищённого recovery-окна на ближайшие дни.",
+          href: "/medical",
+          level: "critical",
+          weight: 118,
+        }
+      : null,
+  );
 
   pushPriority(
     priorityCandidates,
@@ -585,7 +648,7 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
 
   pushPriority(
     priorityCandidates,
-    healthLevel !== "good"
+    !sicknessActive && healthLevel !== "good"
       ? {
           id: "health-floor",
           title: "Не отдавать здоровье на потом",
@@ -678,7 +741,11 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
   const priorities = priorityCandidates
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 3)
-    .map(({ weight: _, ...priority }) => priority);
+    .map((candidate) => {
+      const { weight: ignoredWeight, ...priority } = candidate;
+      void ignoredWeight;
+      return priority;
+    });
 
   const orderedAreas = [...areas].sort((a, b) => a.score - b.score);
   const weakestAreas = orderedAreas.slice(0, 2);
@@ -700,7 +767,9 @@ export function getAgentControlSnapshot(): AgentControlSnapshot {
         ? `${getDayModeStatement(heysDayMode)} Главный интерфейс — диалог с агентами: ты не ведёшь базу вручную, а рассказываешь, что происходит.`
         : "Главный интерфейс — диалог с агентами в Copilot/Codex. Ты не ведёшь базу вручную: рассказываешь, что происходит, а агенты собирают из этого наглядную панель и защищают приоритеты.",
     narrative:
-      criticalAreas.length > 0
+      sicknessActive
+        ? `Сейчас панель должна выключить hero mode: идёт период болезни ${activeSickness?.durationLabel ?? ""}, поэтому агенту сначала нужно защитить здоровье и recovery, а уже потом решать, какой один щадящий шаг оставить в работе.${heysDayMode ? ` HEYS при этом ведёт день как ${heysDayMode.label} и помогает не спорить с реальной энергией.` : ""}`
+        : criticalAreas.length > 0
         ? `Сейчас это не трекер, а радар слепых зон: агенту прежде всего нужно выровнять ${criticalLabels}, а уже потом наращивать скорость.${heysDayMode ? ` HEYS при этом ставит день в ${heysDayMode.label} и тянет фокус к ${getMetricLabel(heysDayMode.focusMetricKey).toLowerCase()}.` : ""}`
         : `Панель выглядит живой, когда помогает выбирать, а не заполнять. Сейчас самые тонкие зоны — ${weakestLabels}; агенту стоит держать их в поле зрения первым делом.${heysDayMode ? ` HEYS ведёт день как ${heysDayMode.label}: ${heysDayMode.summary}` : ""}`,
     areas,

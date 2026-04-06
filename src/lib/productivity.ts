@@ -2,6 +2,11 @@ import { type Task, getTaskFocusToday, getTasks } from "./tasks";
 import { getNotes } from "./notes";
 import { getChecks, DEFAULT_HABITS, isActiveOn } from "./habits";
 import { type Project, getProjects } from "./projects";
+import {
+  formatSicknessDateTime,
+  getActiveSicknessSummary,
+  getSicknessLog,
+} from "./sickness";
 
 /* ── Weekly task completions ── */
 
@@ -190,7 +195,19 @@ export type FocusSnapshot = {
   inboxCount: number;
   attentionProject: Project | null;
   focusToday: { sessions: number; minutes: number };
+  mode: "normal" | "recovery";
+  modeSummary: string;
+  taskScopeHint: string | null;
+  sickness: {
+    active: boolean;
+    startedAt: string | null;
+    startedLabel: string | null;
+    durationLabel: string | null;
+    calendarDays: number | null;
+  };
 };
+
+const RECOVERY_FRIENDLY_TASK_PATTERN = /(draft|skeleton|outline|brief|review|reply|email|note|journal|triage|sort|plan|sync|чернов|скелет|контур|план|разбор|ответ|заметк|дневник|ревью|синк)/i;
 
 function priorityWeight(priority: Task["priority"]): number {
   if (priority === "p1") return 0;
@@ -213,21 +230,45 @@ function dueWeight(dueDate?: string): number {
   return Math.floor((due.getTime() - now.getTime()) / 86_400_000);
 }
 
+function compareTasksForFocus(left: Task, right: Task): number {
+  return (
+    statusWeight(left.status) - statusWeight(right.status) ||
+    priorityWeight(left.priority) - priorityWeight(right.priority) ||
+    dueWeight(left.dueDate) - dueWeight(right.dueDate) ||
+    left.createdAt.localeCompare(right.createdAt)
+  );
+}
+
+function recoveryFocusWeight(task: Task): number {
+  const due = dueWeight(task.dueDate);
+
+  if (due < 0 || task.priority === "p1") return 6;
+  if (due === 0) return 4;
+  if (RECOVERY_FRIENDLY_TASK_PATTERN.test(task.title)) return 0;
+  if (task.priority === "p3") return 1;
+  if (task.priority === "p2") return 2;
+  return 3;
+}
+
 export function getFocusSnapshot(): FocusSnapshot {
   const today = ds(new Date());
   const tasks = getTasks();
   const projects = getProjects();
+  const sicknessLog = getSicknessLog();
+  const activeSickness = getActiveSicknessSummary(sicknessLog);
+  const focusMode = activeSickness ? "recovery" : "normal";
 
   const candidateTasks = [...tasks]
     .filter((task) => task.status === "active" || task.status === "inbox")
-    .sort((a, b) => {
-      return (
-        statusWeight(a.status) - statusWeight(b.status) ||
-        priorityWeight(a.priority) - priorityWeight(b.priority) ||
-        dueWeight(a.dueDate) - dueWeight(b.dueDate) ||
-        a.createdAt.localeCompare(b.createdAt)
-      );
-    });
+    .sort(compareTasksForFocus);
+
+  const orderedCandidates = activeSickness
+    ? [...candidateTasks].sort(
+        (left, right) =>
+          recoveryFocusWeight(left) - recoveryFocusWeight(right) ||
+          compareTasksForFocus(left, right),
+      )
+    : candidateTasks;
 
   const attentionProject =
     [...projects].sort((a, b) => {
@@ -247,7 +288,7 @@ export function getFocusSnapshot(): FocusSnapshot {
   );
 
   return {
-    primaryTask: candidateTasks[0] ?? null,
+    primaryTask: orderedCandidates[0] ?? null,
     overdueCount: tasks.filter(
       (task) =>
         (task.status === "active" || task.status === "inbox") &&
@@ -257,5 +298,23 @@ export function getFocusSnapshot(): FocusSnapshot {
     inboxCount: tasks.filter((task) => task.status === "inbox").length,
     attentionProject,
     focusToday,
+    mode: focusMode,
+    modeSummary: activeSickness
+      ? `Болею ${activeSickness.durationLabel} с ${formatSicknessDateTime(activeSickness.startedAt)}. День лучше держать в recovery mode: health floor плюс один щадящий шаг.`
+      : "Один главный рычаг на день, без параллельных треков и лишнего hero mode.",
+    taskScopeHint: activeSickness
+      ? orderedCandidates[0]
+        ? "Если работаешь над задачей, сузь её до черновика / skeleton / одного ответа, без длинного execution-блока."
+        : "Не открывай новый тяжёлый фронт: сначала восстановление, потом micro-step."
+      : orderedCandidates[0]
+        ? "Держи задачу в одном рабочем контуре и не раздувай её параллельными подпроектами."
+        : null,
+    sickness: {
+      active: Boolean(activeSickness),
+      startedAt: activeSickness?.startedAt ?? null,
+      startedLabel: activeSickness ? formatSicknessDateTime(activeSickness.startedAt) : null,
+      durationLabel: activeSickness?.durationLabel ?? null,
+      calendarDays: activeSickness?.calendarDays ?? null,
+    },
   };
 }

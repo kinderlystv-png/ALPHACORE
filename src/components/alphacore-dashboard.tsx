@@ -8,6 +8,7 @@ import { AgentControlPanel } from "@/components/agent-control-panel";
 import { HabitTracker } from "@/components/habit-tracker";
 import { HeysHealthPanel } from "@/components/heys-health-panel";
 import { Pomodoro } from "@/components/pomodoro";
+import { SicknessHomeBadge } from "@/components/sickness-status-cards";
 import { WeekCalendarGrid } from "@/components/week-calendar-grid";
 import {
   type AgentControlSnapshot,
@@ -18,7 +19,6 @@ import {
   POMODORO_FOCUS_EVENT,
   readTaskDragId,
   writeTaskDragData,
-  type PomodoroFocusDetail,
 } from "@/lib/dashboard-events";
 import { ensureJournalSeed, type JournalEntry } from "@/lib/journal";
 import { allParamNames, getEntries, paramStatus } from "@/lib/medical";
@@ -93,6 +93,15 @@ type MedicalTrendPoint = {
   flagged: number;
 };
 
+type MedicalSummary = {
+  entries: number;
+  flagged: number;
+  params: number;
+  lastDate: string | null;
+  lastGapDays: number | null;
+  trend: MedicalTrendPoint[];
+};
+
 type QuickTaskDraft = {
   title: string;
   priority: TaskPriority;
@@ -104,7 +113,13 @@ type CommandItem = {
   title: string;
   subtitle: string;
   keywords: string;
-  action: () => void;
+  action:
+    | { kind: "capture"; mode: "task" | "note" }
+    | { kind: "route"; href: string }
+    | { kind: "brief"; mode: "brief" | "review" }
+    | { kind: "pomodoro"; taskId: string; autoStart: boolean }
+    | { kind: "done-task"; taskId: string; title: string }
+    | { kind: "open-project"; projectId: string };
 };
 
 type BriefPanelMode = "brief" | "review" | null;
@@ -215,25 +230,51 @@ function MedicalTrend({ data }: { data: MedicalTrendPoint[] }) {
   );
 }
 
+function buildMedicalSummary(): MedicalSummary {
+  const entries = getEntries();
+  const flagged = entries
+    .flatMap((entry) => entry.params)
+    .filter((param) => {
+      const status = paramStatus(param);
+      return status === "low" || status === "high";
+    }).length;
+  const sortedEntries = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  const lastDate = [...entries]
+    .sort((a, b) => b.date.localeCompare(a.date))[0]?.date ?? null;
+  const trend = sortedEntries.slice(-6).map((entry) => ({
+    date: entry.date,
+    label: new Intl.DateTimeFormat("ru-RU", { day: "numeric" }).format(
+      new Date(`${entry.date}T00:00:00`),
+    ),
+    params: entry.params.length,
+    flagged: entry.params.filter((param) => {
+      const status = paramStatus(param);
+      return status === "low" || status === "high";
+    }).length,
+  }));
+
+  return {
+    entries: entries.length,
+    flagged,
+    params: allParamNames().length,
+    lastDate,
+    lastGapDays: daysSinceDate(lastDate),
+    trend,
+  };
+}
+
 export function AlphacoreDashboard() {
   const router = useRouter();
   const { lastSynced: heysLastSynced } = useHeysSync();
-  const [agentControl, setAgentControl] = useState<AgentControlSnapshot | null>(null);
-  const [stats, setStats] = useState<ActivityStats | null>(null);
-  const [completions, setCompletions] = useState<DayCompletions[]>([]);
-  const [focusSnapshot, setFocusSnapshot] = useState<FocusSnapshot | null>(null);
-  const [weeklyReport, setWeeklyReport] = useState<WeeklyFocusReport | null>(null);
-  const [journalPreview, setJournalPreview] = useState<JournalEntry[]>([]);
-  const [triageTasks, setTriageTasks] = useState<Task[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [medicalSummary, setMedicalSummary] = useState<{
-    entries: number;
-    flagged: number;
-    params: number;
-    lastDate: string | null;
-    lastGapDays: number | null;
-    trend: MedicalTrendPoint[];
-  } | null>(null);
+  const [agentControl, setAgentControl] = useState<AgentControlSnapshot | null>(() => getAgentControlSnapshot());
+  const [stats, setStats] = useState<ActivityStats | null>(() => getActivityStats());
+  const [completions, setCompletions] = useState<DayCompletions[]>(() => weeklyCompletions());
+  const [focusSnapshot, setFocusSnapshot] = useState<FocusSnapshot | null>(() => getFocusSnapshot());
+  const [weeklyReport, setWeeklyReport] = useState<WeeklyFocusReport | null>(() => getWeeklyFocusReport());
+  const [journalPreview, setJournalPreview] = useState<JournalEntry[]>(() => ensureJournalSeed().slice(-2));
+  const [triageTasks, setTriageTasks] = useState<Task[]>(() => getActionableTasks().slice(0, 4));
+  const [projects, setProjects] = useState<Project[]>(() => getProjects());
+  const [medicalSummary, setMedicalSummary] = useState<MedicalSummary | null>(() => buildMedicalSummary());
   const [quickMode, setQuickMode] = useState<"task" | "note">("task");
   const [quickInput, setQuickInput] = useState("");
   const [flash, setFlash] = useState<QuickFlash | null>(null);
@@ -287,42 +328,10 @@ export function AlphacoreDashboard() {
     setJournalPreview(ensureJournalSeed().slice(-2));
     setTriageTasks(getActionableTasks().slice(0, 4));
     setProjects(getProjects());
-
-    const entries = getEntries();
-    const flagged = entries
-      .flatMap((entry) => entry.params)
-      .filter((param) => {
-        const status = paramStatus(param);
-        return status === "low" || status === "high";
-      }).length;
-    const sortedEntries = [...entries].sort((a, b) => a.date.localeCompare(b.date));
-    const lastDate = [...entries]
-      .sort((a, b) => b.date.localeCompare(a.date))[0]?.date ?? null;
-    const trend = sortedEntries.slice(-6).map((entry) => ({
-      date: entry.date,
-      label: new Intl.DateTimeFormat("ru-RU", { day: "numeric" }).format(
-        new Date(`${entry.date}T00:00:00`),
-      ),
-      params: entry.params.length,
-      flagged: entry.params.filter((param) => {
-        const status = paramStatus(param);
-        return status === "low" || status === "high";
-      }).length,
-    }));
-
-    setMedicalSummary({
-      entries: entries.length,
-      flagged,
-      params: allParamNames().length,
-      lastDate,
-      lastGapDays: daysSinceDate(lastDate),
-      trend,
-    });
+    setMedicalSummary(buildMedicalSummary());
   }, []);
 
   useEffect(() => {
-    refreshDashboard();
-
     const unsubscribe = subscribeAppDataChange((keys) => {
       if (
         keys.some((key) =>
@@ -333,6 +342,7 @@ export function AlphacoreDashboard() {
             "alphacore_notes",
             "alphacore_habits",
             "alphacore_medical",
+            "alphacore_sickness",
             "alphacore_projects",
             "alphacore_journal",
           ].includes(key),
@@ -359,7 +369,11 @@ export function AlphacoreDashboard() {
 
   useEffect(() => {
     if (heysLastSynced) {
-      refreshDashboard();
+      const frame = window.requestAnimationFrame(() => {
+        refreshDashboard();
+      });
+
+      return () => window.cancelAnimationFrame(frame);
     }
   }, [heysLastSynced, refreshDashboard]);
 
@@ -369,18 +383,6 @@ export function AlphacoreDashboard() {
     const timeoutId = window.setTimeout(() => setFlash(null), 2400);
     return () => window.clearTimeout(timeoutId);
   }, [flash]);
-
-  useEffect(() => {
-    setCommandActiveIndex(0);
-  }, [commandOpen, commandQuery]);
-
-  useEffect(() => {
-    if (!projects.length) return;
-    setProjectQuickId((current) => {
-      if (current && projects.some((project) => project.id === current)) return current;
-      return focusSnapshot?.attentionProject?.id ?? projects[0]?.id ?? "";
-    });
-  }, [projects, focusSnapshot]);
 
   const openCommandPalette = useCallback(() => {
     setCommandOpen(true);
@@ -535,14 +537,21 @@ export function AlphacoreDashboard() {
     [],
   );
 
+  const handleTaskDoneById = useCallback(
+    (taskId: string, title: string) => {
+      toggleDone(taskId);
+      setFlash({ tone: "success", text: `Готово: ${title}` });
+      refreshDashboard();
+    },
+    [refreshDashboard],
+  );
+
   const handlePrimaryTaskDone = useCallback(() => {
     const task = focusSnapshot?.primaryTask;
     if (!task) return;
 
-    toggleDone(task.id);
-    setFlash({ tone: "success", text: `Готово: ${task.title}` });
-    refreshDashboard();
-  }, [focusSnapshot, refreshDashboard]);
+    handleTaskDoneById(task.id, task.title);
+  }, [focusSnapshot, handleTaskDoneById]);
 
   const handlePrimaryTaskActivate = useCallback(() => {
     const task = focusSnapshot?.primaryTask;
@@ -642,56 +651,56 @@ export function AlphacoreDashboard() {
         title: "Новая задача",
         subtitle: "Сфокусировать quick capture на задаче",
         keywords: "task quick capture inbox",
-        action: () => focusQuickInput("task"),
+        action: { kind: "capture", mode: "task" },
       },
       {
         id: "capture-note",
         title: "Новая заметка",
         subtitle: "Открыть capture в режиме note",
         keywords: "note quick capture memory",
-        action: () => focusQuickInput("note"),
+        action: { kind: "capture", mode: "note" },
       },
       {
         id: "open-calendar",
         title: "Открыть календарь",
         subtitle: "Перейти к недельному планированию",
         keywords: "calendar week schedule",
-        action: () => router.push("/calendar"),
+        action: { kind: "route", href: "/calendar" },
       },
       {
         id: "open-tasks",
         title: "Открыть задачи",
         subtitle: "Inbox, active и done задачи",
         keywords: "tasks inbox active",
-        action: () => router.push("/tasks"),
+        action: { kind: "route", href: "/tasks" },
       },
       {
         id: "open-journal",
         title: "Открыть дневник",
         subtitle: "Поймать мысль, пока не убежала",
         keywords: "journal reflection notes",
-        action: () => router.push("/journal"),
+        action: { kind: "route", href: "/journal" },
       },
       {
         id: "open-brief",
         title: "Показать утренний brief",
         subtitle: "Короткий срез приоритетов и баланса",
         keywords: "brief morning agent priorities",
-        action: () => openBriefPanel("brief"),
+        action: { kind: "brief", mode: "brief" },
       },
       {
         id: "open-review",
         title: "Показать вечерний review",
         subtitle: "Итог дня и перенос внимания на завтра",
         keywords: "review evening reflection summary",
-        action: () => openBriefPanel("review"),
+        action: { kind: "brief", mode: "review" },
       },
       {
         id: "open-medical",
         title: "Открыть показатели",
         subtitle: "Последние анализы и отклонения",
         keywords: "medical health lab",
-        action: () => router.push("/medical"),
+        action: { kind: "route", href: "/medical" },
       },
     ];
 
@@ -702,14 +711,22 @@ export function AlphacoreDashboard() {
           title: "Запустить Pomodoro для главного фокуса",
           subtitle: focusSnapshot.primaryTask.title,
           keywords: `pomodoro focus ${focusSnapshot.primaryTask.title}`,
-          action: () => pushTaskToPomodoro(focusSnapshot.primaryTask!.id, true),
+          action: {
+            kind: "pomodoro",
+            taskId: focusSnapshot.primaryTask.id,
+            autoStart: true,
+          },
         },
         {
           id: "focus-done",
           title: "Закрыть главный фокус",
           subtitle: focusSnapshot.primaryTask.title,
           keywords: `done close focus ${focusSnapshot.primaryTask.title}`,
-          action: handlePrimaryTaskDone,
+          action: {
+            kind: "done-task",
+            taskId: focusSnapshot.primaryTask.id,
+            title: focusSnapshot.primaryTask.title,
+          },
         },
       );
     }
@@ -720,12 +737,15 @@ export function AlphacoreDashboard() {
         title: "Открыть проект внимания",
         subtitle: focusSnapshot.attentionProject.name,
         keywords: `project attention ${focusSnapshot.attentionProject.name}`,
-        action: () => handleProjectQuickOpen(focusSnapshot.attentionProject!.id),
+        action: {
+          kind: "open-project",
+          projectId: focusSnapshot.attentionProject.id,
+        },
       });
     }
 
     return items;
-  }, [focusQuickInput, focusSnapshot, handlePrimaryTaskDone, handleProjectQuickOpen, openBriefPanel, pushTaskToPomodoro, router]);
+  }, [focusSnapshot]);
 
   const filteredCommandItems = useMemo(() => {
     const query = commandQuery.trim().toLowerCase();
@@ -739,14 +759,42 @@ export function AlphacoreDashboard() {
   const runCommand = useCallback(
     (item: CommandItem) => {
       closeCommandPalette();
-      item.action();
+      switch (item.action.kind) {
+        case "capture":
+          focusQuickInput(item.action.mode);
+          return;
+        case "route":
+          router.push(item.action.href);
+          return;
+        case "brief":
+          openBriefPanel(item.action.mode);
+          return;
+        case "pomodoro":
+          pushTaskToPomodoro(item.action.taskId, item.action.autoStart);
+          return;
+        case "done-task":
+          handleTaskDoneById(item.action.taskId, item.action.title);
+          return;
+        case "open-project":
+          handleProjectQuickOpen(item.action.projectId);
+          return;
+        default:
+          return;
+      }
     },
-    [closeCommandPalette],
+    [closeCommandPalette, focusQuickInput, handleProjectQuickOpen, handleTaskDoneById, openBriefPanel, pushTaskToPomodoro, router],
   );
 
   const selectedQuickProject = useMemo(
-    () => projects.find((project) => project.id === projectQuickId) ?? null,
-    [projectQuickId, projects],
+    () => {
+      const resolvedProjectQuickId =
+        (projectQuickId && projects.some((project) => project.id === projectQuickId)
+          ? projectQuickId
+          : focusSnapshot?.attentionProject?.id ?? projects[0]?.id) ?? "";
+
+      return projects.find((project) => project.id === resolvedProjectQuickId) ?? null;
+    },
+    [focusSnapshot, projectQuickId, projects],
   );
 
   return (
@@ -771,7 +819,10 @@ export function AlphacoreDashboard() {
             <input
               ref={commandInputRef}
               value={commandQuery}
-              onChange={(event) => setCommandQuery(event.target.value)}
+                onChange={(event) => {
+                  setCommandQuery(event.target.value);
+                  setCommandActiveIndex(0);
+                }}
               onKeyDown={(event) => {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
@@ -843,6 +894,8 @@ export function AlphacoreDashboard() {
 
         {/* HEYS live health panel */}
         <HeysHealthPanel />
+
+        <SicknessHomeBadge />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-12">
           {/* Quick input */}
@@ -1177,12 +1230,21 @@ export function AlphacoreDashboard() {
             <div>
               <h2 className="text-lg font-semibold text-zinc-50">🎯 Фокус дня</h2>
               <p className="mt-1 text-sm text-zinc-500">
-                Вместо цитат — конкретный список того, что реально двигает день.
+                {focusSnapshot.mode === "recovery"
+                  ? "Сегодня день в recovery mode: health floor и один щадящий рабочий шаг вместо обычного разгона."
+                  : "Вместо цитат — конкретный список того, что реально двигает день."}
               </p>
             </div>
-            <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[10px] font-medium uppercase tracking-widest text-amber-300">
-              🍅 {focusSnapshot.focusToday.sessions} · {focusSnapshot.focusToday.minutes} мин сегодня
-            </span>
+            <div className="flex flex-wrap gap-2">
+              {focusSnapshot.sickness.active && (
+                <span className="rounded-full border border-rose-500/25 bg-rose-500/10 px-3 py-1 text-[10px] font-medium uppercase tracking-widest text-rose-200">
+                  🤒 Болею · {focusSnapshot.sickness.durationLabel}
+                </span>
+              )}
+              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[10px] font-medium uppercase tracking-widest text-amber-300">
+                🍅 {focusSnapshot.focusToday.sessions} · {focusSnapshot.focusToday.minutes} мин сегодня
+              </span>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -1191,6 +1253,15 @@ export function AlphacoreDashboard() {
               <p className="mt-1 text-sm font-medium text-zinc-100">
                 {focusSnapshot.primaryTask?.title ?? "Пока нет активной задачи"}
               </p>
+              {focusSnapshot.mode === "recovery" && (
+                <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 p-3">
+                  <p className="text-[10px] uppercase tracking-widest text-rose-200">Recovery mode</p>
+                  <p className="mt-1 text-[11px] leading-5 text-rose-100/90">{focusSnapshot.modeSummary}</p>
+                  {focusSnapshot.taskScopeHint && (
+                    <p className="mt-2 text-[11px] leading-5 text-rose-100/80">{focusSnapshot.taskScopeHint}</p>
+                  )}
+                </div>
+              )}
               {focusSnapshot.primaryTask && (
                 <>
                   <p className="mt-1 text-[11px] text-zinc-500">
@@ -1231,7 +1302,7 @@ export function AlphacoreDashboard() {
                   onClick={() => focusQuickInput("task")}
                   className="mt-3 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
                 >
-                  Добавить задачу в capture
+                  {focusSnapshot.mode === "recovery" ? "Добавить щадящую задачу" : "Добавить задачу в capture"}
                 </button>
               )}
             </div>
@@ -1258,7 +1329,7 @@ export function AlphacoreDashboard() {
               {projects.length > 0 && (
                 <div className="mt-3 space-y-2">
                   <select
-                    value={projectQuickId}
+                    value={selectedQuickProject?.id ?? ""}
                     onChange={(event) => setProjectQuickId(event.target.value)}
                     className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs text-zinc-100"
                   >

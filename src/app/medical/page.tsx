@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { SicknessHistoryPanel } from "@/components/sickness-status-cards";
 import {
   type MedCategory,
   type MedEntry,
@@ -383,10 +384,7 @@ function EntryCard({
     month: "short",
     year: "numeric",
   });
-
-  useEffect(() => {
-    if (forceOpen) setExpanded(true);
-  }, [forceOpen]);
+  const isExpanded = forceOpen || expanded;
 
   const outOfRange = entry.params.filter((p) => {
     const s = paramStatus(p);
@@ -398,7 +396,7 @@ function EntryCard({
       {/* Header */}
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setExpanded((current) => !current)}
         className="flex w-full items-start justify-between gap-3 text-left"
       >
         <div className="flex min-w-0 items-center gap-3">
@@ -421,14 +419,14 @@ function EntryCard({
           </div>
         </div>
         <span
-          className={`text-zinc-500 transition ${expanded ? "rotate-180" : ""}`}
+          className={`text-zinc-500 transition ${isExpanded ? "rotate-180" : ""}`}
         >
           ▾
         </span>
       </button>
 
       {/* Expanded content */}
-      {expanded && (
+      {isExpanded && (
         <div className="mt-3 space-y-3 border-t border-zinc-800 pt-3">
           {entry.params.length > 0 && (
             <div className="space-y-1.5">
@@ -563,7 +561,7 @@ function TrendsView() {
 
 function MedicalPageContent() {
   const searchParams = useSearchParams();
-  const [entries, setEntries] = useState<MedEntry[]>([]);
+  const [entries, setEntries] = useState<MedEntry[]>(() => getEntries());
   const [tab, setTab] = useState<Tab>("all");
   const [adding, setAdding] = useState(false);
   const [editingEntry, setEditingEntry] = useState<MedEntry | null>(null);
@@ -631,6 +629,11 @@ function MedicalPageContent() {
             }}
           />
         )}
+
+        <SicknessHistoryPanel
+          title="🤒 История болезней"
+          subtitle="Периоды болезни синхронизируются через облако рядом с анализами и видны на всех устройствах."
+        />
 
         {/* Tabs */}
         <div className="flex gap-1 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/30 p-1">

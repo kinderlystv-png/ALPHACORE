@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { SicknessHistoryPanel } from "@/components/sickness-status-cards";
 import { STORAGE_KEYS } from "@/lib/app-data-keys";
 import {
   exportAppDataJson,
@@ -41,21 +42,11 @@ function clearAllData(): void {
 
 export default function SettingsPage() {
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
-  const [storageSize, setStorageSize] = useState("0.0");
-  const [syncState, setSyncState] = useState<AppSyncState>({
-    mode: "cloud-cache",
-    status: "idle",
-    pendingKeys: [],
-    lastSyncedAt: null,
-    remoteRevision: 0,
-    lastError: null,
-  });
+  const [storageSize, setStorageSize] = useState(() => getCachedAppDataSizeKb());
+  const [syncState, setSyncState] = useState<AppSyncState>(() => getSyncStateSnapshot());
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setStorageSize(getCachedAppDataSizeKb());
-    setSyncState(getSyncStateSnapshot());
-
     const unsubscribeData = subscribeAppDataChange(() => {
       setStorageSize(getCachedAppDataSizeKb());
     });
@@ -187,6 +178,12 @@ export default function SettingsPage() {
             />
           </div>
         </section>
+
+        <SicknessHistoryPanel
+          title="🤒 Болезнь и recovery log"
+          subtitle="Эти периоды входят в backup/export наравне с задачами, анализами и календарём."
+          maxItems={8}
+        />
 
         {/* Danger zone */}
         <section className="rounded-xl border border-rose-500/20 bg-rose-950/10 p-5 space-y-4">
