@@ -206,6 +206,7 @@ type TaskLayout = {
   slotVisual?: Span;
   anchorVisual: Span;
   anchorCenterY: number;
+  anchorBottomY: number;
   barRect: Rect;
   slotRect?: Rect;
   dropRects: Rect[];
@@ -733,8 +734,14 @@ function spanFromVisual(visual: TaskVisual): Span {
   };
 }
 
-function getDependencyEntryInset(span: Span): number {
+function getDependencyAnchorInset(span: Span): number {
   return Math.min(Math.max(span.width * 0.2, 6), 12);
+}
+
+function resolveDependencyExitX(span: Span): number {
+  const inset = getDependencyAnchorInset(span);
+
+  return span.left + Math.max(span.width - inset, span.width / 2);
 }
 
 function resolveDependencyEntryX(from: Span, to: Span): number {
@@ -742,22 +749,24 @@ function resolveDependencyEntryX(from: Span, to: Span): number {
   const targetLeft = Math.max(to.left, 0);
 
   if (targetLeft <= sourceRight + 10) {
-    return targetLeft + getDependencyEntryInset(to);
+    return targetLeft + getDependencyAnchorInset(to);
   }
 
   return targetLeft;
 }
 
 function buildDependencyPath(fromX: number, fromY: number, toX: number, toY: number): string {
-  if (toX >= fromX && toX - fromX <= 24) {
-    return `M ${fromX} ${fromY} V ${toY} H ${toX}`;
+  const elbowY = toY >= fromY
+    ? fromY + Math.max(14, Math.min(30, (toY - fromY) / 2))
+    : fromY + 14;
+
+  if (toY >= fromY || toX >= fromX) {
+    return `M ${fromX} ${fromY} V ${elbowY} H ${toX} V ${toY}`;
   }
 
-  const elbowX = toX > fromX + 28
-    ? fromX + Math.min(72, (toX - fromX) / 2)
-    : fromX + 18;
+  const elbowX = fromX + 18;
 
-  return `M ${fromX} ${fromY} H ${elbowX} V ${toY} H ${toX}`;
+  return `M ${fromX} ${fromY} V ${elbowY} H ${elbowX} V ${toY} H ${toX}`;
 }
 
 function sortNodesByDependencies(nodes: GanttTaskNode[]): GanttTaskNode[] {
@@ -1832,6 +1841,7 @@ export function TaskGanttChart({
         slotVisual,
         anchorVisual,
         anchorCenterY: top + anchorTop + anchorHeight / 2,
+        anchorBottomY: top + anchorTop + anchorHeight,
         barRect,
         slotRect,
         dropRects: slotRect ? [slotRect, barRect] : [barRect],
@@ -2032,9 +2042,9 @@ export function TaskGanttChart({
       const to = taskLayoutsById[link.toTaskId];
       if (!from || !to) return [];
 
-      const fromX = from.anchorVisual.left + from.anchorVisual.width;
+      const fromX = resolveDependencyExitX(from.anchorVisual);
       const toX = resolveDependencyEntryX(from.anchorVisual, to.anchorVisual);
-      const fromY = from.anchorCenterY;
+      const fromY = from.anchorBottomY;
       const toY = to.anchorCenterY;
       const blocked = to.anchorVisual.left <= from.anchorVisual.left + from.anchorVisual.width;
 
@@ -2055,15 +2065,15 @@ export function TaskGanttChart({
     const source = taskLayoutsById[dependencyDraft.taskId];
     if (!source) return null;
 
-    const sourceX = Math.max(source.anchorVisual.left, 0);
-    const sourceY = source.anchorCenterY;
+    const sourceX = resolveDependencyExitX(source.anchorVisual);
+    const sourceY = source.anchorBottomY;
 
     if (dependencyDraft.hoveredTaskId) {
       const target = taskLayoutsById[dependencyDraft.hoveredTaskId];
       if (!target) return null;
 
-      const fromX = target.anchorVisual.left + target.anchorVisual.width;
-      const fromY = target.anchorCenterY;
+      const fromX = resolveDependencyExitX(target.anchorVisual);
+      const fromY = target.anchorBottomY;
       const toX = resolveDependencyEntryX(target.anchorVisual, source.anchorVisual);
 
       return {
@@ -3426,8 +3436,15 @@ export function TaskGanttChart({
                 const dependencyAnchorVisual = scheduledSlotVisual ?? previewVisual;
                 const dependencyAnchorTop = scheduledSlotVisual ? slotOverlayTop : 4;
                 const dependencyAnchorHeight = scheduledSlotVisual ? slotOverlayHeight : ROW_H - 8;
-                const dependencyHandleLeft = Math.max(dependencyAnchorVisual.left - 12, 2);
-                const dependencyHandleTop = dependencyAnchorTop + dependencyAnchorHeight / 2 - 5;
+                const dependencyHandleLeft = clamp(
+                  resolveDependencyExitX(dependencyAnchorVisual) - 5,
+                  2,
+                  Math.max(gridWidth - 10, 2),
+                );
+                const dependencyHandleTop = Math.min(
+                  Math.max(dependencyAnchorTop + dependencyAnchorHeight - 5, 0),
+                  ROW_H - 10,
+                );
                 const dependencyHighlightTone = dependencyTargetState === "valid"
                   ? "ring-2 ring-cyan-300/40"
                   : dependencyTargetState === "invalid"
