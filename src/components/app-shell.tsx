@@ -1,12 +1,16 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import {
+  CalendarShellControlsProvider,
+  useCalendarShellControls,
+} from "@/components/calendar-shell-controls-context";
 import { DailyTaskCarryoverBanner } from "@/components/daily-task-carryover";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { GlobalSearch } from "@/components/global-search";
-import { TabUndoControl } from "@/components/tab-undo-control";
 import {
   formatSicknessStartedAt,
   getSicknessLog,
@@ -16,6 +20,11 @@ import {
   type SicknessLog,
 } from "@/lib/sickness";
 import { subscribeAppDataChange } from "@/lib/storage";
+
+const TabUndoControl = dynamic(
+  () => import("@/components/tab-undo-control").then((module) => module.TabUndoControl),
+  { ssr: false },
+);
 
 const routes = [
   { href: "/", icon: "🏠", label: "Дом" },
@@ -70,7 +79,55 @@ function formatTodayLabel(date: Date): string {
   }).format(date);
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+function CalendarRailControls({ pathname }: { pathname: string }) {
+  const { requestGoToday, setViewDays, viewDays } = useCalendarShellControls();
+
+  if (pathname !== "/") return null;
+
+  return (
+    <div className="mt-2 flex w-full flex-col items-center gap-2">
+      <div className="flex w-full flex-col items-center gap-1 rounded-2xl border border-zinc-800/70 bg-zinc-900/45 p-1.5">
+        {([3, 8] as const).map((days) => {
+          const active = viewDays === days;
+
+          return (
+            <button
+              key={days}
+              type="button"
+              onClick={() => setViewDays(days)}
+              aria-pressed={active}
+              className={`group relative flex h-10 w-11 items-center justify-center rounded-xl border text-[11px] font-semibold transition ${
+                active
+                  ? "border-zinc-200 bg-zinc-50 text-zinc-950"
+                  : "border-zinc-800 bg-zinc-950/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100"
+              }`}
+            >
+              <span>{days}д</span>
+              <RailTooltip
+                label={`${days} дня`}
+                description="Меняет ширину окна календаря, а сам горизонт продолжает скроллиться вперёд примерно на 3 месяца."
+              />
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={requestGoToday}
+        className="group relative flex h-10 w-11 items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-950/60 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-100"
+      >
+        <span>сег</span>
+        <RailTooltip
+          label="Сегодня"
+          description="Прокрутить горизонтальный календарь обратно к текущей неделе."
+        />
+      </button>
+    </div>
+  );
+}
+
+function AppShellFrame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sicknessLog, setSicknessLog] = useState<SicknessLog>({
     activePeriod: null,
@@ -136,7 +193,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               })}
             </nav>
 
+            <CalendarRailControls pathname={pathname} />
+
             <div className="mt-auto flex w-full flex-col items-center gap-2">
+              <TabUndoControl pathname={pathname} variant="rail" />
               <button
                 type="button"
                 onClick={handleSicknessToggle}
@@ -202,7 +262,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <ErrorBoundary>
             <div className="px-4 sm:px-6 lg:px-5">
-              <TabUndoControl pathname={pathname} />
+              <div className="lg:hidden">
+                <TabUndoControl pathname={pathname} />
+              </div>
               {children}
             </div>
           </ErrorBoundary>
@@ -234,5 +296,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
     </div>
+  );
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  return (
+    <CalendarShellControlsProvider>
+      <AppShellFrame>{children}</AppShellFrame>
+    </CalendarShellControlsProvider>
   );
 }
