@@ -1046,6 +1046,12 @@ export function TaskGanttChart({
   const viewportRef = useRef<HTMLDivElement>(null);
   const gridBodyRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef<string | null>(null);
+  const interactionRef = useRef<InteractionState | null>(null);
+  const interactionFrameRef = useRef<number | null>(null);
+  const pendingInteractionClientXRef = useRef<number | null>(null);
+  const dependencyDraftRef = useRef<DependencyDraftState | null>(null);
+  const dependencyDraftFrameRef = useRef<number | null>(null);
+  const pendingDependencyPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
     const persisted = readPersistedGanttUiState();
@@ -1092,6 +1098,24 @@ export function TaskGanttChart({
   const [dependencyDraft, setDependencyDraft] = useState<DependencyDraftState | null>(null);
   const [externalDropGroupId, setExternalDropGroupId] = useState<string | null>(null);
   const [externalDropTaskId, setExternalDropTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    interactionRef.current = interaction;
+  }, [interaction]);
+
+  useEffect(() => {
+    dependencyDraftRef.current = dependencyDraft;
+  }, [dependencyDraft]);
+
+  useEffect(() => () => {
+    if (interactionFrameRef.current != null) {
+      window.cancelAnimationFrame(interactionFrameRef.current);
+    }
+
+    if (dependencyDraftFrameRef.current != null) {
+      window.cancelAnimationFrame(dependencyDraftFrameRef.current);
+    }
+  }, []);
 
   const today = useMemo(() => d0(new Date()), []);
   const timelineStart = useMemo(() => addDays(today, -PAST_DAYS), [today]);
@@ -1864,6 +1888,18 @@ export function TaskGanttChart({
     };
   }, []);
 
+  const autoScrollViewport = useCallback((clientX: number) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const rect = viewport.getBoundingClientRect();
+    if (clientX < rect.left + AUTO_SCROLL_EDGE) {
+      viewport.scrollLeft -= Math.ceil((rect.left + AUTO_SCROLL_EDGE - clientX) / 6);
+    } else if (clientX > rect.right - AUTO_SCROLL_EDGE) {
+      viewport.scrollLeft += Math.ceil((clientX - (rect.right - AUTO_SCROLL_EDGE)) / 6);
+    }
+  }, []);
+
   const findDependencyHoverTarget = useCallback(
     (sourceTaskId: string, x: number, y: number) => {
       let hoveredInvalidTaskId: string | null = null;
@@ -2035,6 +2071,8 @@ export function TaskGanttChart({
       plannedMinutesDelta,
     };
   }, [allTasksById, buildVisual, gridWidth, interaction, riskMeta, taskLayoutsById]);
+  const isInteractionActive = Boolean(interaction);
+  const isDependencyDraftActive = Boolean(dependencyDraft);
 
   const renderableDependencyLinks = useMemo(() => {
     if (!showDependencies) return [];
@@ -2189,7 +2227,7 @@ export function TaskGanttChart({
     event.preventDefault();
     event.stopPropagation();
 
-    setInteraction({
+    const nextInteraction: InteractionState = {
       taskId: task.id,
       mode: "move",
       startX: event.clientX,
@@ -2202,14 +2240,18 @@ export function TaskGanttChart({
       offsetDays: 0,
       previewPlannedMinutes: task.plannedMinutes,
       moved: false,
-    });
+    };
+
+    interactionRef.current = nextInteraction;
+    pendingInteractionClientXRef.current = event.clientX;
+    setInteraction(nextInteraction);
   }, []);
 
   const beginResizeStart = useCallback((event: React.PointerEvent<HTMLButtonElement>, task: Task) => {
     event.preventDefault();
     event.stopPropagation();
 
-    setInteraction({
+    const nextInteraction: InteractionState = {
       taskId: task.id,
       mode: "resize-start",
       startX: event.clientX,
@@ -2222,7 +2264,11 @@ export function TaskGanttChart({
       offsetDays: 0,
       previewPlannedMinutes: task.plannedMinutes,
       moved: false,
-    });
+    };
+
+    interactionRef.current = nextInteraction;
+    pendingInteractionClientXRef.current = event.clientX;
+    setInteraction(nextInteraction);
   }, []);
 
   const beginResizeEnd = useCallback((event: React.PointerEvent<HTMLButtonElement>, task: Task) => {
@@ -2232,7 +2278,7 @@ export function TaskGanttChart({
     event.preventDefault();
     event.stopPropagation();
 
-    setInteraction({
+    const nextInteraction: InteractionState = {
       taskId: task.id,
       mode: "resize-end",
       resizeKind,
@@ -2246,7 +2292,11 @@ export function TaskGanttChart({
       offsetDays: 0,
       previewPlannedMinutes: task.plannedMinutes ?? 60,
       moved: false,
-    });
+    };
+
+    interactionRef.current = nextInteraction;
+    pendingInteractionClientXRef.current = event.clientX;
+    setInteraction(nextInteraction);
   }, [onTaskPlannedMinutesChange]);
 
   const beginDependencyDraft = useCallback((event: React.PointerEvent<HTMLButtonElement>, taskId: string) => {
@@ -2258,133 +2308,172 @@ export function TaskGanttChart({
     event.preventDefault();
     event.stopPropagation();
 
-    setDependencyDraft({
+    const nextDraft: DependencyDraftState = {
       taskId,
       pointerX: point.x,
       pointerY: point.y,
       hoveredTaskId: null,
       hoveredInvalidTaskId: null,
       moved: false,
-    });
+    };
+
+    dependencyDraftRef.current = nextDraft;
+    pendingDependencyPointerRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    setDependencyDraft(nextDraft);
   }, [onDependencyLinkCreate, readGridPointer]);
 
   useEffect(() => {
-    if (!interaction) return;
+    if (!isInteractionActive) return;
 
-    const handlePointerMove = (event: PointerEvent) => {
-      const viewport = viewportRef.current;
-      if (viewport) {
-        const rect = viewport.getBoundingClientRect();
-        if (event.clientX < rect.left + AUTO_SCROLL_EDGE) {
-          viewport.scrollLeft -= Math.ceil((rect.left + AUTO_SCROLL_EDGE - event.clientX) / 6);
-        } else if (event.clientX > rect.right - AUTO_SCROLL_EDGE) {
-          viewport.scrollLeft += Math.ceil((event.clientX - (rect.right - AUTO_SCROLL_EDGE)) / 6);
-        }
-      }
+    const flushPointerMove = () => {
+      interactionFrameRef.current = null;
 
-      const deltaX = event.clientX - interaction.startX;
+      const currentInteraction = interactionRef.current;
+      const currentClientX = pendingInteractionClientXRef.current;
+      if (!currentInteraction || currentClientX == null) return;
+
+      autoScrollViewport(currentClientX);
+      const deltaX = currentClientX - currentInteraction.startX;
+      const moved = currentInteraction.moved || Math.abs(deltaX) > 3;
 
       if (
-        interaction.mode === "move"
-        || interaction.mode === "resize-start"
-        || (interaction.mode === "resize-end" && interaction.resizeKind === "date")
+        currentInteraction.mode === "move"
+        || currentInteraction.mode === "resize-start"
+        || (currentInteraction.mode === "resize-end" && currentInteraction.resizeKind === "date")
       ) {
         const offsetDays = Math.round(deltaX / dayWidth);
-        setInteraction((current) =>
-          current
-            ? {
-                ...current,
-                offsetDays,
-                moved: current.moved || Math.abs(deltaX) > 3,
-              }
-            : null,
-        );
+
+        setInteraction((current) => {
+          if (!current || current.taskId !== currentInteraction.taskId) return current;
+          if (current.offsetDays === offsetDays && current.moved === moved) return current;
+
+          const next = {
+            ...current,
+            offsetDays,
+            moved,
+          };
+          interactionRef.current = next;
+          return next;
+        });
         return;
       }
 
-      const baseMinutes = interaction.basePlannedMinutes ?? 60;
+      const baseMinutes = currentInteraction.basePlannedMinutes ?? 60;
       const nextMinutes = roundToQuarterHour(baseMinutes + (deltaX / dayWidth) * WORKDAY_MINUTES);
-      setInteraction((current) =>
-        current
-          ? {
-              ...current,
-              previewPlannedMinutes: nextMinutes,
-              moved: current.moved || Math.abs(deltaX) > 3,
-            }
-          : null,
-      );
+
+      setInteraction((current) => {
+        if (!current || current.taskId !== currentInteraction.taskId) return current;
+        if (current.previewPlannedMinutes === nextMinutes && current.moved === moved) return current;
+
+        const next = {
+          ...current,
+          previewPlannedMinutes: nextMinutes,
+          moved,
+        };
+        interactionRef.current = next;
+        return next;
+      });
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      pendingInteractionClientXRef.current = event.clientX;
+      autoScrollViewport(event.clientX);
+
+      if (interactionFrameRef.current != null) return;
+      interactionFrameRef.current = window.requestAnimationFrame(flushPointerMove);
     };
 
     const handlePointerUp = () => {
-      if (interaction.mode === "move" && interaction.offsetDays !== 0) {
-        const shiftedStart = addDays(parseDay(interaction.baseStartDate) ?? d0(new Date(interaction.baseCreatedAt)), interaction.offsetDays);
+      if (interactionFrameRef.current != null) {
+        window.cancelAnimationFrame(interactionFrameRef.current);
+        interactionFrameRef.current = null;
+        flushPointerMove();
+      }
 
-        if (interaction.hasExplicitStartDate) {
+      pendingInteractionClientXRef.current = null;
+
+      const currentInteraction = interactionRef.current;
+      if (!currentInteraction) {
+        setInteraction(null);
+        return;
+      }
+
+      if (currentInteraction.mode === "move" && currentInteraction.offsetDays !== 0) {
+        const shiftedStart = addDays(
+          parseDay(currentInteraction.baseStartDate) ?? d0(new Date(currentInteraction.baseCreatedAt)),
+          currentInteraction.offsetDays,
+        );
+
+        if (currentInteraction.hasExplicitStartDate) {
           const patch: { startDate?: string; dueDate?: string } = {
             startDate: fmtISO(shiftedStart),
           };
 
-          if (interaction.hasDueDate && interaction.baseDueDate) {
-            patch.dueDate = fmtISO(addDays(parseDay(interaction.baseDueDate) ?? shiftedStart, interaction.offsetDays));
+          if (currentInteraction.hasDueDate && currentInteraction.baseDueDate) {
+            patch.dueDate = fmtISO(addDays(parseDay(currentInteraction.baseDueDate) ?? shiftedStart, currentInteraction.offsetDays));
           }
 
-          onTaskRangeChange(interaction.taskId, patch);
-        } else if (interaction.hasDueDate && interaction.baseDueDate) {
-          onTaskRangeChange(interaction.taskId, {
-            dueDate: fmtISO(addDays(parseDay(interaction.baseDueDate) ?? shiftedStart, interaction.offsetDays)),
+          onTaskRangeChange(currentInteraction.taskId, patch);
+        } else if (currentInteraction.hasDueDate && currentInteraction.baseDueDate) {
+          onTaskRangeChange(currentInteraction.taskId, {
+            dueDate: fmtISO(addDays(parseDay(currentInteraction.baseDueDate) ?? shiftedStart, currentInteraction.offsetDays)),
           });
-        } else if (interaction.basePlannedMinutes) {
-          onTaskRangeChange(interaction.taskId, {
+        } else if (currentInteraction.basePlannedMinutes) {
+          onTaskRangeChange(currentInteraction.taskId, {
             startDate: fmtISO(shiftedStart),
           });
         } else {
-          onTaskRangeChange(interaction.taskId, {
+          onTaskRangeChange(currentInteraction.taskId, {
             dueDate: fmtISO(shiftedStart),
           });
         }
       }
 
-      if (interaction.mode === "resize-start" && interaction.offsetDays !== 0) {
+      if (currentInteraction.mode === "resize-start" && currentInteraction.offsetDays !== 0) {
         const nextStart = clampStartDate(
-          addDays(parseDay(interaction.baseStartDate) ?? d0(new Date(interaction.baseCreatedAt)), interaction.offsetDays),
-          interaction.baseDueDate,
+          addDays(parseDay(currentInteraction.baseStartDate) ?? d0(new Date(currentInteraction.baseCreatedAt)), currentInteraction.offsetDays),
+          currentInteraction.baseDueDate,
         );
         const nextStartValue = fmtISO(nextStart);
 
-        if (!interaction.hasExplicitStartDate || nextStartValue !== interaction.baseStartDate) {
-          onTaskRangeChange(interaction.taskId, { startDate: nextStartValue });
+        if (!currentInteraction.hasExplicitStartDate || nextStartValue !== currentInteraction.baseStartDate) {
+          onTaskRangeChange(currentInteraction.taskId, { startDate: nextStartValue });
         }
       }
 
-      if (interaction.mode === "resize-end") {
-        if (interaction.resizeKind === "date" && interaction.baseDueDate) {
+      if (currentInteraction.mode === "resize-end") {
+        if (currentInteraction.resizeKind === "date" && currentInteraction.baseDueDate) {
           const nextDue = clampDueDate(
-            addDays(parseDay(interaction.baseDueDate) ?? d0(new Date(interaction.baseCreatedAt)), interaction.offsetDays),
-            interaction.baseStartDate,
+            addDays(parseDay(currentInteraction.baseDueDate) ?? d0(new Date(currentInteraction.baseCreatedAt)), currentInteraction.offsetDays),
+            currentInteraction.baseStartDate,
           );
           const nextDueValue = fmtISO(nextDue);
 
-          if (nextDueValue !== interaction.baseDueDate) {
-            onTaskRangeChange(interaction.taskId, { dueDate: nextDueValue });
+          if (nextDueValue !== currentInteraction.baseDueDate) {
+            onTaskRangeChange(currentInteraction.taskId, { dueDate: nextDueValue });
           }
         } else if (
           onTaskPlannedMinutesChange
-          && interaction.previewPlannedMinutes
-          && interaction.previewPlannedMinutes !== interaction.basePlannedMinutes
+          && currentInteraction.previewPlannedMinutes
+          && currentInteraction.previewPlannedMinutes !== currentInteraction.basePlannedMinutes
         ) {
-          onTaskPlannedMinutesChange(interaction.taskId, interaction.previewPlannedMinutes);
+          onTaskPlannedMinutesChange(currentInteraction.taskId, currentInteraction.previewPlannedMinutes);
         }
       }
 
-      if (interaction.moved) {
-        suppressClickRef.current = interaction.taskId;
+      if (currentInteraction.moved) {
+        suppressClickRef.current = currentInteraction.taskId;
         window.setTimeout(() => {
-          if (suppressClickRef.current === interaction.taskId) {
+          if (suppressClickRef.current === currentInteraction.taskId) {
             suppressClickRef.current = null;
           }
         }, 180);
       }
 
+      interactionRef.current = null;
       setInteraction(null);
     };
 
@@ -2394,59 +2483,102 @@ export function TaskGanttChart({
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
+
+      if (interactionFrameRef.current != null) {
+        window.cancelAnimationFrame(interactionFrameRef.current);
+        interactionFrameRef.current = null;
+      }
     };
-  }, [dayWidth, interaction, onTaskPlannedMinutesChange, onTaskRangeChange]);
+  }, [autoScrollViewport, dayWidth, isInteractionActive, onTaskPlannedMinutesChange, onTaskRangeChange]);
 
   useEffect(() => {
-    if (!dependencyDraft) return;
+    if (!isDependencyDraftActive) return;
 
-    const handlePointerMove = (event: PointerEvent) => {
-      const viewport = viewportRef.current;
-      if (viewport) {
-        const rect = viewport.getBoundingClientRect();
-        if (event.clientX < rect.left + AUTO_SCROLL_EDGE) {
-          viewport.scrollLeft -= Math.ceil((rect.left + AUTO_SCROLL_EDGE - event.clientX) / 6);
-        } else if (event.clientX > rect.right - AUTO_SCROLL_EDGE) {
-          viewport.scrollLeft += Math.ceil((event.clientX - (rect.right - AUTO_SCROLL_EDGE)) / 6);
-        }
-      }
+    const flushPointerMove = () => {
+      dependencyDraftFrameRef.current = null;
 
-      const point = readGridPointer(event.clientX, event.clientY);
+      const currentDraft = dependencyDraftRef.current;
+      const pendingPointer = pendingDependencyPointerRef.current;
+      if (!currentDraft || !pendingPointer) return;
+
+      autoScrollViewport(pendingPointer.clientX);
+
+      const point = readGridPointer(pendingPointer.clientX, pendingPointer.clientY);
       if (!point) return;
 
-      const hover = findDependencyHoverTarget(dependencyDraft.taskId, point.x, point.y);
+      const hover = findDependencyHoverTarget(currentDraft.taskId, point.x, point.y);
 
-      setDependencyDraft((current) =>
-        current
-          ? {
-              ...current,
-              pointerX: point.x,
-              pointerY: point.y,
-              hoveredTaskId: hover.hoveredTaskId,
-              hoveredInvalidTaskId: hover.hoveredInvalidTaskId,
-              moved:
-                current.moved
-                || Math.abs(point.x - current.pointerX) > 2
-                || Math.abs(point.y - current.pointerY) > 2,
-            }
-          : null,
-      );
+      setDependencyDraft((current) => {
+        if (!current || current.taskId !== currentDraft.taskId) return current;
+
+        const moved =
+          current.moved
+          || Math.abs(point.x - current.pointerX) > 2
+          || Math.abs(point.y - current.pointerY) > 2;
+
+        if (
+          current.pointerX === point.x
+          && current.pointerY === point.y
+          && current.hoveredTaskId === hover.hoveredTaskId
+          && current.hoveredInvalidTaskId === hover.hoveredInvalidTaskId
+          && current.moved === moved
+        ) {
+          return current;
+        }
+
+        const next = {
+          ...current,
+          pointerX: point.x,
+          pointerY: point.y,
+          hoveredTaskId: hover.hoveredTaskId,
+          hoveredInvalidTaskId: hover.hoveredInvalidTaskId,
+          moved,
+        };
+        dependencyDraftRef.current = next;
+        return next;
+      });
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      pendingDependencyPointerRef.current = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+      autoScrollViewport(event.clientX);
+
+      if (dependencyDraftFrameRef.current != null) return;
+      dependencyDraftFrameRef.current = window.requestAnimationFrame(flushPointerMove);
     };
 
     const handlePointerUp = () => {
-      if (dependencyDraft.hoveredTaskId && onDependencyLinkCreate) {
-        onDependencyLinkCreate(dependencyDraft.taskId, dependencyDraft.hoveredTaskId);
+      if (dependencyDraftFrameRef.current != null) {
+        window.cancelAnimationFrame(dependencyDraftFrameRef.current);
+        dependencyDraftFrameRef.current = null;
+        flushPointerMove();
       }
 
-      if (dependencyDraft.moved) {
-        suppressClickRef.current = dependencyDraft.taskId;
+      pendingDependencyPointerRef.current = null;
+
+      const currentDraft = dependencyDraftRef.current;
+      if (!currentDraft) {
+        setDependencyDraft(null);
+        return;
+      }
+
+      if (currentDraft.hoveredTaskId && onDependencyLinkCreate) {
+        onDependencyLinkCreate(currentDraft.taskId, currentDraft.hoveredTaskId);
+      }
+
+      if (currentDraft.moved) {
+        suppressClickRef.current = currentDraft.taskId;
         window.setTimeout(() => {
-          if (suppressClickRef.current === dependencyDraft.taskId) {
+          if (suppressClickRef.current === currentDraft.taskId) {
             suppressClickRef.current = null;
           }
         }, 180);
       }
 
+      dependencyDraftRef.current = null;
       setDependencyDraft(null);
     };
 
@@ -2456,8 +2588,13 @@ export function TaskGanttChart({
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
+
+      if (dependencyDraftFrameRef.current != null) {
+        window.cancelAnimationFrame(dependencyDraftFrameRef.current);
+        dependencyDraftFrameRef.current = null;
+      }
     };
-  }, [dependencyDraft, findDependencyHoverTarget, onDependencyLinkCreate, readGridPointer]);
+  }, [autoScrollViewport, findDependencyHoverTarget, isDependencyDraftActive, onDependencyLinkCreate, readGridPointer]);
 
   const openTaskInList = useCallback((taskId: string) => {
     if (suppressClickRef.current === taskId) return;
