@@ -7,12 +7,27 @@ export { STORAGE_KEYS } from "./app-data-keys";
 export const APP_DATA_EVENT = "alphacore:data-change";
 export const APP_SYNC_EVENT = "alphacore:sync-state";
 export const APP_UNDO_EVENT = "alphacore:undo-state";
+export const APP_RECOVERY_EVENT = "alphacore:recovery-state";
 
 const CLOUD_META_KEY = "alphacore_cloud_meta";
+const CLOUD_KEY_META_KEY = "alphacore_cloud_key_meta_v1";
 const CLOUD_PENDING_KEY = "alphacore_cloud_pending_keys";
 const UNDO_HISTORY_KEY = "alphacore_undo_history_v1";
+const LOCAL_RECOVERY_SNAPSHOTS_KEY = "alphacore_local_recovery_snapshots_v1";
+const LOCAL_RECOVERY_LIMIT = 12;
 const UNDO_HISTORY_LIMIT = 48;
 const UNDO_EXTRA_KEYS = ["alphacore_schedule_approvals"] as const;
+const RECOVERY_MANAGED_KEYS = [
+  "alphacore_tasks",
+  "alphacore_notes",
+  "alphacore_habits",
+  "alphacore_medical",
+  "alphacore_sickness",
+  "alphacore_projects",
+  "alphacore_journal",
+  "alphacore_schedule_custom",
+  "alphacore_schedule_overrides",
+] as const;
 const CLOUD_API_PATH = "/api/storage";
 const CLOUD_POLL_INTERVAL_MS = 5000;
 const CLOUD_FLUSH_DEBOUNCE_MS = 250;
@@ -28,17 +43,21 @@ type CloudMeta = {
   lastSyncedAt: string | null;
 };
 
+type CloudKeyMeta = Partial<Record<StorageKey, string | null>>;
+
 type CloudSnapshot = {
   workspaceId: string;
   revision: number;
   updatedAt: string | null;
   items: Partial<Record<StorageKey, unknown>>;
+  keyMeta?: CloudKeyMeta;
 };
 
 type CloudMutationAck = {
   key?: StorageKey;
   revision: number;
   updatedAt: string | null;
+  keyUpdatedAt?: string | null;
 };
 
 type SyncDetail = {
@@ -47,6 +66,20 @@ type SyncDetail = {
 
 type UndoDetail = {
   state: UndoStateSnapshot;
+};
+
+export type LocalRecoverySnapshot = {
+  id: string;
+  createdAt: string;
+  source: "remote-overwrite" | "sync-conflict";
+  summary: string;
+  keys: StorageKey[];
+  items: Partial<Record<StorageKey, unknown | null>>;
+  remoteUpdatedAt: string | null;
+};
+
+type RecoveryDetail = {
+  snapshots: LocalRecoverySnapshot[];
 };
 
 type UndoHistoryEntry = {
@@ -117,6 +150,155 @@ function readCloudMeta(): CloudMeta {
     remoteRevision: 0,
     lastSyncedAt: null,
   });
+}
+
+function readCloudKeyMeta(): CloudKeyMeta {
+  const raw = readJson<Record<string, unknown>>(CLOUD_KEY_META_KEY, {});
+  const next: CloudKeyMeta = {};
+
+  for (const key of STORAGE_KEYS) {
+    const value = raw[key];
+    if (value === null || typeof value === "string") {
+      next[key] = value;
+    }
+  }
+
+  return next;
+}
+
+function writeCloudKeyMeta(meta: CloudKeyMeta): void {
+  if (!isBrowser()) return;
+  writeJson(CLOUD_KEY_META_KEY, meta);
+}
+
+function isRecoveryManagedKey(key: string): key is StorageKey {
+  return (RECOVERY_MANAGED_KEYS as readonly string[]).includes(key);
+}
+
+function buildRecoverySummary(
+  source: LocalRecoverySnapshot["source"],
+  keys: StorageKey[],
+): string {
+  const labels: Partial<Record<StorageKey, string>> = {
+    alphacore_tasks: "задачи",
+    alphacore_notes: "заметки",
+    alphacore_habits: "привычки",
+    alphacore_medical: "анализы",
+    alphacore_sickness: "болезнь",
+    alphacore_projects: "группы",
+    alphacore_journal: "дневник",
+    alphacore_schedule_custom: "календарь",
+    alphacore_schedule_overrides: "оверрайды недели",
+  };
+
+  const primaryLabel = labels[keys[0]] ?? keys[0]?.replace(/^alphacore_/, "") ?? "данные";
+
+  if (source === "sync-conflict") {
+    return keys.length > 1
+      ? `Локальная копия до конфликта sync · ${primaryLabel} +${keys.length - 1}`
+      : `Локальная копия до конфликта sync · ${primaryLabel}`;
+  }
+
+  return keys.length > 1
+    ? `Локальная копия до remote update · ${primaryLabel} +${keys.length - 1}`
+    : `Локальная копия до remote update · ${primaryLabel}`;
+}
+
+function sanitizeLocalRecoverySnapshot(entry: LocalRecoverySnapshot): LocalRecoverySnapshot | null {
+  if (!entry || typeof entry !== "object") return null;
+  if (typeof entry.id !== "string" || typeof entry.createdAt !== "string") return null;
+  if (entry.source !== "remote-overwrite" && entry.source !== "sync-conflict") return null;
+  if (!Array.isArray(entry.keys) || !entry.items || typeof entry.items !== "object") return null;
+
+  const keys = entry.keys.filter((key): key is StorageKey => typeof key === "string" && isStorageKey(key));
+  if (keys.length === 0) return null;
+
+  const items = Object.fromEntries(
+    keys.map((key) => [key, Object.prototype.hasOwnProperty.call(entry.items, key) ? entry.items[key] ?? null : null]),
+  ) as Partial<Record<StorageKey, unknown | null>>;
+
+  return {
+    id: entry.id,
+    createdAt: entry.createdAt,
+    source: entry.source,
+    summary: typeof entry.summary === "string" && entry.summary.trim()
+      ? entry.summary
+      : buildRecoverySummary(entry.source, keys),
+    keys,
+    items,
+    remoteUpdatedAt: typeof entry.remoteUpdatedAt === "string" ? entry.remoteUpdatedAt : null,
+  };
+}
+
+function readLocalRecoverySnapshots(): LocalRecoverySnapshot[] {
+  return readJson<LocalRecoverySnapshot[]>(LOCAL_RECOVERY_SNAPSHOTS_KEY, [])
+    .map((entry) => sanitizeLocalRecoverySnapshot(entry))
+    .filter((entry): entry is LocalRecoverySnapshot => entry != null);
+}
+
+function emitRecoveryStateChange(): void {
+  if (!isBrowser()) return;
+
+  window.dispatchEvent(
+    new CustomEvent<RecoveryDetail>(APP_RECOVERY_EVENT, {
+      detail: { snapshots: readLocalRecoverySnapshots() },
+    }),
+  );
+}
+
+function writeLocalRecoverySnapshots(snapshots: LocalRecoverySnapshot[]): void {
+  if (!isBrowser()) return;
+  writeJson(LOCAL_RECOVERY_SNAPSHOTS_KEY, snapshots.slice(0, LOCAL_RECOVERY_LIMIT));
+  emitRecoveryStateChange();
+}
+
+function captureLocalRecoverySnapshot(
+  rawItems: Partial<Record<StorageKey, string | null>>,
+  source: LocalRecoverySnapshot["source"],
+  options?: { summary?: string; remoteUpdatedAt?: string | null },
+): void {
+  if (!isBrowser()) return;
+
+  const items: Partial<Record<StorageKey, unknown | null>> = {};
+  const keys: StorageKey[] = [];
+
+  for (const [key, raw] of Object.entries(rawItems)) {
+    if (!isStorageKey(key) || !isRecoveryManagedKey(key)) continue;
+    if (raw == null) continue;
+
+    try {
+      items[key] = JSON.parse(raw) as unknown;
+      keys.push(key);
+    } catch {
+      /* ignore malformed snapshot candidate */
+    }
+  }
+
+  if (keys.length === 0) return;
+
+  const snapshot: LocalRecoverySnapshot = {
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    source,
+    summary: options?.summary?.trim() || buildRecoverySummary(source, keys),
+    keys,
+    items,
+    remoteUpdatedAt: options?.remoteUpdatedAt ?? null,
+  };
+
+  const snapshots = readLocalRecoverySnapshots();
+  const signature = JSON.stringify({ source: snapshot.source, keys: snapshot.keys, items: snapshot.items });
+  const latest = snapshots[0];
+
+  if (latest) {
+    const latestSignature = JSON.stringify({ source: latest.source, keys: latest.keys, items: latest.items });
+    if (latestSignature === signature) {
+      return;
+    }
+  }
+
+  snapshots.unshift(snapshot);
+  writeLocalRecoverySnapshots(snapshots);
 }
 
 function isUndoManagedKey(key: string): key is UndoManagedKey {
@@ -322,6 +504,17 @@ function scheduleFlush(delay = CLOUD_FLUSH_DEBOUNCE_MS): void {
   }, delay);
 }
 
+class CloudConflictError extends Error {
+  constructor(
+    readonly key: StorageKey,
+    readonly currentUpdatedAt: string | null,
+    readonly expectedUpdatedAt: string | null,
+  ) {
+    super(`Cloud conflict for ${key}`);
+    this.name = "CloudConflictError";
+  }
+}
+
 async function fetchCloudSnapshot(): Promise<CloudSnapshot> {
   const response = await fetch(CLOUD_API_PATH, {
     method: "GET",
@@ -340,43 +533,61 @@ async function fetchCloudSnapshot(): Promise<CloudSnapshot> {
 }
 
 async function putCloudKey(key: StorageKey, value: unknown): Promise<CloudMutationAck> {
+  const expectedUpdatedAt = readCloudKeyMeta()[key] ?? null;
   const response = await fetch(CLOUD_API_PATH, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ key, value }),
+    body: JSON.stringify({ key, value, expectedUpdatedAt }),
   });
 
+  const payload = (await response.json().catch(() => null)) as
+    | ({ message?: string; error?: string; key?: StorageKey; currentUpdatedAt?: string | null; expectedUpdatedAt?: string | null } & Record<string, unknown>)
+    | null;
+
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as
-      | { message?: string }
-      | null;
+    if (response.status === 409 && payload?.error === "conflict" && payload.key === key) {
+      throw new CloudConflictError(
+        key,
+        typeof payload.currentUpdatedAt === "string" ? payload.currentUpdatedAt : null,
+        typeof payload.expectedUpdatedAt === "string" ? payload.expectedUpdatedAt : expectedUpdatedAt,
+      );
+    }
     throw new Error(payload?.message ?? `Cloud write failed for ${key}: ${response.status}`);
   }
 
-  return (await response.json()) as CloudMutationAck;
+  return payload as CloudMutationAck;
 }
 
 async function deleteCloudKey(key: StorageKey): Promise<CloudMutationAck> {
+  const expectedUpdatedAt = readCloudKeyMeta()[key] ?? null;
   const response = await fetch(CLOUD_API_PATH, {
     method: "DELETE",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ key }),
+    body: JSON.stringify({ key, expectedUpdatedAt }),
   });
 
+  const payload = (await response.json().catch(() => null)) as
+    | ({ message?: string; error?: string; key?: StorageKey; currentUpdatedAt?: string | null; expectedUpdatedAt?: string | null } & Record<string, unknown>)
+    | null;
+
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as
-      | { message?: string }
-      | null;
+    if (response.status === 409 && payload?.error === "conflict" && payload.key === key) {
+      throw new CloudConflictError(
+        key,
+        typeof payload.currentUpdatedAt === "string" ? payload.currentUpdatedAt : null,
+        typeof payload.expectedUpdatedAt === "string" ? payload.expectedUpdatedAt : expectedUpdatedAt,
+      );
+    }
     throw new Error(payload?.message ?? `Cloud delete failed for ${key}: ${response.status}`);
   }
 
-  return (await response.json()) as CloudMutationAck;
+  return payload as CloudMutationAck;
 }
 
 async function mergeCloudItems(
@@ -411,15 +622,32 @@ function applyCloudSnapshot(
   const preservePending = options?.preservePending ?? true;
   const pending = new Set(readPendingKeys());
   const changedKeys: string[] = [];
+  const nextKeyMeta = readCloudKeyMeta();
+  const recoveryRawItems: Partial<Record<StorageKey, string | null>> = {};
 
   for (const key of STORAGE_KEYS) {
-    if (preservePending && pending.has(key)) continue;
-
     const hasRemoteValue = Object.prototype.hasOwnProperty.call(snapshot.items, key);
     const remoteRaw = hasRemoteValue ? JSON.stringify(snapshot.items[key]) : null;
     const localRaw = window.localStorage.getItem(key);
+    const remoteUpdatedAt = snapshot.keyMeta?.[key] ?? null;
 
-    if (remoteRaw === localRaw) continue;
+    if (preservePending && pending.has(key)) {
+      if (remoteRaw === localRaw) {
+        if (remoteUpdatedAt == null) delete nextKeyMeta[key];
+        else nextKeyMeta[key] = remoteUpdatedAt;
+      }
+      continue;
+    }
+
+    if (remoteRaw === localRaw) {
+      if (remoteUpdatedAt == null) delete nextKeyMeta[key];
+      else nextKeyMeta[key] = remoteUpdatedAt;
+      continue;
+    }
+
+    if (localRaw != null && isRecoveryManagedKey(key)) {
+      recoveryRawItems[key] = localRaw;
+    }
 
     if (remoteRaw == null) {
       window.localStorage.removeItem(key);
@@ -427,7 +655,18 @@ function applyCloudSnapshot(
       window.localStorage.setItem(key, remoteRaw);
     }
 
+    if (remoteUpdatedAt == null) delete nextKeyMeta[key];
+    else nextKeyMeta[key] = remoteUpdatedAt;
+
     changedKeys.push(key);
+  }
+
+  writeCloudKeyMeta(nextKeyMeta);
+
+  if (Object.keys(recoveryRawItems).length > 0) {
+    captureLocalRecoverySnapshot(recoveryRawItems, "remote-overwrite", {
+      remoteUpdatedAt: snapshot.updatedAt,
+    });
   }
 
   writeCloudMeta({
@@ -622,28 +861,66 @@ export async function flushPendingKeys(): Promise<void> {
 
   isFlushing = true;
   updateSyncState({ status: "syncing", lastError: null });
+  let conflictMessage: string | null = null;
 
   try {
     for (const key of [...pending]) {
       const raw = window.localStorage.getItem(key);
-      const ack = raw == null
-        ? await deleteCloudKey(key)
-        : await putCloudKey(key, JSON.parse(raw) as unknown);
+      try {
+        const ack = raw == null
+          ? await deleteCloudKey(key)
+          : await putCloudKey(key, JSON.parse(raw) as unknown);
 
-      writeCloudMeta({
-        remoteRevision: ack.revision,
-        lastSyncedAt: ack.updatedAt,
-      });
+        writeCloudMeta({
+          remoteRevision: ack.revision,
+          lastSyncedAt: ack.updatedAt,
+        });
 
-      const nextPending = readPendingKeys().filter((item) => item !== key);
-      writePendingKeys(nextPending);
+        const nextKeyMeta = readCloudKeyMeta();
+        if (ack.keyUpdatedAt == null) {
+          delete nextKeyMeta[key];
+        } else {
+          nextKeyMeta[key] = ack.keyUpdatedAt;
+        }
+        writeCloudKeyMeta(nextKeyMeta);
 
-      updateSyncState({
-        status: nextPending.length > 0 ? "syncing" : "synced",
-        lastSyncedAt: ack.updatedAt,
-        remoteRevision: ack.revision,
-        lastError: null,
-      });
+        const nextPending = readPendingKeys().filter((item) => item !== key);
+        writePendingKeys(nextPending);
+
+        updateSyncState({
+          status: nextPending.length > 0 ? "syncing" : "synced",
+          lastSyncedAt: ack.updatedAt,
+          remoteRevision: ack.revision,
+          lastError: conflictMessage,
+        });
+      } catch (error) {
+        if (error instanceof CloudConflictError) {
+          conflictMessage = `Конфликт синка для ${key.replace(/^alphacore_/, "")}: локальная копия сохранена в recovery snapshots, облако обновлено поверх неё.`;
+
+          if (raw != null) {
+            captureLocalRecoverySnapshot({ [key]: raw }, "sync-conflict", {
+              summary: conflictMessage,
+              remoteUpdatedAt: error.currentUpdatedAt,
+            });
+          }
+
+          const nextPending = readPendingKeys().filter((item) => item !== key);
+          writePendingKeys(nextPending);
+
+          const snapshot = await fetchCloudSnapshot();
+          applyCloudSnapshot(snapshot, { preservePending: true });
+
+          updateSyncState({
+            status: nextPending.length > 0 ? "syncing" : "error",
+            lastSyncedAt: snapshot.updatedAt,
+            remoteRevision: snapshot.revision,
+            lastError: conflictMessage,
+          });
+          continue;
+        }
+
+        throw error;
+      }
     }
   } catch (error) {
     updateSyncState({
@@ -714,6 +991,76 @@ export function subscribeSyncState(handler: (state: AppSyncState) => void): () =
     window.removeEventListener(APP_SYNC_EVENT, customHandler as EventListener);
     window.removeEventListener("storage", storageHandler);
   };
+}
+
+export function getLocalRecoverySnapshots(): LocalRecoverySnapshot[] {
+  return readLocalRecoverySnapshots();
+}
+
+export function subscribeLocalRecoverySnapshots(
+  handler: (snapshots: LocalRecoverySnapshot[]) => void,
+): () => void {
+  if (!isBrowser()) return () => {};
+
+  const emit = () => {
+    handler(getLocalRecoverySnapshots());
+  };
+
+  const customHandler = () => {
+    emit();
+  };
+
+  const storageHandler = (event: StorageEvent) => {
+    if (event.key === LOCAL_RECOVERY_SNAPSHOTS_KEY) {
+      emit();
+    }
+  };
+
+  window.addEventListener(APP_RECOVERY_EVENT, customHandler as EventListener);
+  window.addEventListener("storage", storageHandler);
+
+  emit();
+
+  return () => {
+    window.removeEventListener(APP_RECOVERY_EVENT, customHandler as EventListener);
+    window.removeEventListener("storage", storageHandler);
+  };
+}
+
+export function restoreLocalRecoverySnapshot(
+  snapshotId: string,
+): { restoredKeys: StorageKey[]; snapshot: LocalRecoverySnapshot | null } {
+  if (!isBrowser()) {
+    return { restoredKeys: [], snapshot: null };
+  }
+
+  const snapshots = readLocalRecoverySnapshots();
+  const snapshot = snapshots.find((entry) => entry.id === snapshotId) ?? null;
+  if (!snapshot) {
+    return { restoredKeys: [], snapshot: null };
+  }
+
+  const restoredKeys: StorageKey[] = [];
+
+  for (const key of snapshot.keys) {
+    captureUndoBeforeChange(key);
+
+    if (!Object.prototype.hasOwnProperty.call(snapshot.items, key) || snapshot.items[key] == null) {
+      window.localStorage.removeItem(key);
+    } else {
+      writeCacheValue(key, snapshot.items[key]);
+    }
+
+    restoredKeys.push(key);
+    void initializeCloudSync();
+    queueKeyForCloudSync(key);
+  }
+
+  if (restoredKeys.length > 0) {
+    emitAppDataChange(restoredKeys);
+  }
+
+  return { restoredKeys, snapshot };
 }
 
 export function getUndoStateSnapshot(keys: string[]): UndoStateSnapshot {

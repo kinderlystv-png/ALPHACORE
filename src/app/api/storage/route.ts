@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { isStorageKey, type StorageKey } from "@/lib/app-data-keys";
 import {
+  CloudConflictError,
   deleteCloudItem,
   getCloudSnapshot,
   upsertCloudItem,
@@ -38,6 +39,15 @@ function toMessage(error: unknown): string {
 
 function parseStorageKey(value: unknown): StorageKey | null {
   return typeof value === "string" && isStorageKey(value) ? value : null;
+}
+
+function parseOptionalUpdatedAt(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+
+  const normalized = value.trim();
+  return normalized ? normalized : null;
 }
 
 async function safeJsonBody(request: NextRequest): Promise<unknown> {
@@ -92,10 +102,18 @@ export async function PUT(request: NextRequest) {
       return noStoreJson({ error: "invalid_key", requestId: rid }, { status: 400, reqId: rid });
     }
 
-    return noStoreJson(await upsertCloudItem(key, obj?.value ?? null), { reqId: rid });
+    return noStoreJson(
+      await upsertCloudItem(key, obj?.value ?? null, {
+        expectedUpdatedAt: parseOptionalUpdatedAt(obj?.expectedUpdatedAt),
+      }),
+      { reqId: rid },
+    );
   } catch (error) {
     if (error instanceof PayloadTooLargeError) {
       return noStoreJson({ error: "payload_too_large", requestId: rid }, { status: 413, reqId: rid });
+    }
+    if (error instanceof CloudConflictError) {
+      return noStoreJson({ ...error.payload, requestId: rid }, { status: 409, reqId: rid });
     }
     console.error(`[storage][${rid}] PUT failed:`, toMessage(error));
     return noStoreJson(
@@ -142,18 +160,28 @@ export async function DELETE(request: NextRequest) {
   if (rateLimited) return rateLimited;
   try {
     let key = parseStorageKey(request.nextUrl.searchParams.get("key"));
+    let body: Record<string, unknown> | null = null;
 
     if (!key) {
-      const body = await request.json().catch(() => null);
+      body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
       key = parseStorageKey(body?.key);
+    }
+
+    if (!body) {
+      body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     }
 
     if (!key) {
       return noStoreJson({ error: "invalid_key", requestId: rid }, { status: 400, reqId: rid });
     }
 
-    return noStoreJson(await deleteCloudItem(key), { reqId: rid });
+    const expectedUpdatedAt = parseOptionalUpdatedAt(body?.expectedUpdatedAt);
+
+    return noStoreJson(await deleteCloudItem(key, { expectedUpdatedAt }), { reqId: rid });
   } catch (error) {
+    if (error instanceof CloudConflictError) {
+      return noStoreJson({ ...error.payload, requestId: rid }, { status: 409, reqId: rid });
+    }
     console.error(`[storage][${rid}] DELETE failed:`, toMessage(error));
     return noStoreJson(
       { error: "storage_delete_failed", message: toMessage(error), requestId: rid },
