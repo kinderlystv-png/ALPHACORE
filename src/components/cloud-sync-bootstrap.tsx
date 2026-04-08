@@ -2,11 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { SyncBlockingOverlay } from "@/components/sync-blocking-overlay";
 import { reconcileHeysActualActivities } from "@/lib/heys-activity-sync";
 import { initializeCloudSync } from "@/lib/storage";
 import { useHeysSync } from "@/lib/use-heys-sync";
 
-export function CloudSyncBootstrap() {
+type CloudSyncBootstrapProps = {
+  appRootId: string;
+};
+
+export function CloudSyncBootstrap({ appRootId }: CloudSyncBootstrapProps) {
   const { snapshot } = useHeysSync();
   const [cloudReady, setCloudReady] = useState(false);
   const lastAppliedSnapshotRef = useRef<string | null>(null);
@@ -23,5 +28,5 @@ export function CloudSyncBootstrap() {
     lastAppliedSnapshotRef.current = snapshot.syncedAt;
   }, [cloudReady, snapshot]);
 
-  return null;
+  return <SyncBlockingOverlay appRootId={appRootId} />;
 }

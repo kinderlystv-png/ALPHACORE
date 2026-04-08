@@ -325,7 +325,7 @@ export function CalendarOverlayColumn({
                   ? "border-rose-500/50 bg-linear-to-br from-rose-500/22 via-red-500/16 to-rose-950/34"
                   : isOverdueCarryoverTask
                     ? "border-amber-500/50 bg-linear-to-br from-amber-500/20 via-orange-500/14 to-amber-950/32"
-                    : `${color.border} ${color.bg}`;
+                    : `${color.border} ${color.slotBg}`;
         const shellDepth = isChildcareBackground
           ? "shadow-none"
           : isBlockingSlot

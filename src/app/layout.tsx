@@ -56,9 +56,11 @@ export default function RootLayout({
       lang="ru"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-zinc-950 text-zinc-50">
-        <CloudSyncBootstrap />
-        {children}
+      <body className="min-h-full bg-zinc-950 text-zinc-50">
+        <div id="alphacore-app-root" className="flex min-h-full flex-col">
+          {children}
+        </div>
+        <CloudSyncBootstrap appRootId="alphacore-app-root" />
       </body>
     </html>
   );

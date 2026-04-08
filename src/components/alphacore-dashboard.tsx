@@ -20,7 +20,7 @@ import {
   readTaskDragId,
   writeTaskDragData,
 } from "@/lib/dashboard-events";
-import { getJournalEntries, type JournalEntry } from "@/lib/journal";
+import { ensureJournalSeed, type JournalEntry } from "@/lib/journal";
 import { allParamNames, getEntries, paramStatus } from "@/lib/medical";
 import { addNote } from "@/lib/notes";
 import { getProjects, type Project } from "@/lib/projects";
@@ -271,7 +271,7 @@ export function AlphacoreDashboard() {
   const [completions, setCompletions] = useState<DayCompletions[]>(() => weeklyCompletions());
   const [focusSnapshot, setFocusSnapshot] = useState<FocusSnapshot | null>(() => getFocusSnapshot());
   const [weeklyReport, setWeeklyReport] = useState<WeeklyFocusReport | null>(() => getWeeklyFocusReport());
-  const [journalPreview, setJournalPreview] = useState<JournalEntry[]>(() => getJournalEntries().slice(-2));
+  const [journalPreview, setJournalPreview] = useState<JournalEntry[]>(() => ensureJournalSeed().slice(-2));
   const [triageTasks, setTriageTasks] = useState<Task[]>(() => getActionableTasks().slice(0, 4));
   const [projects, setProjects] = useState<Project[]>(() => getProjects());
   const [medicalSummary, setMedicalSummary] = useState<MedicalSummary | null>(() => buildMedicalSummary());
@@ -325,7 +325,7 @@ export function AlphacoreDashboard() {
     setCompletions(weeklyCompletions());
     setFocusSnapshot(getFocusSnapshot());
     setWeeklyReport(getWeeklyFocusReport());
-    setJournalPreview(getJournalEntries().slice(-2));
+    setJournalPreview(ensureJournalSeed().slice(-2));
     setTriageTasks(getActionableTasks().slice(0, 4));
     setProjects(getProjects());
     setMedicalSummary(buildMedicalSummary());
