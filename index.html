@@ -479,6 +479,68 @@ body[data-co]:not([data-co="all"]) .subtabs button.on{border-bottom-color:var(--
 .rolepick .switch button{flex:1}
 .toast{bottom:auto!important;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%) translateY(-16px)}
 .toast.on{transform:translateX(-50%)}
+/* ===== v4: прогноз денег, сценарии, правила, детализация ===== */
+.role-manager #v-cash>*:not(.locked),.role-manager #v-whatif>*:not(.locked){display:none}
+.plan{margin-top:6px;font-size:11.5px;color:var(--mute);display:flex;flex-direction:column;gap:4px}
+.plan i{display:block;height:4px;border-radius:2px;background:var(--line);overflow:hidden}.plan i b{display:block;height:100%;background:var(--accent)}
+.kpi.click{cursor:pointer;transition:border-color .15s,transform .15s}
+.kpi.click:hover{border-color:var(--accent);transform:translateY(-1px)}
+.kpi .more{display:block;margin-top:6px;font-size:12px;font-weight:600;color:var(--accent-ink)}
+.dqchip{font-size:12px;font-weight:600;color:var(--warn);background:var(--warn-soft);border-radius:8px;padding:4px 10px}
+.perrow{flex-wrap:wrap}
+.cplan{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--mute)}
+.cmt{border:1px solid var(--line);border-radius:10px;padding:1px 7px;font-size:11.5px;color:var(--ink2);cursor:pointer;background:var(--panel)}
+.cmt:hover{border-color:var(--accent)}
+.mgrs{margin-top:6px}.mgrs h3{font-size:11.5px;letter-spacing:1px;text-transform:uppercase;color:var(--mute);margin:4px 0 6px;font-weight:600}
+.dtbl .drow{cursor:pointer}.dtbl .drow:hover td{background:var(--panel2)}
+.dtbl small{color:var(--mute)}.sug{color:var(--accent-ink)!important}
+.inv{background:var(--panel2);border-radius:8px;padding:8px 10px}.inv table{font-size:12.5px}.invh{font-size:12.5px;color:var(--ink2);margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.modal{width:min(640px,100%)}
+.cms{display:grid;gap:8px;max-height:260px;overflow:auto}.cm{background:var(--panel2);border-radius:8px;padding:8px 10px;font-size:13px}.cm time{color:var(--mute);font-size:11.5px;margin-left:6px}
+.cashc svg{height:240px}
+.chartwrap text.tbad{fill:var(--bad);font-weight:700;font-size:11px}.chartwrap text.tok{fill:var(--ok);font-weight:700;font-size:11px}
+.scs{display:grid;gap:8px}
+.sc{display:grid;grid-template-columns:20px 1fr auto;gap:10px;align-items:start;border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
+.sc.on{border-color:var(--ok);background:var(--ok-soft)}
+.sc input{margin-top:3px;accent-color:var(--ok)}
+.sc b{display:block;font-size:13.5px}.sc small{display:block;color:var(--ink2);font-size:12px}
+.sc em{font-style:normal;font-size:12px;font-weight:700;color:var(--ok);white-space:nowrap}
+.cashtbl{max-height:420px;overflow:auto}.cashtbl td small{font-size:11px}
+.wisay{margin:10px 0 0;font-size:13.5px;color:var(--ink2);line-height:1.5}.wisay b{color:var(--ink)}
+.wis{display:grid;gap:6px;padding:10px 0;border-bottom:1px solid var(--line)}.wis:last-child{border-bottom:0}
+.wis span{display:flex;justify-content:space-between;gap:10px;font-size:13.5px}.wis em{font-style:normal;color:var(--accent-ink);font-weight:700;white-space:nowrap}
+.wis input{width:100%;accent-color:var(--c-mont)}
+.wicmp{display:grid;gap:14px}.wicmp small{color:var(--mute);font-size:12px}
+.wrow{display:grid;grid-template-columns:70px 1fr 82px;gap:10px;align-items:center;font-size:12.5px;color:var(--ink2);margin-top:6px}
+.wb{height:12px;background:var(--panel2);border-radius:6px;overflow:hidden}.wb i{display:block;height:100%;border-radius:6px;transition:width .25s}
+.wrow b{text-align:right}
+.wibig{font-size:28px;font-weight:700;margin-top:14px;letter-spacing:-.4px}.wibig small{font-size:13px;font-weight:500;color:var(--mute);letter-spacing:0}
+#wiTask{margin-top:10px}
+.rule-it{display:grid;grid-template-columns:44px 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.rule-it:last-child{border-bottom:0}.rule-it.off{opacity:.55}
+.rule-it b{display:block;font-size:13.5px}.rule-it small{font-size:12px;color:var(--mute)}
+.sw{position:relative;width:40px;height:22px;display:inline-block}.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw span{position:absolute;inset:0;background:var(--line);border-radius:11px;cursor:pointer;transition:.2s}
+.sw span:before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.sw input:checked+span{background:var(--ok)}.sw input:checked+span:before{transform:translateX(18px)}
+.sw input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.radd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:13.5px}
+.radd input{width:80px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:8px;padding:7px 9px;font:inherit}
+.notifs{position:fixed;top:calc(14px + env(safe-area-inset-top,0px));right:14px;z-index:60;display:flex;flex-direction:column;gap:8px;width:min(340px,calc(100% - 28px));pointer-events:none}
+.notif{background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:0 10px 30px rgba(0,0,0,.18);font-size:13px;animation:nin .35s ease;pointer-events:auto}
+.notif.out{opacity:0;transform:translateY(-8px);transition:.35s}
+.notif .nh{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--mute);margin-bottom:3px}.notif .nh time{margin-left:auto}
+.notif .na{width:18px;height:18px;border-radius:5px;background:var(--agent);color:var(--agent-acc);display:grid;place-items:center;font-size:10px}
+.notif b{display:block}
+@keyframes nin{from{opacity:0;transform:translateY(-10px)}}
+.lg2{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin-bottom:4px}.lg2 i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:3px}
+.lg2 i.dash{background:repeating-linear-gradient(90deg,var(--c-mont) 0 4px,transparent 4px 7px)}
+.rep{display:grid;gap:10px;font-size:13.5px}.rep h5{margin:6px 0 0;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--mute)}
+.rep ul{margin:0;padding-left:18px;display:grid;gap:4px}
+.repk{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.repk div{background:var(--panel2);border-radius:8px;padding:8px}.repk small{display:block;color:var(--mute);font-size:11.5px}.repk b{display:block;font-size:16px}.repk span{font-size:11.5px;font-weight:700}
+@media (max-width:900px){.repk{grid-template-columns:repeat(2,1fr)}.cashc svg{height:200px}.wrow{grid-template-columns:62px 1fr 74px}.sc{grid-template-columns:20px 1fr}.sc em{grid-column:2}}
+.cashc svg,#season svg{height:auto!important;max-height:260px}
 td.num{white-space:nowrap}</style>
 </head>
 <body>
@@ -536,6 +598,7 @@ td.num{white-space:nowrap}</style>
      <div class="card pcard"><h3><span>Агент сделал ночью сам</span></h3><div class="log" id="bNight"></div></div>
     </div>
    </div>
+   <div class="card pcard chartwrap" style="margin-top:14px"><h3><span>Сезон переобувки · Авто</span><button class="btn s" type="button" id="repBtn">📄 Отчёт за неделю</button></h3><div id="season"></div></div>
    <div class="card bask">
     <button class="voice" type="button" id="voiceBtn" data-voice><span class="vmic" aria-hidden="true">🎙</span><span><b>Надиктовать поручение</b><small>агент сам поставит задачу и проследит</small></span></button>
     <div class="qasks"><button type="button" data-qask>Что сегодня важного?</button><button type="button" data-qask>Сколько денег придёт на этой неделе?</button><button type="button" data-qask>Кто из директоров срывает сроки?</button></div>
@@ -547,6 +610,7 @@ td.num{white-space:nowrap}</style>
    <div class="card locked"><b>Раздел недоступен для роли «Менеджер Авто»</b>Деньги группы видят собственник и директора. Права задаются на MCP-сервере: агент просто не получит эти данные для этой роли.</div>
    <div class="perrow">
     <div class="filters" id="period"></div>
+    <span id="dq"></span>
     <span class="hint" id="periodHint"></span>
    </div>
    <div class="kpis5" id="kpis"></div>
@@ -558,6 +622,36 @@ td.num{white-space:nowrap}</style>
      <div class="card pcard chartwrap"><h3><span>Валовая маржа группы, 6 месяцев</span><span class="num" id="mgNow"></span></h3><div id="mgChart"></div></div>
      <div class="card pcard"><h3><span>Журнал решений</span></h3><div class="log" id="dlog"></div></div>
     </div>
+   </div>
+  </section>
+
+  <!-- CASH -->
+  <section class="view" id="v-cash" hidden>
+   <div class="card locked"><b>Раздел недоступен для роли «Менеджер Авто»</b>Прогноз денег видят собственник и директора.</div>
+   <div class="kpis4" id="cashHead"></div>
+   <div class="card pcard chartwrap cashc"><h3><span>Остаток денег группы на 30 дней</span><span>12 октября – 10 ноября</span></h3><div id="cashChart"></div><p class="wisay" id="cashSay"></p></div>
+   <div class="pgrid">
+    <div class="card pcard"><h3><span>Как закрыть разрыв</span></h3><div id="cashSc" class="scs"></div></div>
+    <div class="card pcard"><h3><span>Платёжный календарь</span></h3><div class="tblwrap cashtbl"><table id="cashTbl"></table></div></div>
+   </div>
+  </section>
+
+  <!-- WHATIF -->
+  <section class="view" id="v-whatif" hidden>
+   <div class="card locked"><b>Раздел недоступен для роли «Менеджер Авто»</b>Сценарии по марже видят собственник и директора.</div>
+   <p class="intro">Что будет с маржой и прибылью Авто, если поменять правила продаж. Расчёт на реальных сделках прошлого месяца — двигайте ползунки.</p>
+   <div class="pgrid wig">
+    <div class="card pcard"><h3><span>Правила продаж</span></h3><div id="wiCtl"></div></div>
+    <div class="card pcard"><h3><span>Результат</span><span>сентябрь, 214 сделок</span></h3><div id="wiRes"></div></div>
+   </div>
+  </section>
+
+  <!-- RULES -->
+  <section class="view" id="v-rules" hidden>
+   <p class="intro">Агент круглосуточно следит за этими условиями и пишет, только когда что-то сработало. Правила задаются обычными словами.</p>
+   <div class="pgrid">
+    <div class="card pcard"><h3><span>Агент следит за</span><button class="btn s p" type="button" id="rulesCheck">Проверить сейчас</button></h3><div id="rulesList"></div></div>
+    <div class="card pcard"><h3><span>Новое правило</span></h3><div id="rulesAdd"></div></div>
    </div>
   </section>
 
@@ -902,6 +996,7 @@ const DRILL={
 };
 const MG6=[['апр',14.2],['май',13.9],['июн',14.4],['июл',13.8],['авг',13.7],['сен',12.5]];
 let ALERTS=[
+ {id:'cash',co:'grp',sev:'bad',t:'28 октября денег может не хватить: 4,4 млн ₽ при минимуме 5 млн',s:'В одну неделю совпали оплата Sivik, зарплата и налоги. Агент нашёл три способа закрыть разрыв.',a:[['Открыть прогноз','go:cash'],['Перенести оплату Sivik','Согласовать с Sivik перенос оплаты 4,6 млн ₽ на 3 ноября']]},
  {id:'grand',co:'auto',sev:'bad',t:'СТО «Гранд», Михайловск — долг 1,2 млн ₽, просрочка 34 дня',s:'Собран новый заказ на 380 тыс. ₽. Отгружать?',a:[['Отгрузить','Отгрузка «Гранду» разрешена, несмотря на долг'],['Только по предоплате','«Гранд»: новый заказ — только по предоплате']]},
  {id:'pp',co:'auto',sev:'bad',t:'Предоплата 146 тыс. ₽ без движения 6 дней',s:'Заправочная станция для кондиционеров, Краснодар. Клиент уже оставил отзыв на 1 ★ по похожей ситуации.',a:[['Поручить директору Авто','task:auto:Разобраться с предоплатой 146 тыс. ₽ — отгрузить или вернуть'],['Открыть предоплаты','go:prepay']]},
  {id:'mirada',co:'him',sev:'warn',t:'Закупка сырья для MIRADA на 1,1 млн ₽',s:'Остаток базы на 9 дней производства. Черновик заказа поставщику готов.',a:[['Утвердить','Закупка сырья MIRADA на 1,1 млн ₽ утверждена'],['Отложить на неделю','Закупка сырья MIRADA отложена на неделю']]},
@@ -939,14 +1034,14 @@ function renderPult(){
  const pts=SER.map((m,i)=>xs(i)+','+ys(m[1])).join(' ');const ticks=[];for(let v=mn;v<=mx;v+=Math.max(1,Math.round((mx-mn)/4)))ticks.push(v);
  $('#mgChart').innerHTML='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Маржа группы снизилась с 14,2% в апреле до 12,5% в сентябре">'+ticks.map(v=>'<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+ys(v)+'" y2="'+ys(v)+'" stroke="var(--line)"/><text x="'+(pl-6)+'" y="'+(ys(v)+4)+'" text-anchor="end">'+v+'%</text>').join('')+'<polygon points="'+xs(0)+','+ys(mn)+' '+pts+' '+xs(MG6.length-1)+','+ys(mn)+'" fill="var(--accent)" opacity=".1"/><polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>'+MG6.map((m,i)=>'<text x="'+xs(i)+'" y="'+(H-6)+'" text-anchor="middle">'+m[0]+'</text>').join('')+'<circle cx="'+xs(5)+'" cy="'+ys(vv[5])+'" r="4.5" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/></svg>';
  $('#mgNow').textContent='сентябрь '+ru(vv[5])+'%';$('#mgChart').closest('.pcard').querySelector('h3 span').textContent='Валовая маржа '+(state.co==='all'?'группы':'· '+CO[state.co].nm)+', 6 месяцев';$('#mgChart svg polyline').setAttribute('stroke',state.co==='all'?'var(--accent)':CO[state.co].c);
- renderBrief();$('#dlog').innerHTML=DLOG.map(l=>'<div class="li"><time>'+esc(l[0])+'</time><div><b>'+esc(l[1])+'</b> — '+esc(l[2])+'</div></div>').join('');
+ enhancePult();renderBrief();$('#dlog').innerHTML=DLOG.map(l=>'<div class="li"><time>'+esc(l[0])+'</time><div><b>'+esc(l[1])+'</b> — '+esc(l[2])+'</div></div>').join('');
  updateBadges();
 }
 function bindDo(root){root.querySelectorAll('[data-do]').forEach(b=>b.onclick=()=>{const v=b.dataset.do;const al=b.dataset.al;
  if(v.startsWith('go:')){go(v.slice(3));return}
  if(v.startsWith('ask:')){openDrawer();ask(v.slice(4));return}
  if(v.startsWith('task:')){const [,who,...txt]=v.split(':');addTask(txt.join(':'),who,d(10,16),'из пульта');DLOG.unshift([nowStamp(),'Вы','поручили: '+txt.join(':')]);if(al)ALERTS=ALERTS.filter(a=>a.id!==al);renderPult();toast('Поручение добавлено на доску «Поручения».');return}
- DLOG.unshift([nowStamp(),'Вы',v]);if(al)ALERTS=ALERTS.filter(a=>a.id!==al);renderPult();toast('Решение записано в журнал. Агент передаст его ответственным.')})}
+ if(al==='cash')cashSc.sivik=true;DLOG.unshift([nowStamp(),'Вы',v]);if(al)ALERTS=ALERTS.filter(a=>a.id!==al);renderPult();toast('Решение записано в журнал. Агент передаст его ответственным.')})}
 
 /* ===== предоплаты ===== */
 let PP=[
@@ -992,9 +1087,9 @@ function renderTasks(){
 $('#ntForm').onsubmit=e=>{e.preventDefault();const t=$('#ntText').value.trim();if(!t){$('#ntText').focus();toast('Напишите, что нужно сделать.');return}const [y,m,dd]=$('#ntDate').value.split('-').map(Number);addTask(t,$('#ntWho').value,new Date(y,m-1,dd),'из строки');$('#ntText').value='';$('#ntForm').classList.remove('open');toast('Поручение поставлено. Директору уйдёт сообщение, агент проследит за сроком.')};
 
 /* ===== витрины и навигация ===== */
-const VT={today:{t:'Сегодня',subs:[['brief','Сводка']]},money:{t:'Деньги',subs:[['pult','Пульт'],['prepay','Предоплаты']]},projects:{t:'Проекты',subs:[['projects','Проекты СТО'],['brigades','Бригады'],['service','ТО и сервис']]},tasks:{t:'Поручения',subs:[['tasks','Доска поручений']]}};
-const V2VT={brief:'today',pult:'money',prepay:'money',projects:'projects',brigades:'projects',service:'projects',tasks:'tasks'};
-const SWMAP={brief:'brief',pult:'pult',prepay:'pult',projects:'projects',brigades:'projects',service:'projects',tasks:'tasks'};
+const VT={today:{t:'Сегодня',subs:[['brief','Сводка'],['rules','Правила']]},money:{t:'Деньги',subs:[['pult','Пульт'],['cash','Прогноз денег'],['whatif','Сценарии'],['prepay','Предоплаты']]},projects:{t:'Проекты',subs:[['projects','Проекты СТО'],['brigades','Бригады'],['service','ТО и сервис']]},tasks:{t:'Поручения',subs:[['tasks','Доска поручений']]}};
+const V2VT={rules:'today',cash:'money',whatif:'money',brief:'today',pult:'money',prepay:'money',projects:'projects',brigades:'projects',service:'projects',tasks:'tasks'};
+const SWMAP={rules:'brief',cash:'pult',whatif:'pult',brief:'brief',pult:'pult',prepay:'pult',projects:'projects',brigades:'projects',service:'projects',tasks:'tasks'};
 const lastSub={today:'brief',money:'pult',projects:'projects',tasks:'tasks'};
 function counts(){
  const co=state.co||'all';
@@ -1004,15 +1099,16 @@ function counts(){
  const pr=autoOn?P.filter(attn).length:0;
  const to=autoOn?TO.filter(t=>!t.done&&(t.st==='late'||t.st==='warranty')).length:0;
  const tk=TK.filter(x=>x.col!=='done'&&x.due<TODAY&&(co==='all'||x.who===co)).length;
- return {brief:al,today:al,pult:al,prepay:pp,projects:pr,brigades:0,service:to,tasks:tk,money:al+pp,projectsV:pr+to,tasksV:tk};
+ const cs=cashSeries();const cgap=cs.days.some(x=>x.bal<CASH_MIN)?1:0;const rl=RULES.filter(r=>r.on&&r.st==='bad').length;
+ return {cash:cgap,whatif:0,rules:rl,brief:al,today:al,pult:al,prepay:pp,projects:pr,brigades:0,service:to,tasks:tk,money:al+pp+cgap,projectsV:pr+to,tasksV:tk};
 }
 function updateBadges(){try{const c=counts();
  document.querySelectorAll('[data-vb]').forEach(el=>{const v={today:state.role==='manager'?0:c.today,money:state.role==='manager'?0:c.money,projects:c.projectsV,tasks:c.tasksV}[el.dataset.vb];el.textContent=v||''});
- document.querySelectorAll('[data-sb]').forEach(el=>{const k=el.dataset.sb;el.textContent=(state.role==='manager'&&(k==='pult'||k==='prepay'||k==='brief'))?'':(c[k]||'')});}catch(e){}}
+ document.querySelectorAll('[data-sb]').forEach(el=>{const k=el.dataset.sb;el.textContent=(state.role==='manager'&&(k==='pult'||k==='prepay'||k==='brief'||k==='cash'||k==='whatif'))?'':(c[k]||'')});}catch(e){}}
 function renderSubtabs(){const vt=V2VT[state.view];$('#subtabs').closest('.subrow').hidden=VT[vt].subs.length<2;$('#subtabs').innerHTML=VT[vt].subs.map(([k,l])=>'<button type="button" role="tab" aria-selected="'+(state.view===k)+'" class="'+(state.view===k?'on':'')+'" data-sub="'+k+'">'+l+'<span class="sb" data-sb="'+k+'"></span></button>').join('');$('#subtabs').querySelectorAll('[data-sub]').forEach(b=>b.onclick=()=>go(b.dataset.sub));updateBadges()}
 function go(v){if(VT[v])v=lastSub[v];state.view=v;const vt=V2VT[v];lastSub[vt]=v;closeDet();
  document.querySelectorAll('[data-vt]').forEach(x=>{const on=x.dataset.vt===vt;x.classList.toggle('on',on);if(on)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current')});
- document.querySelectorAll('.view').forEach(s=>s.hidden=s.id!=='v-'+v);
+ document.querySelectorAll('.view').forEach(s=>s.hidden=s.id!=='v-'+v);if(v==='cash')renderCash();if(v==='whatif')renderWhatif();if(v==='rules')renderRules();
  $('#viewTitle').textContent=VT[vt].t;renderSubtabs();
  $('#askInput').placeholder={today:'Спросите агента: «что сегодня важного?»',money:'Спросите агента: «где группа теряет деньги?»',tasks:'Спросите агента: «кто срывает сроки?»'}[vt]||'Спросите агента: «какие проекты под риском?»';
  renderSugg();window.scrollTo({top:0})}
@@ -1032,7 +1128,7 @@ function welcome(){modal('<div class="welcome"><div class="brandline">ALFA<span>
 document.querySelectorAll('[data-help]').forEach(b=>b.onclick=welcome);
 
 /* ===== агент ===== */
-const SUGGS={brief:['Что сегодня важного?','Где группа теряет деньги?','Сколько денег придёт на этой неделе?','Какие проекты под риском?'],pult:['Где группа теряет деньги?','Почему маржа Авто ниже, чем в августе?','Сколько денег придёт на этой неделе?','Какие предоплаты зависли?'],tasks:['Кто из директоров срывает сроки?','Что поручено на этой неделе?','Где группа теряет деньги?'],projects:['Какие проекты под риском?','Сколько денег ждём по проектам?','Распредели монтажи следующей недели по бригадам','Что лежит на складе под клиентов?','Кому пора на ТО?']};
+const SUGGS={brief:['Что сегодня важного?','Хватит ли денег в октябре?','Что будет, если ограничить скидку 10%?','Где группа теряет деньги?','Сколько денег придёт на этой неделе?','Какие проекты под риском?'],pult:['Хватит ли денег в октябре?','Кто нам больше всех должен?','Где группа теряет деньги?','Почему маржа Авто ниже, чем в августе?','Сколько денег придёт на этой неделе?','Какие предоплаты зависли?'],tasks:['Кто из директоров срывает сроки?','Что поручено на этой неделе?','Где группа теряет деньги?'],projects:['Какие проекты под риском?','Сколько денег ждём по проектам?','Распредели монтажи следующей недели по бригадам','Что лежит на складе под клиентов?','Кому пора на ТО?']};
 function curSugg(){return SUGGS[SWMAP[state.view]]||SUGGS.projects}
 function openDrawer(){$('#drawer').classList.add('open');if(!$('#msgs').children.length){addMsg('ai','Здравствуйте. Я вижу деньги, проекты, предоплаты и поручения всех четырёх компаний. Спросите что-нибудь или выберите вопрос ниже.')}renderSugg();setTimeout(()=>$('#drInput').focus(),250)}
 $('#drClose').onclick=()=>$('#drawer').classList.remove('open');
@@ -1041,6 +1137,9 @@ function renderSugg(){$('#sugg').innerHTML=curSugg().map(s=>'<button type="butto
 function addMsg(who,html){const m=document.createElement('div');m.className='m '+who;m.innerHTML=html;$('#msgs').appendChild(m);$('#msgs').scrollTop=1e6;return m}
 function answer(q,p){
  const t=q.toLowerCase();
+ if(/хватит ли денег|кассов|разрыв/.test(t)){const cs=cashSeries();const mn=cs.days.reduce((m,x)=>x.bal<m.bal?x:m,cs.days[0]);return mn.bal<CASH_MIN?'Не совсем. По платёжному календарю <b>'+fmt(mn.dt)+'</b> на счетах останется <b>'+ru(mn.bal)+' млн ₽</b> при неснижаемом остатке 5 млн. Совпали оплата Sivik (4,6 млн), зарплата (3,6 млн) и налоги (3,4 млн).<br><br>Проще всего перенести оплату Sivik на 3 ноября — договор это позволяет. <button class="btn s p" type="button" data-do="go:cash">Открыть прогноз</button>':'Да. Минимальный остаток за 30 дней — <b>'+ru(mn.bal)+' млн ₽</b> '+fmt(mn.dt)+', это выше порога 5 млн.'}
+ if(/скидк.*10|ограничить скидку|что будет, если/.test(t))return 'Если скидка без согласования — до 10%: маржа Авто вырастет с 8,4% до <b>9,5%</b>, это <b>+2,8 млн ₽</b> валовой прибыли в год. <button class="btn s p" type="button" data-do="go:whatif">Открыть сценарии</button>';
+ if(/должен|должник|дебитор/.test(t))return 'Больше всего просрочено у трёх клиентов:<table><tr><th>Клиент</th><th class="num">Просрочено</th><th class="num">Дней</th></tr><tr><td>СТО «Гранд»</td><td class="num">1,20</td><td class="num">34</td></tr><tr><td>Техцентр «Кавказ»</td><td class="num">1,10</td><td class="num">47</td></tr><tr><td>«Шинный двор»</td><td class="num">0,90</td><td class="num">41</td></tr></table><br>Всего просрочено 6,1 млн ₽ у 11 клиентов. Акты сверки готовы.';
  if(/сегодня важн|что важного/.test(t))return 'Главное на сегодня:<br><b>1.</b> '+(ALERTS.length?ALERTS.length+' решения ждут вас на экране «Сегодня».':'решений от вас не ждём.')+'<br><b>2.</b> Монтаж в «Гранде» 15.10 под угрозой — нет фото помещения, я напомнил менеджеру.<br><b>3.</b> Предоплата 146 тыс. ₽ без движения 6 дней — клиент уже писал жалобу.<br><br>Остальное идёт по плану: 14 отгрузок, 2 ТО, бригады загружены.';
  if(/теряет|потер/.test(t))return 'Три главные утечки за сентябрь:<table><tr><th>Где</th><th>Сколько</th></tr><tr><td>Скидки менеджеров Авто выше 12%</td><td>~290 тыс. ₽ маржи</td></tr><tr><td>Неликвид старше 180 дней на складах</td><td>9,3 млн ₽ заморожено</td></tr><tr><td>Просроченные долги клиентов</td><td>6,1 млн ₽</td></tr></table><br>Быстрее всего вернуть деньги через неликвид: стенды на 2,4 млн ₽ можно предложить клиентам с проектами под ключ. Поставить поручение директору Авто?';
  if(/маржа авто|почему маржа/.test(t))return 'Маржа Авто в сентябре — <b>8,4%</b> против 10,6% в августе. Причины по данным учёта:<br><b>1.</b> Пять сделок по подъёмникам со скидкой 12–18% — минус 1,4 п.п.<br><b>2.</b> Бесплатная доставка в 4 города дальше 250 км — минус 0,5 п.п.<br><b>3.</b> Доля расходников упала с 22% до 17% выручки — минус 0,3 п.п.<br><br>Предлагаю: скидка выше 10% — только с согласования директора, доставка дальше 200 км — платная.';
@@ -1050,7 +1149,7 @@ function answer(q,p){
  if(/поручено|на этой неделе/.test(t)){const w=TK.filter(x=>x.col!=='done');return 'В работе <b>'+w.length+'</b> поручений:<table><tr><th>Что</th><th>Срок</th></tr>'+w.slice(0,6).map(x=>'<tr><td>'+esc(x.t)+'</td><td class="num">'+fmtS(x.due)+'</td></tr>').join('')+'</table>'}
  return answerProj(q,p);
 }
-function ask(q,p){addMsg('me',esc(q));const w=addMsg('ai','<span class="typing"><i></i><i></i><i></i></span>');setTimeout(()=>{w.innerHTML=answer(q,p);$('#msgs').scrollTop=1e6},650)}
+function ask(q,p){addMsg('me',esc(q));const w=addMsg('ai','<span class="typing"><i></i><i></i><i></i></span>');setTimeout(()=>{w.innerHTML=answer(q,p);bindDo(w);$('#msgs').scrollTop=1e6},650)}
 $('#askForm').onsubmit=e=>{e.preventDefault();const v=$('#askInput').value.trim();openDrawer();if(v){ask(v);$('#askInput').value=''}};
 $('#drForm').onsubmit=e=>{e.preventDefault();const v=$('#drInput').value.trim();if(v){ask(v);$('#drInput').value=''}};
 
@@ -1067,11 +1166,11 @@ function srcl(t){return '<span class="srcl">⛁ '+t+'</span>'}
 function renderBrief(){
  const mgr=state.role==='manager';
  const VA=visAlerts();const n=VA.length;const co=state.co||'all';const one=co!=='all';
- const word=n===1?'вещь':n<5?'вещи':'вещей';
- const names=VA.slice(0,3).map(a=>({grand:'долг «Гранда»',pp:'предоплата 146 тыс. ₽',mirada:'закупка сырья MIRADA',disc:'скидки менеджеров Авто'}[a.id])).filter(Boolean);
- $('#bHero').innerHTML='<div class="bh-top"><span class="bh-av">✦</span><div><small>Сводка агента · 9:00</small><h2>Доброе утро</h2></div></div><p>'+(mgr?'Сегодня у бригад 3 выезда и 2 ТО. Под угрозой монтаж в «Гранде»: нет фото помещения. ':one?'Сводка по направлению '+CO[co].nm+'. В пятницу выручка <b>'+ru({auto:.8,prom:.15,pnev:.07,him:.3}[co],2)+' млн ₽</b>. ':'В пятницу группа заработала <b>1,62 млн ₽</b> — на 9% больше средней пятницы. ')+(n?'Ваше решение нужно по '+n+' '+word+(names.length?': '+names.join(', '):'')+'. Остальное идёт по плану.':'Решений от вас сегодня не требуется — всё идёт по плану.')+'</p>';
+ const word=n===1?'вопрос':n<5?'вопроса':'вопросов';
+ const names=VA.slice(0,3).map(a=>({cash:'риск кассового разрыва 28 октября',grand:'долг «Гранда»',pp:'предоплата 146 тыс. ₽',mirada:'закупка сырья MIRADA',disc:'скидки менеджеров Авто'}[a.id])).filter(Boolean);
+ $('#bHero').innerHTML='<div class="bh-top"><span class="bh-av">✦</span><div><small>Сводка агента · 9:00</small><h2>Доброе утро</h2></div></div><p>'+(mgr?'Сегодня у бригад 3 выезда и 2 ТО. Под угрозой монтаж в «Гранде»: нет фото помещения. ':one?'Сводка по направлению '+CO[co].nm+'. В пятницу выручка <b>'+ru({auto:.8,prom:.15,pnev:.07,him:.3}[co],2)+' млн ₽</b>. ':'В пятницу группа заработала <b>1,62 млн ₽</b> — на 9% больше средней пятницы. ')+(n?'Вашего решения '+(n===1?'ждёт ':'ждут ')+n+' '+word+(names.length?': '+names.join(', '):'')+(n>names.length?' и ещё '+(n-names.length):'')+'. Остальное идёт по плану.':'Решений от вас сегодня не требуется — всё идёт по плану.')+'</p>';
  const K=mgr?[['Выезды сегодня','5','3 монтажа · 2 ТО','Календарь бригад'],['Проекты под риском',String(P.filter(attn).length),'из 6 активных','CRM'],['Деньги группы','нет доступа','раздел скрыт для роли','права на MCP-сервере'],['Мои поручения',String(TK.filter(x=>x.who==='auto'&&x.col!=='done').length),'в работе','доска поручений']]
-  :one?[['Выручка в пятницу',ru({auto:.8,prom:.15,pnev:.07,him:.3}[co],2)+' млн ₽',CO[co].nm,'1С · '+CO[co].lg],['Деньги на счетах',ru({auto:9.1,prom:2.4,pnev:1.2,him:5.5}[co])+' млн ₽','на 9:00','банк-клиент'],['Придёт на этой неделе',ru({auto:3.1,prom:.6,pnev:.3,him:.9}[co])+' млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами',ru({auto:5.2,prom:.5,pnev:.2,him:.2}[co])+' млн ₽',{auto:'24 клиента',prom:'4 клиента',pnev:'2 клиента',him:'2 дилера'}[co],'1С · взаиморасчёты']]:[['Выручка в пятницу','1,62 млн ₽','▲ 9% к средней пятнице','1С · 4 компании'],['Деньги на счетах','18,2 млн ₽','на 9:00','банк-клиент · 4 счёта'],['Придёт на этой неделе','4,9 млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами','6,1 млн ₽','32 клиента','1С · взаиморасчёты']];
+  :one?[['Выручка в пятницу',ru({auto:.8,prom:.15,pnev:.07,him:.3}[co],2)+' млн ₽',CO[co].nm,'1С · '+CO[co].lg],['Деньги на счетах',ru({auto:9.1,prom:2.4,pnev:1.2,him:5.5}[co])+' млн ₽','на 9:00','банк-клиент'],['Придёт на этой неделе',ru({auto:3.1,prom:.6,pnev:.3,him:.9}[co])+' млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами',ru({auto:5.2,prom:.5,pnev:.2,him:.2}[co])+' млн ₽',{auto:'7 клиентов',prom:'2 клиента',pnev:'1 клиент',him:'1 дилер'}[co],'1С · взаиморасчёты']]:[['Выручка в пятницу','1,62 млн ₽','▲ 9% к средней пятнице','1С · 4 компании'],['Деньги на счетах','18,2 млн ₽','на 9:00','банк-клиент · 4 счёта'],['Придёт на этой неделе','4,9 млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами','6,1 млн ₽','11 клиентов','1С · взаиморасчёты']];
  $('#bKpi').innerHTML=K.map(k=>'<div class="card kpi"><small>'+k[0]+'</small><div class="v num">'+k[1]+'</div><div class="dl mu">'+k[2]+'</div>'+srcl(k[3])+'</div>').join('');
  $('#bAlerts').innerHTML=mgr?'<div class="empty">Решения по деньгам принимает собственник. Для вас — поручения на доске.</div>':(visAlerts().length?visAlerts().map(a=>'<div class="alert"><span class="ic" style="background:var(--'+(a.sev==='bad'?'bad':'warn')+')">'+(a.sev==='bad'?'!':'↓')+'</span><div class="tx"><b>'+a.t+'</b>'+a.s+'<div class="acts">'+a.a.map((x,i)=>'<button class="btn s'+(i===0?' p':'')+'" type="button" data-al="'+a.id+'" data-do="'+esc(x[1])+'">'+x[0]+'</button>').join('')+'</div></div></div>').join(''):'<div class="empty done-all">✓ Все решения приняты. Агент передал их исполнителям и проследит.</div>');
  bindDo($('#bAlerts'));
@@ -1105,6 +1204,9 @@ const TOUR=[
  ['brief','#bNight','Что агент сделал ночью сам: сверил оплаты, обновил статусы доставок, напомнил клиентам про ТО.'],
  ['pult','#kpis','Пульт денег: выручка, маржа, деньги, долги и неликвид. Выберите компанию — цифры пересчитаются.'],
  ['pult','#drill','Нажмите на карточку компании — агент объяснит, откуда взялись цифры и что с этим делать.'],
+ ['cash','#cashChart','Прогноз денег на 30 дней. Агент заранее видит кассовый разрыв и предлагает, как его закрыть — включите любой способ, и график перестроится.'],
+ ['whatif','#wiCtl','Сценарии: двигайте ползунки и смотрите, как изменится маржа и прибыль Авто. Расчёт — на сделках прошлого месяца.'],
+ ['rules','#rulesList','Правила: агент следит за порогами круглосуточно и пишет, только когда что-то сработало. Нажмите «Проверить сейчас».'],
  ['projects','#ribbon','Лента монтажей, ТО и поставок на две недели. Нажмите на день — увидите выезды бригад.'],
  ['projects','.work','Каждый проект: этапы, оплаты, где лежит оборудование и что советует агент. Отсюда же — расписание бригаде и сообщение заказчику.'],
  ['tasks','#kanban','Поручения директорам. Когда исполнитель пишет «сделано», агент сверяет это с учётом.'],
@@ -1123,6 +1225,174 @@ document.addEventListener('keydown',e=>{if(tourI>=0&&e.key==='Escape')tourEnd()}
 /* ===== переключатель компаний плитками ===== */
 const COSW=[['all','Все','Вся группа','mono-all'],['auto','Ав','Авто · А-Сервис','mono-auto'],['prom','Пр','Пром · Индастри','mono-prom'],['pnev','Пн','Пневмо · Эир-Тех','mono-pnev'],['him','Хт','Химтех · MIRADA','mono-him']];
 function renderCoSw(){const cur=state.co||'all';document.querySelectorAll('[data-cosw]').forEach(box=>{box.innerHTML=COSW.map(([k,m,l,cls])=>'<button type="button" role="radio" aria-checked="'+(cur===k)+'" class="mono '+cls+(cur===k?' on':'')+'" data-co="'+k+'" title="'+l+'"'+(state.coLock&&k!==cur?' disabled':'')+'>'+(k==='all'?'<span class="q"><i></i><i></i><i></i><i></i></span>':'<span>'+m+'</span>')+'<em>'+l.split(' · ')[0]+'</em></button>').join('');box.querySelectorAll('[data-co]').forEach(b=>b.onclick=()=>{if(!b.disabled)setCo(b.dataset.co)})});const n=COSW.find(x=>x[0]===cur);const cn=$('#coName');if(cn)cn.textContent=n?n[2]:''}
+/* ===== данные: дебиторка, неликвид, платёжный календарь, комментарии ===== */
+const DEBT=[
+ ['СТО «Гранд»','Михайловск','auto',1.20,1.20,34],['«Шинный двор»','Армавир','auto',2.40,0.90,41],['Техцентр «Кавказ»','Нальчик','auto',1.90,1.10,47],
+ ['Грузовой сервис «Магистраль»','Кропоткин','auto',2.10,0.86,36],['Автоцентр «Восток»','Невинномысск','auto',1.85,0.65,38],['Шиномонтаж «Протектор»','Светлоград','auto',0.31,0.31,52],
+ ['Экспресс-сервис','Черкесск','auto',0.68,0.18,33],['Кузовной центр «Профи»','Краснодар','auto',3.72,0,0],['СТО «Авангард»','Ставрополь','auto',1.15,0,0],
+ ['СТО «Мотор»','Пятигорск','auto',0.80,0,0],['«Колесо-24»','Невинномысск','auto',0.29,0,0],['Ещё 11 автосервисов','СКФО и Кубань','auto',1.50,0,0],
+ ['ООО «Агромаш»','Ставрополь','prom',1.20,0.30,31],['«Металлоформ»','Невинномысск','prom',0.95,0.20,39],['Мебельная фабрика «Эко»','Михайловск','prom',0.95,0,0],
+ ['«Пищепром-Юг»','Краснодар','pnev',0.90,0.20,35],['«СтеклоТара»','Минеральные Воды','pnev',0.50,0,0],
+ ['Дилер «Автокраски Юг»','Пятигорск','him',0.80,0.20,33],['Дилер «Колор-Дон»','Ростов-на-Дону','him',0.90,0,0],['Дилер «Эмаль-Маркет»','Краснодар','him',0.50,0,0]
+];
+const LIQ=[
+ ['Стенд сход-развал 3D прошлого поколения, 2 шт.','auto','Ставрополь',412,2.40,'Предложить в проект «Экспресс-сервис», Черкесск, со скидкой 12%'],
+ ['Подъёмник четырёхстоечный 5 т, 2 шт.','auto','Краснодар',268,1.36,'Подходит под грузовой шиномонтаж в Кропоткине — включить в КП'],
+ ['Роликовый стенд для тормозов','auto','Ставрополь',311,1.12,'Распродажа −15% по базе СТО, 40 адресатов'],
+ ['Шиномонтажный станок для грузовых','auto','Ставрополь',233,0.98,'Включить в КП Кропоткину вместе с подъёмником'],
+ ['Мойка колёс, 2 шт.','auto','Краснодар',189,0.62,'Предложить клиентам с детейлингом, 6 адресатов'],
+ ['Ручной инструмент и наборы, 82 позиции','auto','3 склада',260,0.58,'Комплекты для новых постов в проектах под ключ'],
+ ['Балансировочный станок, 3 шт.','auto','Ростов-на-Дону',197,0.54,'Переместить на склад Ставрополя под сезон переобувки'],
+ ['Абразивные круги устаревшего типоразмера','prom','Ставрополь',290,0.74,'Предложить «Металлоформу» по себестоимости'],
+ ['Фрезы по дереву снятой серии','prom','Краснодар',205,0.46,'Распродажа мебельным фабрикам, 9 адресатов'],
+ ['Осушитель воздуха, 2 шт.','pnev','Ставрополь',221,0.50,'Предложить «Пищепром-Юг» к модернизации линии']
+];
+const FLOW=[ // [месяц,день,сумма млн (+ приход / − расход),кто,тип,id]
+ [10,12,0.90,'Оплаты клиентов по графику','in'],[10,12,-0.35,'ГСМ и логистика','out'],[10,13,0.80,'Дилеры MIRADA','in'],
+ [10,14,-2.90,'Nordberg — станки под сезон','sup'],[10,15,0.60,'Оплаты клиентов','in'],[10,15,-3.10,'Зарплата, аванс','pay'],
+ [10,16,1.44,'СТО «Гранд» — финальная оплата','in','grand'],[10,19,0.29,'«Колесо-24» — финальная оплата','in'],[10,20,0.70,'Оплаты клиентов','in'],
+ [10,20,-1.20,'Аренда складов и офисов','out'],[10,21,-0.62,'Лизинг грузовиков','out'],[10,22,0.80,'СТО «Мотор» — вторая часть','in'],
+ [10,22,-4.60,'Sivik — оборудование под проекты','sup','sivik'],[10,23,0.41,'ООО «Агромаш»','in'],[10,24,-1.10,'Сырьё для MIRADA','sup','mirada'],
+ [10,25,-3.60,'Зарплата','pay'],[10,26,1.10,'Оплаты клиентов','in'],[10,28,-3.40,'Налоги: НДС и налог на прибыль','tax'],
+ [10,29,1.20,'Дилеры MIRADA','in'],[10,30,2.20,'Оплаты клиентов','in'],[10,31,-1.80,'Техновектор — стенды','sup'],
+ [11,2,1.50,'Оплаты клиентов','in'],[11,3,1.20,'«Профи» — оплата этапа','in'],[11,5,1.30,'Оплаты клиентов','in'],
+ [11,6,1.90,'Оплаты клиентов','in'],[11,9,1.60,'Оплаты клиентов','in'],[11,9,-1.50,'Hunter — стенд 3D','sup'],[11,10,-3.10,'Зарплата, аванс','pay']
+];
+const CASH_MIN=5.0, CASH_START=18.2;
+let cashSc={sivik:false,collect:false,mirada:false};
+const COMMENTS={auto:[['Директор Авто','08.10','Скидки по подъёмникам давали под конкурента в Краснодаре — там демпинг. Согласен ограничить 10%.'],['Финансист','09.10','Доставку дальше 250 км предлагаю включить в цену с 1 ноября.']],prom:[['Директор Пром','07.10','Сентябрь в 1С закроем до 15.10 — ждём акты от «Агромаша».']],pnev:[],him:[['Директор Химтех','10.10','«Автокраски Юг» обещали вернуться к рекомендованной цене до 20.10.']]};
+const PLANR={auto:.91,prom:.97,pnev:1.07,him:1.06};
+const MGR=[['Сергей','6,8 млн ₽','7,1%','13,4%'],['Ирина','5,2 млн ₽','9,6%','8,2%'],['Олеся','4,1 млн ₽','9,9%','7,5%'],['Тимур','2,9 млн ₽','8,0%','11,0%'],['Наталья','1,9 млн ₽','10,8%','6,1%']];
+
+/* ===== улучшения пульта: план/факт, качество данных, переход к документам, комментарии ===== */
+function enhancePult(){
+ const P0=PER[pst.per];const sel=state.co==='all'?Object.keys(CO):[state.co];
+ const rev=sel.reduce((s,k)=>s+P0.co[k][0],0);const plan=sel.reduce((s,k)=>s+P0.co[k][0]/PLANR[k],0);const pct=Math.round(rev/plan*100);
+ const tiles=$('#kpis').querySelectorAll('.kpi');
+ if(tiles[0])tiles[0].insertAdjacentHTML('beforeend','<div class="plan"><span>план '+ru(plan)+' млн · <b class="'+(pct>=100?'up':'dn')+'">'+pct+'%</b></span><i><b style="width:'+Math.min(100,pct)+'%"></b></i></div>');
+ if(tiles[1]){const mp=state.co==='all'?13.5:{auto:10.5,prom:14.0,pnev:12.5,him:26.0}[state.co];tiles[1].insertAdjacentHTML('beforeend','<div class="plan"><span>план '+ru(mp)+'%</span></div>')}
+ [[2,'cash','Прогноз на 30 дней →'],[3,'debt','Кто должен →'],[4,'liq','Что лежит →']].forEach(([i,k,l])=>{const t=tiles[i];if(!t)return;t.classList.add('click');t.setAttribute('role','button');t.tabIndex=0;t.insertAdjacentHTML('beforeend','<span class="more">'+l+'</span>');const f=()=>k==='cash'?go('cash'):k==='debt'?drillDebt():drillLiq();t.onclick=f;t.onkeydown=e=>{if(e.key==='Enter')f()}});
+ // качество данных
+ const q=$('#dq');if(q)q.innerHTML=(state.co==='all'||state.co==='prom')&&pst.per!=='week'?'<span class="dqchip" title="Агент проверяет данные перед показом">⚠ Пром: сентябрь в 1С не закрыт — цифры предварительные</span>':'';
+ // карточки компаний: план и комментарии
+ $('#cos').querySelectorAll('.co').forEach(c=>{const k=c.dataset.co;const d=P0.co[k];const p=Math.round(PLANR[k]*100);const n=(COMMENTS[k]||[]).length;
+  c.querySelector('.mg').insertAdjacentHTML('afterend','<span class="cplan">план <b class="'+(p>=100?'up':'dn')+'">'+p+'%</b><span class="cmt" role="button" tabindex="0" data-cmt="'+k+'" aria-label="Комментарии">💬 '+(n||'+')+'</span></span>')});
+ $('#cos').querySelectorAll('[data-cmt]').forEach(b=>{const f=e=>{e.stopPropagation();openComments(b.dataset.cmt)};b.onclick=f;b.onkeydown=e=>{if(e.key==='Enter')f(e)}});
+ // менеджеры в разборе Авто
+ if(pst.co==='auto')$('#drill').insertAdjacentHTML('beforeend','<div class="mgrs"><h3>Менеджеры Авто · сентябрь</h3><table><tr><th>Менеджер</th><th class="num">Продажи</th><th class="num">Маржа</th><th class="num">Ср. скидка</th></tr>'+MGR.map(m=>'<tr><td>'+m[0]+'</td><td class="num">'+m[1]+'</td><td class="num">'+m[2]+'</td><td class="num'+(parseFloat(m[3].replace(',','.'))>10?' dn':'')+'">'+m[3]+'</td></tr>').join('')+'</table></div>');
+}
+function drillDebt(){
+ const rows=DEBT.filter(r=>state.co==='all'||r[2]===state.co).sort((a,b)=>b[5]-a[5]||b[3]-a[3]);
+ const tot=rows.reduce((s,r)=>s+r[3],0),od=rows.reduce((s,r)=>s+r[4],0);
+ modal('<h4>Долги клиентов · '+ru(tot)+' млн ₽</h4><p class="lead">Просрочено '+ru(od)+' млн ₽ у '+rows.filter(r=>r[4]>0).length+' клиентов. Нажмите на клиента — откроются счета. Источник: 1С, взаиморасчёты.</p><div class="tblwrap"><table class="dtbl"><tr><th>Клиент</th><th>Компания</th><th class="num">Долг</th><th class="num">Просрочено</th><th class="num">Дней</th></tr>'+rows.map((r,i)=>'<tr class="drow" data-di="'+DEBT.indexOf(r)+'" tabindex="0"><td><b>'+r[0]+'</b><br><small>'+r[1]+'</small></td><td><span class="chip mute">'+CO[r[2]].nm+'</span></td><td class="num">'+ru(r[3],2)+'</td><td class="num '+(r[4]?'dn':'')+'">'+(r[4]?ru(r[4],2):'—')+'</td><td class="num">'+(r[5]?'<span class="chip '+(r[5]>45?'bad':'warn')+'">'+r[5]+'</span>':'—')+'</td></tr><tr class="dsub" hidden data-ds="'+DEBT.indexOf(r)+'"><td colspan="5"></td></tr>').join('')+'</table></div><div class="row"><button class="btn" type="button" data-close>Закрыть</button><button class="btn p" type="button" id="dRemind">Напомнить всем с просрочкой</button></div>',close=>{
+  document.querySelectorAll('#modalRoot .drow').forEach(tr=>{const f=()=>{const i=+tr.dataset.di;const r=DEBT[i];const sub=document.querySelector('#modalRoot [data-ds="'+i+'"]');if(!sub.hidden){sub.hidden=true;return}
+   const n=r[0].startsWith('Ещё')?0:2+(i%3);const inv=[];let left=r[3];for(let j=0;j<n;j++){const a=j===n-1?left:Math.round(r[3]/n*100)/100;left=Math.round((left-a)*100)/100;const day=Math.max(1,28-j*9-(i%5));const od=r[5]&&j===0;inv.push('<tr><td>Счёт № '+(4100+i*7+j)+'</td><td>'+String(day).padStart(2,'0')+'.'+(od?'08':'09')+'</td><td class="num">'+ru(a,2)+' млн ₽</td><td>'+(od?'<span class="chip bad">просрочен '+r[5]+' дн.</span>':'<span class="chip ok">срок не наступил</span>')+'</td></tr>')}
+   sub.hidden=false;sub.firstChild.innerHTML=n?'<div class="inv"><table>'+inv.join('')+'</table><div class="invh">'+(r[5]?'Последняя оплата — '+(r[5]+9)+' дней назад. Менеджер звонил 2 раза, обещали до конца недели.':'Платит в срок, средняя задержка 3 дня.')+(r[4]?' <button class="btn s p" type="button" data-rem="'+i+'">Напомнить</button>':'')+'</div></div>':'<div class="invh">Мелкие долги до 200 тыс. ₽, просрочки нет.</div>';const rb=sub.querySelector('[data-rem]');if(rb)rb.onclick=()=>{rb.disabled=true;rb.textContent='Напоминание готово';toast('Демо: агент отправит клиенту письмо с актом сверки, менеджер получит задачу перезвонить.')}};tr.onclick=f;tr.onkeydown=e=>{if(e.key==='Enter')f()}});
+  $('#dRemind').onclick=()=>{close();addTask('Обзвонить '+rows.filter(r=>r[4]>0).length+' клиентов с просрочкой, агент подготовил акты сверки',state.co==='all'?'auto':state.co,d(10,15),'из дебиторки');toast('Поручение поставлено. Агент приложил акты сверки по каждому клиенту.')}});
+}
+function drillLiq(){
+ const rows=LIQ.filter(r=>state.co==='all'||r[1]===state.co);const tot=rows.reduce((s,r)=>s+r[4],0);
+ modal('<h4>Неликвид старше 180 дней · '+(tot?ru(tot)+' млн ₽':'нет')+'</h4><p class="lead">По каждой позиции агент предложил, куда её пристроить: в текущие проекты, клиентам или на распродажу. Источник: остатки и движения по трём складам.</p>'+(rows.length?'<div class="tblwrap"><table class="dtbl"><tr><th>Позиция</th><th>Склад</th><th class="num">Дней</th><th class="num">Сумма</th></tr>'+rows.map(r=>'<tr><td><b>'+r[0]+'</b><br><small class="sug">✦ '+r[5]+'</small></td><td>'+r[2]+'</td><td class="num"><span class="chip '+(r[3]>300?'bad':'warn')+'">'+r[3]+'</span></td><td class="num">'+ru(r[4],2)+' млн</td></tr>').join('')+'</table></div>':'<div class="empty">У этого направления неликвида нет.</div>')+'<div class="row"><button class="btn" type="button" data-close>Закрыть</button>'+(rows.length?'<button class="btn p" type="button" id="lTask">Поручить план распродажи</button>':'')+'</div>',close=>{const b=$('#lTask');if(b)b.onclick=()=>{close();addTask('План по неликвиду на '+ru(tot)+' млн ₽ — по рекомендациям агента',state.co==='all'?'auto':state.co,d(10,23),'из неликвида');toast('Поручение поставлено вместе с рекомендациями по каждой позиции.')}});
+}
+function openComments(k){
+ const draw=()=>(COMMENTS[k].length?COMMENTS[k].map(c=>'<div class="cm"><b>'+esc(c[0])+'</b> <time>'+esc(c[1])+'</time><div>'+esc(c[2])+'</div></div>').join(''):'<div class="empty">Комментариев пока нет.</div>');
+ modal('<h4>Комментарии · '+CO[k].nm+'</h4><p class="lead">Директора объясняют цифры прямо на пульте. Агент учитывает комментарии в сводке и ответах.</p><div id="cmList" class="cms">'+draw()+'</div><label for="cmIn">Ваш комментарий<textarea id="cmIn" style="min-height:70px" placeholder="Например: в октябре ждём крупную оплату от «Профи»"></textarea></label><div class="row"><button class="btn" type="button" data-close>Закрыть</button><button class="btn p" type="button" id="cmAdd">Добавить</button></div>',()=>{$('#cmAdd').onclick=()=>{const v=$('#cmIn').value.trim();if(!v)return;COMMENTS[k].push(['Вы','сейчас',v]);$('#cmList').innerHTML=draw();$('#cmIn').value='';renderPult();toast('Комментарий добавлен — его увидят директор и агент.')}});
+}
+
+/* ===== прогноз денег ===== */
+function cashSeries(){
+ const ev=FLOW.map(f=>({dt:new Date(2026,f[0]-1,f[1]),a:f[2],w:f[3],t:f[4],id:f[5]})).map(e=>{const x={...e};if(cashSc.sivik&&e.id==='sivik')x.dt=new Date(2026,10,3);if(cashSc.mirada&&e.id==='mirada')x.dt=new Date(2026,10,7);return x});
+ if(cashSc.collect)ev.push({dt:new Date(2026,9,20),a:2.1,w:'Взыскание просрочки: «Шинный двор», «Кавказ», «Магистраль»',t:'in',id:'col'});
+ const days=[];let bal=CASH_START;for(let i=0;i<30;i++){const dt=new Date(2026,9,12+i);ev.filter(e=>same(e.dt,dt)).forEach(e=>bal+=e.a);days.push({dt,bal:Math.round(bal*100)/100})}
+ return {days,ev:ev.sort((a,b)=>a.dt-b.dt)};
+}
+function renderCash(){
+ const {days,ev}=cashSeries();const mn=days.reduce((m,d)=>d.bal<m.bal?d:m,days[0]);const gap=mn.bal<CASH_MIN;
+ $('#cashHead').innerHTML='<div class="card kpi"><small>Сейчас на счетах</small><div class="v num">'+ru(CASH_START)+' млн ₽</div><div class="dl mu">4 компании</div>'+srcl('банк-клиент · 4 счёта')+'</div><div class="card kpi"><small>Минимум за 30 дней</small><div class="v num '+(gap?'dn':'up')+'">'+ru(mn.bal)+' млн ₽</div><div class="dl '+(gap?'dn':'up')+'">'+fmt(mn.dt)+(gap?' · ниже порога '+ru(CASH_MIN)+' млн':' · запас есть')+'</div>'+srcl('расчёт агента')+'</div><div class="card kpi"><small>Поступления</small><div class="v num">'+ru(ev.filter(e=>e.a>0).reduce((s,e)=>s+e.a,0))+' млн ₽</div><div class="dl mu">по графику оплат</div>'+srcl('1С + договоры')+'</div><div class="card kpi"><small>Платежи</small><div class="v num">'+ru(-ev.filter(e=>e.a<0).reduce((s,e)=>s+e.a,0))+' млн ₽</div><div class="dl mu">поставщики, зарплата, налоги</div>'+srcl('1С + платёжный календарь')+'</div>';
+ // график
+ const mob=innerWidth<700;const W=mob?400:760,H=mob?220:230,pl=30,pr=10,pt=14,pb=28;const vmax=Math.ceil(Math.max(...days.map(d=>d.bal))/5)*5,vmin=0;
+ const xs=i=>pl+i*(W-pl-pr)/29,ys=v=>pt+(vmax-v)/(vmax-vmin)*(H-pt-pb);
+ const pts=days.map((d,i)=>xs(i)+','+ys(d.bal)).join(' ');
+ let g='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Прогноз остатка денег на 30 дней, минимум '+ru(mn.bal)+' млн ₽ '+fmt(mn.dt)+'">';
+ for(let v=0;v<=vmax;v+=5)g+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+ys(v)+'" y2="'+ys(v)+'" stroke="var(--line)"/><text x="'+(pl-6)+'" y="'+(ys(v)+4)+'" text-anchor="end">'+v+'</text>';
+ g+='<rect x="'+pl+'" y="'+ys(CASH_MIN)+'" width="'+(W-pl-pr)+'" height="'+(ys(0)-ys(CASH_MIN))+'" fill="var(--bad)" opacity=".07"/><line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+ys(CASH_MIN)+'" y2="'+ys(CASH_MIN)+'" stroke="var(--bad)" stroke-dasharray="5 4"/><text x="'+(pl+6)+'" y="'+(ys(CASH_MIN)+14)+'" text-anchor="start" class="tbad">неснижаемый остаток 5 млн</text>';
+ g+='<polygon points="'+xs(0)+','+ys(0)+' '+pts+' '+xs(29)+','+ys(0)+'" fill="var(--accent)" opacity=".09"/><polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linejoin="round"/>';
+ days.forEach((d,i)=>{if(mob?(i%7===0):(i%3===0))g+='<text x="'+xs(i)+'" y="'+(H-8)+'" text-anchor="middle">'+fmtS(d.dt)+'</text>'});
+ const mi=days.indexOf(mn);g+='<circle cx="'+xs(mi)+'" cy="'+ys(mn.bal)+'" r="5" fill="'+(gap?'var(--bad)':'var(--ok)')+'" stroke="var(--panel)" stroke-width="2"/><text x="'+xs(mi)+'" y="'+(ys(mn.bal)+(gap?18:-10))+'" text-anchor="middle" class="'+(gap?'tbad':'tok')+'">'+ru(mn.bal)+' млн · '+fmtS(mn.dt)+'</text>';
+ g+='</svg>';$('#cashChart').innerHTML=g;
+ $('#cashSay').innerHTML=gap?'<b>Агент:</b> '+fmt(mn.dt)+' на счетах может остаться <b>'+ru(mn.bal)+' млн ₽</b> — ниже неснижаемого остатка. Причина: в одну неделю совпали оплата Sivik (4,6 млн), зарплата (3,6 млн) и налоги (3,4 млн). Ниже — три способа закрыть разрыв, их можно включать и смотреть, как меняется график.':'<b>Агент:</b> разрыв закрыт. Минимальный остаток — <b>'+ru(mn.bal)+' млн ₽</b> '+fmt(mn.dt)+'. Можно оформить выбранные действия поручениями.';
+ $('#cashSc').innerHTML=[['sivik','Перенести оплату Sivik на 3 ноября','По договору допустима отсрочка 14 дней. Агент подготовил письмо поставщику.','+4,6 млн на 28.10'],['collect','Взыскать просрочку у трёх крупных должников','«Шинный двор», «Кавказ», «Магистраль» — 2,1 млн просрочено больше 35 дней.','+2,1 млн к 20.10'],['mirada','Сдвинуть закупку сырья MIRADA на 7 ноября','Остатка базы хватит на 9 дней производства — до 21.10, нужна частичная закупка.','+1,1 млн, но риск простоя']].map(s=>'<label class="sc'+(cashSc[s[0]]?' on':'')+'"><input type="checkbox" data-sc="'+s[0]+'"'+(cashSc[s[0]]?' checked':'')+'><span><b>'+s[1]+'</b><small>'+s[2]+'</small></span><em>'+s[3]+'</em></label>').join('')+'<button class="btn p" type="button" id="cashTask"'+(Object.values(cashSc).some(Boolean)?'':' disabled')+'>Оформить выбранное поручениями</button>';
+ $('#cashSc').querySelectorAll('[data-sc]').forEach(c=>c.onchange=()=>{cashSc[c.dataset.sc]=c.checked;renderCash();updateBadges()});
+ $('#cashTask').onclick=()=>{const m={sivik:['Согласовать с Sivik перенос оплаты 4,6 млн ₽ на 03.11','auto'],collect:['Взыскать 2,1 млн ₽ просрочки у трёх клиентов','auto'],mirada:['Частичная закупка сырья MIRADA, остальное — 07.11','him']};Object.keys(cashSc).filter(k=>cashSc[k]).forEach(k=>addTask(m[k][0],m[k][1],d(10,16),'из прогноза денег'));toast('Поручения поставлены. Агент проследит и пересчитает прогноз.')};
+ $('#cashTbl').innerHTML='<tr><th>Дата</th><th>Операция</th><th class="num">Сумма</th></tr>'+ev.map(e=>'<tr><td class="num">'+fmtS(e.dt)+'</td><td>'+esc(e.w)+'<br><small class="mu">'+({in:'поступление',sup:'поставщик',pay:'зарплата',tax:'налоги',out:'расходы'}[e.t])+'</small></td><td class="num '+(e.a>0?'up':'')+'">'+(e.a>0?'+':'−')+ru(Math.abs(e.a),2)+'</td></tr>').join('');
+}
+
+/* ===== сценарии «что будет, если» ===== */
+let wi={disc:18,del:500,mix:17};
+function renderWhatif(){
+ const base=8.4,rev=20.9;
+ const gD=1.4*Math.max(0,Math.min(1,(18-wi.disc)/10));const gL=0.5*Math.max(0,Math.min(1,(500-wi.del)/300));const gM=(wi.mix-17)*0.22;
+ const risk=wi.disc<8?2:wi.disc<10?1:0;const rv=rev*(1-risk*0.02);
+ const m=base+gD+gL+gM;const p0=rev*base/100,p1=rv*m/100;const dy=(p1-p0)*12;
+ $('#wiCtl').innerHTML=[['disc','Скидка без согласования директора',5,20,1,v=>v>=18?'как сейчас, до 18%':'до '+v+'%'],['del','Бесплатная доставка',150,500,50,v=>v>=500?'без ограничений, как сейчас':'до '+v+' км'],['mix','Доля расходников в выручке',15,25,1,v=>v+'%'+(v===17?', как сейчас':'')]].map(c=>'<label class="wis"><span><b>'+c[1]+'</b><em>'+c[5](wi[c[0]])+'</em></span><input type="range" min="'+c[2]+'" max="'+c[3]+'" step="'+c[4]+'" value="'+wi[c[0]]+'" data-wi="'+c[0]+'" aria-label="'+c[1]+'"></label>').join('');
+ $('#wiCtl').querySelectorAll('[data-wi]').forEach(r=>r.oninput=()=>{wi[r.dataset.wi]=+r.value;renderWhatif();const el=$('#wiCtl [data-wi="'+r.dataset.wi+'"]');el&&el.focus()});
+ const bar=(v,mx,c)=>'<i style="width:'+Math.max(4,v/mx*100)+'%;background:'+c+'"></i>';
+ $('#wiRes').innerHTML='<div class="wicmp"><div><small>Маржа Авто</small><div class="wrow"><span>сейчас</span><span class="wb">'+bar(base,16,'var(--line)')+'</span><b class="num">'+ru(base)+'%</b></div><div class="wrow"><span>сценарий</span><span class="wb">'+bar(m,16,'var(--c-mont)')+'</span><b class="num '+(m>base?'up':m<base?'dn':'')+'">'+ru(m)+'%</b></div></div><div><small>Валовая прибыль Авто в месяц</small><div class="wrow"><span>сейчас</span><span class="wb">'+bar(p0,3,'var(--line)')+'</span><b class="num">'+ru(p0,2)+' млн</b></div><div class="wrow"><span>сценарий</span><span class="wb">'+bar(p1,3,'var(--c-mont)')+'</span><b class="num '+(p1>p0?'up':p1<p0?'dn':'')+'">'+ru(p1,2)+' млн</b></div></div></div><div class="wibig '+(dy>=0?'up':'dn')+'">'+(dy>=0?'+':'−')+ru(Math.abs(dy),1)+' млн ₽ <small>в год к валовой прибыли</small></div><p class="wisay"><b>Агент:</b> '+(Math.abs(dy)<0.05?'передвиньте ползунки — я пересчитаю маржу и прибыль на данных сентября.':'основной эффект даёт '+(gD>=gL&&gD>=gM?'ограничение скидки':gL>=gM?'платная дальняя доставка':'рост доли расходников')+'. '+(risk?'При скидке ниже 10% по истории сделок можно потерять 1–2 сделки в месяц — я учёл это в расчёте. ':'')+'Расчёт по 214 сделкам Авто за сентябрь.')+'</p><button class="btn p" type="button" id="wiTask"'+(Math.abs(dy)<0.05?' disabled':'')+'>Сделать это правилами для менеджеров</button>';
+ const t=$('#wiTask');if(t)t.onclick=()=>{addTask('Ввести правила: скидка до '+wi.disc+'%, бесплатная доставка до '+(wi.del>=500?'∞':wi.del+' км')+', цель по расходникам '+wi.mix+'%','auto',d(10,19),'из сценария');toast('Поручение директору Авто поставлено. Агент начнёт следить за правилами в каждой сделке.')};
+}
+
+/* ===== правила наблюдения ===== */
+let RULES=[
+ {id:1,on:true,t:'Деньги на счетах группы меньше 5 млн ₽',now:'по прогнозу сработает 28 октября',st:'warn',ch:'Telegram + звонок'},
+ {id:2,on:true,t:'Клиент просрочил оплату больше 30 дней',now:'сейчас: 11 клиентов, 6,1 млн ₽',st:'bad',ch:'сводка'},
+ {id:3,on:true,t:'Маржа направления ниже 9%',now:'сработало: Авто — 8,4%',st:'bad',ch:'Telegram'},
+ {id:4,on:true,t:'Предоплата без движения больше 5 дней',now:'сейчас: 2 предоплаты',st:'bad',ch:'директору направления'},
+ {id:5,on:true,t:'Отгрузка в долг клиенту с просрочкой',now:'только с вашего «да»',st:'ok',ch:'запрос решения'},
+ {id:6,on:true,t:'Новый отзыв на картах ниже 4 звёзд',now:'за неделю: 0',st:'ok',ch:'Telegram'},
+ {id:7,on:false,t:'Неликвид старше 180 дней больше 8 млн ₽',now:'сейчас: 9,3 млн ₽',st:'bad',ch:'еженедельный отчёт'}
+];
+function renderRules(){
+ $('#rulesList').innerHTML=RULES.map(r=>'<div class="rule-it'+(r.on?'':' off')+'"><label class="sw"><input type="checkbox" data-rl="'+r.id+'"'+(r.on?' checked':'')+' aria-label="Включить правило: '+esc(r.t)+'"><span></span></label><div><b>'+esc(r.t)+'</b><small><span class="chip '+r.st+'">'+esc(r.now)+'</span> · '+esc(r.ch)+'</small></div></div>').join('');
+ $('#rulesList').querySelectorAll('[data-rl]').forEach(c=>c.onchange=()=>{RULES.find(r=>r.id==c.dataset.rl).on=c.checked;renderRules();updateBadges()});
+}
+function rulesForm(){
+ const M=[['Деньги на счетах меньше','млн ₽','5'],['Долг клиента больше','дней','45'],['Маржа направления ниже','%','10'],['Выручка за неделю ниже плана на','%','15'],['Сделка висит без движения больше','дней','10']];
+ $('#rulesAdd').innerHTML='<div class="chips" role="radiogroup" aria-label="Что отслеживать">'+M.map((m,i)=>'<button type="button" class="fl'+(i===0?' on':'')+'" data-rm="'+i+'">'+m[0]+'…</button>').join('')+'</div><div class="radd"><span id="rmLab">'+M[0][0]+'</span><input id="rmVal" type="number" value="'+M[0][2]+'" aria-label="Порог"><span id="rmUnit">'+M[0][1]+'</span><div class="chips"><button type="button" class="fl on" data-ch="Telegram">Telegram</button><button type="button" class="fl" data-ch="сводка">в сводку</button><button type="button" class="fl" data-ch="звонок">звонок</button></div><button class="btn p" type="button" id="rmAdd">Добавить правило</button></div>';
+ let mi=0,ch='Telegram';
+ $('#rulesAdd').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{mi=+b.dataset.rm;$('#rulesAdd').querySelectorAll('[data-rm]').forEach(x=>x.classList.toggle('on',x===b));$('#rmLab').textContent=M[mi][0];$('#rmUnit').textContent=M[mi][1];$('#rmVal').value=M[mi][2]});
+ $('#rulesAdd').querySelectorAll('[data-ch]').forEach(b=>b.onclick=()=>{ch=b.dataset.ch;$('#rulesAdd').querySelectorAll('[data-ch]').forEach(x=>x.classList.toggle('on',x===b))});
+ $('#rmAdd').onclick=()=>{RULES.unshift({id:Date.now(),on:true,t:M[mi][0]+' '+$('#rmVal').value+' '+M[mi][1],now:'агент начал следить',st:'ok',ch});renderRules();toast('Правило добавлено. Агент проверяет его каждые 15 минут.')};
+}
+function notify(list){let box=$('#notifs');if(!box){box=document.createElement('div');box.id='notifs';box.className='notifs';box.setAttribute('aria-live','polite');document.body.appendChild(box)}
+ list.forEach((n,i)=>setTimeout(()=>{const el=document.createElement('div');el.className='notif';el.innerHTML='<div class="nh"><span class="na">✦</span>ALFACORE · агент<time>сейчас</time></div><b>'+n[0]+'</b><div>'+n[1]+'</div>';box.appendChild(el);setTimeout(()=>{el.classList.add('out');setTimeout(()=>el.remove(),400)},7000)},i*900))}
+function checkRules(){const on=RULES.filter(r=>r.on);const out=[];
+ if(on.find(r=>r.id===3))out.push(['Маржа Авто 8,4% — ниже порога 9%','Главная причина — скидки выше 12% в 5 сделках. Открыть сценарий?']);
+ if(on.find(r=>r.id===1))out.push(['Риск кассового разрыва 28 октября','Прогноз: 4,4 млн ₽ при минимуме 5 млн. Есть 3 способа закрыть.']);
+ if(on.find(r=>r.id===4))out.push(['2 предоплаты без движения','146 тыс. ₽ и 412 тыс. ₽ — директорам ушли напоминания.']);
+ if(!out.length)out.push(['Все правила в норме','Агент продолжит следить и напишет, если что-то изменится.']);
+ notify(out);}
+
+/* ===== сезон переобувки ===== */
+function renderSeason(){
+ const L=['5–11 окт','12–18','19–25','26 окт–1 ноя','2–8 ноя','9–15','16–22'];const LY=[.42,.61,.98,1.24,1.18,.86,.52];const TY=[.47,.66,null,null,null,null,null];const FC=[null,.66,1.1,1.38,1.3,.95,.58];
+ const W=520,H=150,pl=30,pr=10,pt=12,pb=26,mx=1.5;const xs=i=>pl+i*(W-pl-pr)/6,ys=v=>pt+(mx-v)/mx*(H-pt-pb);
+ const line=(arr,st,dash)=>{const p=arr.map((v,i)=>v==null?null:xs(i)+','+ys(v)).filter(Boolean).join(' ');return '<polyline points="'+p+'" fill="none" stroke="'+st+'" stroke-width="2"'+(dash?' stroke-dasharray="5 4"':'')+'/>'};
+ let g='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Продажи шиномонтажных расходников: прошлый год, этот год и прогноз пика на 26 октября – 8 ноября">';
+ [0,.5,1,1.5].forEach(v=>g+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+ys(v)+'" y2="'+ys(v)+'" stroke="var(--line)"/><text x="'+(pl-5)+'" y="'+(ys(v)+4)+'" text-anchor="end">'+ru(v,1)+'</text>');
+ g+='<rect x="'+xs(2.5)+'" y="'+pt+'" width="'+(xs(4.5)-xs(2.5))+'" height="'+(H-pt-pb)+'" fill="var(--c-mont)" opacity=".07"/>';
+ g+=line(LY,'var(--mute)')+line(FC,'var(--c-mont)',true)+line(TY,'var(--c-mont)');
+ L.forEach((l,i)=>{if(i%2===0)g+='<text x="'+xs(i)+'" y="'+(H-7)+'" text-anchor="middle">'+l+'</text>'});
+ g+='<circle cx="'+xs(1)+'" cy="'+ys(.66)+'" r="4" fill="var(--c-mont)"/></svg>';
+ $('#season').innerHTML='<div class="lg2"><span><i style="background:var(--mute)"></i>2025</span><span><i style="background:var(--c-mont)"></i>2026</span><span><i class="dash"></i>прогноз агента</span><span class="mu">млн ₽ в неделю, расходники для шиномонтажа</span></div>'+g+'<p class="wisay"><b>Агент:</b> пик переобувки по прошлому году — <b>26 октября – 8 ноября</b>, спрос вырастет в 2 раза. Текущих остатков грузиков и жгутов хватит до 22 октября. Рекомендую дозаказать: грузики 1 200 уп., жгуты 800 уп., вентили 3 000 шт. — на 1,9 млн ₽ по закупке.</p><button class="btn p s" type="button" id="seaTask">Сформировать заказ поставщику</button>';
+ $('#seaTask').onclick=()=>{addTask('Заказ расходников под сезон переобувки на 1,9 млн ₽ — черновик готов','auto',d(10,15),'из прогноза сезона');toast('Черновик заказа готов, директору Авто — поручение утвердить.')};
+}
+
+/* ===== отчёт недели ===== */
+function weekReport(){
+ const txt='Отчёт агента за неделю 5–9 октября\n\nГруппа: выручка 7,15 млн ₽ (план 7,4 — 97%), валовая маржа 12,9%.\nАвто 4,6 млн · Пром 0,8 млн · Пневмо 0,4 млн · Химтех 1,35 млн.\n\nГлавное:\n— маржа Авто снижается третью неделю из-за скидок выше 12%;\n— 28 октября риск кассового разрыва: 4,4 млн ₽ при минимуме 5 млн;\n— Химтех лучше плана на 6%, акция в Ростове дала 3 заказа;\n— 2 предоплаты без движения, 11 клиентов с просрочкой на 6,1 млн ₽.\n\nРешения недели: 7 принято, 2 ждут вас.\nПоручения: 14 выполнено в срок, 2 просрочено (Пром, Химтех).';
+ modal('<h4>Отчёт за неделю 5–9 октября</h4><p class="lead">Агент собирает его сам каждую пятницу в 18:00 и присылает в Telegram.</p><div class="rep"><div class="repk"><div><small>Выручка</small><b>7,15 млн ₽</b><span class="dn">97% плана</span></div><div><small>Маржа</small><b>12,9%</b><span class="dn">−0,4 п.п.</span></div><div><small>Решений</small><b>7 из 9</b><span class="mu">2 ждут вас</span></div><div><small>Поручений в срок</small><b>88%</b><span class="up">+5 п.п.</span></div></div><h5>По компаниям</h5><table><tr><th>Компания</th><th class="num">Выручка</th><th class="num">План</th><th class="num">Маржа</th></tr><tr><td>Авто</td><td class="num">4,60</td><td class="num dn">91%</td><td class="num dn">7,9%</td></tr><tr><td>Пром</td><td class="num">0,80</td><td class="num dn">97%</td><td class="num">13,6%</td></tr><tr><td>Пневмо</td><td class="num">0,40</td><td class="num up">107%</td><td class="num">12,1%</td></tr><tr><td>Химтех</td><td class="num">1,35</td><td class="num up">106%</td><td class="num up">28,0%</td></tr></table><h5>Главное</h5><ul><li>Маржа Авто снижается третью неделю: скидки выше 12% в сделках по подъёмникам.</li><li>28 октября — риск кассового разрыва, способы закрыть — в «Прогнозе денег».</li><li>Химтех выше плана на 6%: акция для дилеров Ростова сработала.</li><li>Сезон переобувки начнётся через 2 недели — нужен заказ расходников.</li></ul></div><div class="row"><button class="btn" type="button" data-close>Закрыть</button><button class="btn p" type="button" id="repCopy">Скопировать текстом</button></div>',()=>{$('#repCopy').onclick=()=>{const done=()=>toast('Текст отчёта скопирован.');try{navigator.clipboard.writeText(txt).then(done,()=>toast('Не удалось скопировать — браузер запретил доступ к буферу.'))}catch(e){toast('Не удалось скопировать — браузер запретил доступ к буферу.')}}});
+}
+
 /* ===== старт ===== */
 renderRibbon();renderFilters();renderList();renderDetail();renderBrig();renderTO();renderPult();renderPP();renderTasks();
 state.role='owner';document.body.dataset.co='all';renderCoSw();go({'#projects':'projects','#tasks':'tasks','#money':'pult'}[location.hash]||'brief');updateBadges();
@@ -1130,6 +1400,7 @@ document.querySelectorAll('[data-src-btn]').forEach(b=>b.onclick=()=>setSrc(!sta
 document.querySelectorAll('[data-role-sel]').forEach(s=>s.onchange=e=>setRole(e.target.value));
 document.querySelectorAll('[data-voice]').forEach(b=>b.onclick=voiceDemo);
 document.querySelectorAll('[data-tour]').forEach(b=>b.onclick=()=>{const r=$('#modalRoot');r.innerHTML='';tourStep(0)});
+$('#rulesCheck').onclick=checkRules;rulesForm();renderSeason();$('#repBtn').onclick=weekReport;
 document.querySelectorAll('[data-qask]').forEach(b=>b.onclick=()=>{openDrawer();ask(b.textContent)});
 let seen=false;try{seen=JSON.parse(localStorage.getItem('alfa-demo-ui')||'{}').seen}catch(e){}
 if(!seen){welcome();try{const s=JSON.parse(localStorage.getItem('alfa-demo-ui')||'{}');s.seen=1;localStorage.setItem('alfa-demo-ui',JSON.stringify(s))}catch(e){}}
