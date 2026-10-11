@@ -331,7 +331,7 @@ select.grp{appearance:auto;cursor:pointer;font:inherit;font-size:12.5px}
 .ribbon::-webkit-scrollbar{height:4px}
 .ribbon::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
 .kpi.wide{grid-column:auto}
-.co .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--mute)}
+.cos.one{grid-template-columns:minmax(0,1fr)!important}.co .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--mute)}
 @media (max-width:900px){
   body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
   .nav{display:none}
@@ -598,7 +598,7 @@ td.num{white-space:nowrap}</style>
      <div class="card pcard"><h3><span>Агент сделал ночью сам</span></h3><div class="log" id="bNight"></div></div>
     </div>
    </div>
-   <div class="card pcard chartwrap" style="margin-top:14px"><h3><span>Сезон переобувки · Авто</span><button class="btn s" type="button" id="repBtn">📄 Отчёт за неделю</button></h3><div id="season"></div></div>
+   <div class="card pcard chartwrap seasoncard" style="margin-top:14px"><h3><span>Сезон переобувки · Авто</span><button class="btn s" type="button" id="repBtn">📄 Отчёт за неделю</button></h3><div id="season"></div></div>
    <div class="card bask">
     <button class="voice" type="button" id="voiceBtn" data-voice><span class="vmic" aria-hidden="true">🎙</span><span><b>Надиктовать поручение</b><small>агент сам поставит задачу и проследит</small></span></button>
     <div class="qasks"><button type="button" data-qask>Что сегодня важного?</button><button type="button" data-qask>Сколько денег придёт на этой неделе?</button><button type="button" data-qask>Кто из директоров срывает сроки?</button></div>
@@ -750,7 +750,7 @@ const P=[
  {id:'grand',name:'СТО «Гранд»',city:'Михайловск',scope:'4 поста: подъёмники, сход-развал, шиномонтаж',manager:'Сергей',client:'Артур, владелец',brig:2,total:4800000,paid:3360000,mont:d(10,15),status:'risk',
   stages:[['Замеры и 3 варианта планировки',d(8,12),1],['Договор и предоплата 50%',d(8,26),1],['ТЗ на бетон и электрику',d(9,2),1],['Вторая оплата 20%',d(9,30),1],['Готовность помещения: фото от заказчика',d(10,11),0,'late'],['Монтаж и пусконаладка',d(10,15),0],['Обучение, акт, финальная оплата 30%',d(10,16),0]],
   eq:[['Подъёмник 4 т, 2 шт.','Склад Ставрополь','ok'],['Стенд сход-развал 3D','Склад Ставрополь','ok'],['Шиномонтажный станок','В пути, приедет 14.10','warn'],['Балансировочный станок','Склад Ставрополь','ok'],['Компрессор 500 л','Пневмо, отгрузка 13.10','info']],
-  insight:'Заказчик не прислал фото готового помещения, а монтаж через 3 дня. Станок приедет 14-го — впритык. Предлагаю написать заказчику сейчас и держать бригаду №2 в резерве на 16-е.',
+  insight:'Заказчик не прислал фото готового помещения, а монтаж через 3 дня. Станок приедет 14-го — впритык. Предлагаю написать заказчику сейчас и держать бригаду №1 в резерве на 16-е.',
   feed:[['09:12','Агент','напомнил менеджеру: нет фото помещения'],['вчера','Сергей','отправил заказчику список готовности'],['30.09','Учёт','поступила вторая оплата 960 тыс. ₽']]},
  {id:'koleso',name:'Шиномонтаж «Колесо-24»',city:'Невинномысск',scope:'2 поста: шиномонтаж и балансировка',manager:'Ирина',client:'Виталий',brig:1,total:1900000,paid:1615000,mont:d(10,19),status:'ok',
   stages:[['Замеры',d(9,4),1],['Договор и предоплата',d(9,10),1],['Оплата 85%',d(10,6),1],['Готовность помещения',d(10,9),1],['Монтаж',d(10,19),0],['Акт и финальная оплата',d(10,19),0]],
@@ -791,25 +791,25 @@ const EV=[ // type: mont, to, dlv, zam
  {dt:d(10,14),type:'dlv',t:'Шиномонтажный станок приходит',c:'для СТО «Гранд»',brig:null,prj:'grand',late:true},
  {dt:d(10,14),type:'to',t:'Гарантийный выезд',c:'Шиномонтаж, Изобильный',brig:2},
  {dt:d(10,15),type:'mont',t:'Монтаж 4 постов',c:'СТО «Гранд», Михайловск',brig:2,prj:'grand',late:true},
- {dt:d(10,15),type:'to',t:'ТО балансировки',c:'«Колесо», Ставрополь',brig:1},
+ {dt:d(10,15),type:'to',t:'ТО балансировочных станков',c:'«Баланс-Авто», Ставрополь',brig:1},
  {dt:d(10,16),type:'mont',t:'Обучение и акт',c:'СТО «Гранд», Михайловск',brig:2,prj:'grand'},
  {dt:d(10,16),type:'to',t:'ТО окрасочной камеры',c:'«Кузов-Мастер», Краснодар',brig:3},
  {dt:d(10,19),type:'mont',t:'Монтаж 2 постов',c:'«Колесо-24», Невинномысск',brig:1,prj:'koleso'},
- {dt:d(10,20),type:'to',t:'ТО подъёмника',c:'Тимашевск',brig:3},
+ {dt:d(10,20),type:'to',t:'ТО подъёмника',c:'«Автодром», Тихорецк',brig:3},
  {dt:d(10,20),type:'dlv',t:'Стенд 3D от поставщика',c:'для СТО «Мотор»',brig:null,prj:'motor'},
  {dt:d(10,21),type:'zam',t:'Замеры',c:'Грузовой шиномонтаж, Кропоткин',brig:3,prj:'kropot'},
  {dt:d(10,22),type:'mont',t:'Монтаж стенда 3D',c:'СТО «Мотор», Пятигорск',brig:1,prj:'motor'},
  {dt:d(10,23),type:'to',t:'ТО подъёмников',c:'СТО «Мотор», Пятигорск',brig:1}
 ];
 const TO=[
- {c:'«Колесо», Ставрополь',eq:'Балансировочный станок ×2',what:'Плановое ТО',dt:d(10,15),st:'plan',sum:18000},
+ {c:'«Баланс-Авто», Ставрополь',eq:'Балансировочный станок ×2',what:'Плановое ТО',dt:d(10,15),st:'plan',sum:18000},
  {c:'СТО «Мотор», Пятигорск',eq:'Подъёмник 4 т ×2',what:'Плановое ТО',dt:d(10,23),st:'plan',sum:24000},
  {c:'«Кузов-Мастер», Краснодар',eq:'Окрасочная камера',what:'Замена фильтров',dt:d(10,16),st:'plan',sum:62000},
- {c:'Экспресс, Черкесск',eq:'Компрессор 270 л',what:'Масло и фильтры',dt:d(10,28),st:'due',sum:9500},
+ {c:'Экспресс, Черкесск',eq:'Компрессор 270 л',what:'Масло и фильтры',dt:d(10,13),st:'plan',sum:9500},
  {c:'СТО «Гранд», Михайловск',eq:'Старый стенд сход-развал',what:'Гарантия заканчивается',dt:d(11,2),st:'warranty',sum:0},
  {c:'Шиномонтаж «Протектор», Светлоград',eq:'Шиномонтажный станок',what:'Плановое ТО, клиент не отвечает',dt:d(10,5),st:'late',sum:12000},
  {c:'Автосервис «Восток», Невинномысск',eq:'Стенд для тормозов',what:'Поверка',dt:d(11,6),st:'due',sum:15000},
- {c:'СТО «Авангард», Ставрополь',eq:'Подъёмники ×3',what:'Плановое ТО',dt:d(11,10),st:'due',sum:30000}
+ {c:'СТО «Авангард», Ставрополь',eq:'Подъёмники ×3',what:'Плановое ТО',dt:d(10,12),st:'plan',sum:30000},{c:'«Автодром», Тихорецк',eq:'Подъёмник 4 т',what:'Плановое ТО',dt:d(10,20),st:'plan',sum:14000}
 ];
 
 const ST={risk:['bad','риск срыва'],warn:['warn','поставка впритык'],wait:['warn','ждём стройку'],ok:['ok','в графике'],kp:['mute','КП без ответа'],new:['info','новый'],done:['ok','завершён']};
@@ -871,8 +871,8 @@ function renderDetail(){
   <div class="det-back"><button type="button" data-back>← Все проекты</button></div>
   <div class="det-h"><div><h2>${esc(p.name)}, ${esc(p.city)}</h2><div class="meta">${esc(p.scope)}<br>Менеджер: ${esc(p.manager)} · заказчик: ${esc(p.client)}${brig?' · '+brig.name:''}</div></div><span class="chip ${cls}" style="font-size:12.5px;padding:4px 10px">${lab}</span></div>
   <div class="facts">
-   <div class="fact"><small>Договор</small><b class="num">${p.total?money(p.total):'—'}</b><span class="srcl">⛁ CRM · сделка</span><div class="sub">${p.total?'оплачено '+pp+'%':'КП не готово'}</div></div>
-   <div class="fact"><small>Ждём оплату</small><b class="num">${p.total?money(rest):'—'}</b><span class="srcl">⛁ 1С · оплаты</span><div class="sub">${rest>0?'после монтажа и акта':'расчёт закрыт'}</div></div>
+   <div class="fact"><small>${p.status==='kp'?'КП':'Договор'}</small><b class="num">${p.total?money(p.total):'—'}</b><span class="srcl">⛁ CRM · сделка</span><div class="sub">${p.total?'оплачено '+pp+'%':'КП не готово'}</div></div>
+   <div class="fact"><small>Ждём оплату</small><b class="num">${p.status==='kp'||!p.total?'—':rest>0?money(rest):'оплачено'}</b><span class="srcl">⛁ 1С · оплаты</span><div class="sub">${!p.total?'КП не готово':p.status==='kp'?'договора ещё нет':rest>0?'после монтажа и акта':'расчёт закрыт'}</div></div>
    <div class="fact"><small>${p.mont?'Монтаж':p.zam?'Замеры':'Монтаж'}</small><b class="num">${p.mont?fmt(p.mont):p.zam?fmt(p.zam):'не назначен'}</b><div class="sub">${brig?brig.name+', '+brig.lead:'бригада не назначена'}</div></div>
    <div class="fact"><small>Готовность</small><b class="num" id="prVal">${pr}%</b><div class="sub">${p.stages.filter(s=>s[2]).length} из ${p.stages.length} этапов</div></div>
   </div>
@@ -881,7 +881,7 @@ function renderDetail(){
    <div class="sec"><h3>Этапы · отметьте выполненное</h3><div id="stages">${p.stages.map((s,i)=>`<div class="stage ${s[2]?'done':''}"><button type="button" class="ck ${s[2]?'y':s[3]==='late'||s[3]==='wait'?'w':''}" data-st="${i}" aria-label="${s[2]?'Снять отметку':'Отметить выполненным'}: ${esc(s[0])}" aria-pressed="${!!s[2]}">${s[2]?'✓':''}</button><span class="n">${esc(s[0])}</span><span class="when num ${!s[2]&&s[3]==='late'?'bad':''}">${s[2]?fmtS(s[1]):s[3]==='late'?'просрочено':s[3]==='wait'?'нет срока':s[1]?fmtS(s[1]):'—'}</span></div>`).join('')}</div></div>
    <div class="sec" style="display:flex;flex-direction:column;gap:14px">
     <div><h3>Оборудование</h3>${p.eq.length?`<table><tr><th>Позиция</th><th>Где сейчас</th></tr>${p.eq.map(e=>`<tr><td>${esc(e[0])}</td><td><span class="chip ${e[2]==='ok'?'ok':e[2]==='warn'?'warn':'info'}">${esc(e[1])}</span></td></tr>`).join('')}</table>`:'<div class="empty">Подберём после замеров.</div>'}</div>
-    ${p.total?`<div class="pay"><h3 style="margin:0">Оплаты</h3><div class="paybar"><i style="width:${pp}%;background:var(--ok)"></i><i style="width:${100-pp}%;background:var(--warn-soft)"></i></div><div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2)" class="num"><span>получено ${money(p.paid)}</span><span>осталось ${money(rest)}</span></div></div>`:''}
+    ${p.total?`<div class="pay"><h3 style="margin:0">Оплаты</h3><div class="paybar"><i style="width:${pp}%;background:var(--ok)"></i><i style="width:${100-pp}%;background:var(--warn-soft)"></i></div><div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2)" class="num"><span>получено ${p.paid?money(p.paid):'0 ₽'}</span><span>${rest>0?'осталось '+money(rest):'оплачено полностью'}</span></div></div>`:''}
    </div>
   </div>
   <div class="actions">
@@ -889,7 +889,7 @@ function renderDetail(){
    <button class="btn" type="button" data-act="client">Сообщение заказчику</button>
    <button class="btn ghost" type="button" data-act="ask">Спросить агента о проекте</button>
   </div>
-  <div class="sec"><h3>История</h3><div class="feed" id="feed">${p.feed.map(f=>`<div class="fi"><time>${esc(f[0])}</time><div><span class="who">${esc(f[1])}</span> — ${esc(f[2])}</div></div>`).join('')}</div></div>`;
+  <div class="sec"><h3>История</h3><div class="feed" id="feed">${p.feed.map(f=>`<div class="fi"><time>${esc(f[0])}</time><div><span class="who">${esc(f[1])}</span> ${esc(f[2])}</div></div>`).join('')}</div></div>`;
   $('#detail').innerHTML=html;
   $('#detail').querySelector('[data-back]').onclick=closeDet;
   $('#detail').querySelectorAll('[data-st]').forEach(b=>b.onclick=()=>{const i=+b.dataset.st;const s=p.stages[i];s[2]=s[2]?0:1;if(s[2]){s[1]=new Date(TODAY);p.feed.unshift(['сейчас','Вы','отметили этап «'+s[0]+'»'])}else{p.feed.unshift(['сейчас','Вы','сняли отметку с этапа «'+s[0]+'»'])}renderDetail();renderList();toast(s[2]?'Этап отмечен. Агент обновил статус проекта.':'Отметка снята.')});
@@ -943,7 +943,7 @@ function openClient(p,review){
 function renderBrig(){
   const days=[...Array(7)].map((_,i)=>new Date(2026,9,12+i));
   let h='<table><tr><th style="width:150px">Бригада</th>'+days.map(x=>'<th>'+WD[x.getDay()]+' '+fmtS(x)+'</th>').join('')+'</tr>';
-  Object.entries(BRIG).forEach(([k,b])=>{const n=EV.filter(e=>e.brig==k&&e.dt>=days[0]&&e.dt<=days[6]).length;h+='<tr><td><b>'+b.name+'</b><div class="load">'+b.lead+' · '+b.city+'</div><div class="load">'+n+' выездов</div><button class="btn s" style="margin-top:6px" type="button" data-open-sched="'+k+'">Расписание</button></td>'+days.map(x=>'<td>'+EV.filter(e=>e.brig==k&&same(e.dt,x)).map(e=>'<span class="slot" style="--cc:'+TYPECOL[e.type]+'"><b>'+esc(e.t)+'</b>'+esc(e.c)+(e.late?'<br><span style="color:var(--bad);font-weight:600">под угрозой</span>':'')+'</span>').join('')+'</td>').join('')+'</tr>'});
+  Object.entries(BRIG).forEach(([k,b])=>{const n=EV.filter(e=>e.brig==k&&e.dt>=days[0]&&e.dt<=days[6]).length;h+='<tr><td><b>'+b.name+'</b><div class="load">'+b.lead+' · '+b.city+'</div><div class="load">'+n+' '+(n%10===1&&n%100!==11?'выезд':n%10>=2&&n%10<=4&&(n%100<10||n%100>=20)?'выезда':'выездов')+'</div><button class="btn s" style="margin-top:6px" type="button" data-open-sched="'+k+'">Расписание</button></td>'+days.map(x=>'<td>'+EV.filter(e=>e.brig==k&&same(e.dt,x)).map(e=>'<span class="slot" style="--cc:'+TYPECOL[e.type]+'"><b>'+esc(e.t)+'</b>'+esc(e.c)+(e.late?'<br><span style="color:var(--bad);font-weight:600">под угрозой</span>':'')+'</span>').join('')+'</td>').join('')+'</tr>'});
   h+='</table>';$('#brigGrid').innerHTML=h;
   document.querySelectorAll('[data-open-sched]').forEach(b=>b.onclick=()=>openSched(b.dataset.openSched));
 }
@@ -961,8 +961,8 @@ function answerProj(q,p){
   const t=q.toLowerCase();
   if(p||/что по проекту/.test(t)){p=p||P.find(x=>t.includes(x.name.toLowerCase()));if(p){const nx=p.stages.find(s=>!s[2]);return '<b>'+esc(p.name)+', '+esc(p.city)+'.</b> Готовность '+prog(p)+'%, '+(p.total?'оплачено '+money(p.paid)+' из '+money(p.total)+'. ':'')+(nx?'Следующий этап: «'+esc(nx[0])+'»'+(nx[1]?' — '+fmt(nx[1]):'')+'. ':'')+'<br><br>'+esc(p.insight)}}
   if(/риск|угроз|сорв/.test(t)){const r=P.filter(attn);return 'Требуют внимания <b>'+r.length+' проекта</b>:<table><tr><th>Проект</th><th>Почему</th></tr>'+r.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+ST[x.status][1]+'</td></tr>').join('')+'</table><br>Самый срочный — СТО «Гранд»: монтаж 15.10, а фото помещения нет. Предлагаю начать с него.'}
-  if(/денег|оплат|ждём|долг/.test(t)){const r=P.filter(x=>x.total&&x.total>x.paid);const sum=r.reduce((s,x)=>s+x.total-x.paid,0);return 'По активным проектам ждём <b>'+money(sum)+'</b>:<table><tr><th>Проект</th><th class="num">Осталось</th></tr>'+r.map(x=>'<tr><td>'+esc(x.name)+'</td><td class="num">'+money(x.total-x.paid)+'</td></tr>').join('')+'</table><br>Ближайшие поступления — после актов «Гранда» (16.10) и «Колесо-24» (19.10).'}
-  if(/распредел|бригад/.test(t)){return 'План на 19–23 октября с учётом городов:<table><tr><th>Бригада</th><th>Выезды</th></tr><tr><td>№1, Ставрополь</td><td>19.10 Невинномысск (монтаж) → 22–23.10 Пятигорск (монтаж и ТО)</td></tr><tr><td>№2, Ставрополь</td><td>резерв под «Гранд» 19–20.10 на случай переноса</td></tr><tr><td>№3, Краснодар</td><td>20.10 Тимашевск (ТО) → 21.10 Кропоткин (замеры)</td></tr></table><br>Так бригада №3 совмещает два выезда, а у №2 остаётся запас на «Гранд». Разослать бригадирам?'}
+  if(/денег|оплат|ждём|долг/.test(t)){const r=P.filter(x=>x.total&&x.total>x.paid&&x.status!=='kp');const sum=r.reduce((s,x)=>s+x.total-x.paid,0);return 'По активным проектам ждём <b>'+money(sum)+'</b>:<table><tr><th>Проект</th><th class="num">Осталось</th></tr>'+r.map(x=>'<tr><td>'+esc(x.name)+'</td><td class="num">'+money(x.total-x.paid)+'</td></tr>').join('')+'</table><br>Ближайшие поступления — после актов «Гранда» (16.10) и «Колесо-24» (19.10).'}
+  if(/распредел|бригад/.test(t)){return 'План на 19–23 октября с учётом городов:<table><tr><th>Бригада</th><th>Выезды</th></tr><tr><td>№1, Ставрополь</td><td>19.10 Невинномысск (монтаж) → 22–23.10 Пятигорск (монтаж и ТО)</td></tr><tr><td>№2, Ставрополь</td><td>резерв под «Гранд» 19–20.10 на случай переноса</td></tr><tr><td>№3, Краснодар</td><td>20.10 Тихорецк (ТО) → 21.10 Кропоткин (замеры)</td></tr></table><br>Так бригада №3 совмещает два выезда, а у №2 остаётся запас на «Гранд». Разослать бригадирам?'}
   if(/склад|лежит|хранен/.test(t)){return 'Под клиентов на складах лежит оборудование на <b>~8,9 млн ₽</b>:<table><tr><th>Клиент</th><th>Склад</th><th class="num">Дней</th></tr><tr><td>«Профи», Краснодар</td><td>Краснодар</td><td class="num">41</td></tr><tr><td>СТО «Гранд»</td><td>Ставрополь</td><td class="num">12</td></tr><tr><td>«Колесо-24»</td><td>Ставрополь</td><td class="num">9</td></tr></table><br>«Профи» — главный кандидат на разговор о сроках: 3,7 млн ₽ без даты монтажа.'}
   if(/то\b|обслуж|сервис|гарант/.test(t)){return 'В ближайшие 30 дней — <b>'+TO.length+' поводов</b> связаться с клиентами, потенциал '+money(TO.reduce((s,x)=>s+x.sum,0))+'. Один просрочен: «Протектор», Светлоград, не отвечает с 05.10. Открыть раздел «ТО и сервис»?'}
   return 'В демонстрации я отвечаю на подготовленные вопросы — попробуйте один из них ниже. В рабочей версии агент отвечает на любой вопрос по данным учёта, CRM и календаря.';
@@ -977,32 +977,32 @@ const ru=(v,dg=1)=>v.toLocaleString('ru-RU',{minimumFractionDigits:dg,maximumFra
 
 /* ===== пульт ===== */
 const PER={
- week:{lab:'Неделя',hint:'прошлая неделя, 5–9 октября',ax:['пн','вт','ср','чт','пт'],prev:'к прошлой неделе',revPrev:6.9,mgPrev:12.9,
-  co:{auto:[4.6,7.9,[0.8,1.1,0.9,1.0,0.8]],prom:[0.8,13.6,[.12,.18,.15,.2,.15]],pnev:[0.4,12.1,[.05,.1,.08,.1,.07]],him:[1.35,28.0,[.22,.3,.25,.28,.3]]}},
- month:{lab:'Месяц',hint:'сентябрь, по неделям',ax:['1–6','7–13','14–20','21–27','28–30'],prev:'к августу',revPrev:33.0,mgPrev:13.7,
-  co:{auto:[20.9,8.4,[3.9,4.6,3.6,5.0,3.8]],prom:[3.4,14.1,[.5,.65,.75,.7,.8]],pnev:[1.6,12.7,[.22,.35,.27,.36,.4]],him:[5.5,27.3,[.9,1.0,1.15,1.1,1.35]]}},
- quarter:{lab:'Квартал',hint:'III квартал, по месяцам',ax:['июль','август','сентябрь'],prev:'ко II кварталу',revPrev:91.4,mgPrev:14.1,
-  co:{auto:[66.2,9.8,[22.4,22.9,20.9]],prom:[9.7,14.5,[3.0,3.3,3.4]],pnev:[4.4,12.9,[1.3,1.5,1.6]],him:[15.8,26.1,[5.0,5.3,5.5]]}}
+ week:{lab:'Неделя',hint:'прошлая неделя, 5–9 октября',ax:['пн','вт','ср','чт','пт'],prev:'к 28.09–2.10',revPrev:6.9,mgPrev:26.6,
+  co:{auto:[4.6,22.0,[0.8,1.1,0.9,1.0,0.8]],prom:[0.8,25.6,[.12,.18,.15,.2,.15]],pnev:[0.4,24.1,[.05,.1,.08,.1,.07]],him:[1.35,42.0,[.22,.3,.25,.28,.3]]}},
+ month:{lab:'Месяц',hint:'сентябрь, по неделям',ax:['1–6','7–13','14–20','21–27','28–30'],prev:'к августу',revPrev:33.0,mgPrev:27.4,
+  co:{auto:[20.9,22.4,[3.9,4.6,3.6,5.0,3.8]],prom:[3.4,26.1,[.5,.65,.75,.7,.8]],pnev:[1.6,24.7,[.22,.35,.27,.36,.4]],him:[5.5,41.3,[.9,1.0,1.15,1.1,1.35]]}},
+ quarter:{lab:'Квартал',hint:'III квартал, по месяцам',ax:['июль','август','сентябрь'],prev:'ко II кварталу',revPrev:91.4,mgPrev:27.6,
+  co:{auto:[66.2,23.8,[22.4,22.9,20.9]],prom:[9.7,26.5,[3.0,3.3,3.4]],pnev:[4.4,24.9,[1.3,1.5,1.6]],him:[15.8,40.1,[5.0,5.3,5.5]]}}
 };
 const DRILL={
  auto:{t:'Авто: маржа ниже, чем в августе',r:[['Скидки выше 12% в 5 сделках по подъёмникам','−1,4 п.п.','dn'],['Бесплатная доставка дальше 250 км, 4 рейса','−0,5 п.п.','dn'],['Доля расходников упала с 22% до 17% выручки','−0,3 п.п.','dn']],
-  acts:[['Открыть проекты Авто','go:projects'],['Поручить: скидка выше 10% — только с согласования','task:auto:Ввести порог скидки 10% без согласования директора']]},
+  acts:[['Открыть проекты Авто','go:projects'],['Поручить: скидка выше 10% — только по согласованию с директором','task:auto:Ввести порог скидки 10% без согласования директора']]},
  prom:{t:'Пром: стабильная маржа, растёт складская программа',r:[['Завод «Агромаш» перешёл на складскую программу','+0,6 п.п.','up'],['Поставщик абразива поднимает цены с ноября','−0,4 п.п. прогноз','dn']],
   acts:[['Поручить: пересчитать цены на абразив','task:prom:Пересчитать цены на абразив до повышения у поставщика']]},
  pnev:{t:'Пневмо: выручка растёт, есть запас в сервисе',r:[['8 клиентам пора на ТО компрессоров','~140 тыс. ₽','up'],['2 КП на системы подготовки воздуха без ответа больше недели','риск','dn']],
   acts:[['Поручить обзвон по ТО компрессоров','task:pnev:Обзвонить 8 клиентов, у которых компрессорам пора на ТО']]},
- him:{t:'Химтех: лучшая маржа в группе',r:[['Дилер «Автокраски Юг» продаёт на маркетплейсе ниже рекомендованной цены','−14%','dn'],['Остаток базы для эмалей','на 9 дней','dn'],['Акция для дилеров Ростова дала 3 заказа','+0,3 млн ₽','up']],
+ him:{t:'Химтех: лучшая маржа в группе',r:[['Дилер «Автокраски Юг» продаёт на маркетплейсе ниже рекомендованной цены','−14%','dn'],['Остаток базы для эмалей','на 9 дней','dn'],['Новая линейка лаков вышла в продажу','+0,3 млн ₽','up']],
   acts:[['Поручить: разговор с дилером о ценах','task:him:Разговор с «Автокраски Юг» о соблюдении рекомендованной цены']]}
 };
-const MG6=[['апр',14.2],['май',13.9],['июн',14.4],['июл',13.8],['авг',13.7],['сен',12.5]];
+const MG6=[['апр',28.2],['май',27.9],['июн',28.4],['июл',27.8],['авг',27.4],['сен',26.2]];
 let ALERTS=[
- {id:'cash',co:'grp',sev:'bad',t:'28 октября денег может не хватить: 4,4 млн ₽ при минимуме 5 млн',s:'В одну неделю совпали оплата Sivik, зарплата и налоги. Агент нашёл три способа закрыть разрыв.',a:[['Открыть прогноз','go:cash'],['Перенести оплату Sivik','Согласовать с Sivik перенос оплаты 4,6 млн ₽ на 3 ноября']]},
- {id:'grand',co:'auto',sev:'bad',t:'СТО «Гранд», Михайловск — долг 1,2 млн ₽, просрочка 34 дня',s:'Собран новый заказ на 380 тыс. ₽. Отгружать?',a:[['Отгрузить','Отгрузка «Гранду» разрешена, несмотря на долг'],['Только по предоплате','«Гранд»: новый заказ — только по предоплате']]},
- {id:'pp',co:'auto',sev:'bad',t:'Предоплата 146 тыс. ₽ без движения 6 дней',s:'Заправочная станция для кондиционеров, Краснодар. Клиент уже оставил отзыв на 1 ★ по похожей ситуации.',a:[['Поручить директору Авто','task:auto:Разобраться с предоплатой 146 тыс. ₽ — отгрузить или вернуть'],['Открыть предоплаты','go:prepay']]},
+ {id:'cash',co:'grp',sev:'bad',t:'28 октября денег может не хватить: 4,4 млн ₽ при минимуме 5 млн',s:'За одну неделю уходят оплата Sivik, аванс, предоплата Launch под сезон и налоги. Агент нашёл три способа закрыть разрыв.',a:[['Открыть прогноз','go:cash'],['Перенести оплату Sivik','Согласовать с Sivik перенос оплаты 4,6 млн ₽ на 3 ноября']]},
+ {id:'grand',co:'auto',sev:'bad',t:'СТО «Гранд», Михайловск — долг 1,2 млн ₽ за расходники, просрочка 34 дня',s:'Собран новый заказ на 380 тыс. ₽. Отгружать?',a:[['Отгрузить','Отгрузка «Гранду» разрешена, несмотря на долг'],['Только по предоплате','«Гранд»: новый заказ — только по предоплате']]},
+ {id:'pp',co:'auto',sev:'bad',t:'Предоплата 146 тыс. ₽ без движения 7 дней',s:'Стенд для диагностики подвески, автосервис в Краснодаре. В июне похожая ситуация закончилась отзывом на 1 ★.',a:[['Поручить директору Авто','task:auto:Разобраться с предоплатой 146 тыс. ₽ — отгрузить или вернуть'],['Открыть предоплаты','go:prepay']]},
  {id:'mirada',co:'him',sev:'warn',t:'Закупка сырья для MIRADA на 1,1 млн ₽',s:'Остаток базы на 9 дней производства. Черновик заказа поставщику готов.',a:[['Утвердить','Закупка сырья MIRADA на 1,1 млн ₽ утверждена'],['Отложить на неделю','Закупка сырья MIRADA отложена на неделю']]},
- {id:'disc',co:'auto',sev:'warn',t:'Скидки менеджеров Авто съели 1,4 п.п. маржи',s:'5 сделок со скидкой выше 12% в сентябре.',a:[['Спросить агента','ask:Почему маржа Авто ниже, чем в августе?'],['Поручить порог скидки','task:auto:Ввести порог скидки 10% без согласования директора']]}
+ {id:'disc',co:'auto',sev:'warn',t:'Скидки менеджеров Авто съели 1,4 п.п. маржи',s:'5 сделок со скидкой выше 12% в сентябре.',a:[['Спросить агента','ask:Почему маржа Авто ниже, чем в августе?'],['Ввести порог скидки','task:auto:Ввести порог скидки 10% без согласования директора']]}
 ];
-let DLOG=[['пт','Вы','утвердили акцию для дилеров Ростова'],['чт','Вы','отказали в отсрочке ООО «Ремзона» — долг 47 дней']];
+let DLOG=[['30.09','Вы','утвердили акцию для дилеров Ростова','him'],['08.10','Вы','отказали в отсрочке техцентру «Кавказ» — просрочка 47 дней','auto']];
 let pst={per:'month',co:'auto'};
 
 function sparkSVG(vals,color){const w=200,h=46,mx=Math.max(...vals)*1.1,n=vals.length,bw=(w-(n-1)*6)/n;return '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+vals.map((v,i)=>{const bh=Math.max(3,v/mx*h);return '<rect x="'+(i*(bw+6))+'" y="'+(h-bh)+'" width="'+bw+'" height="'+bh+'" rx="3" fill="'+color+'" opacity="'+(i===n-1?1:.55)+'"/>'}).join('')+'</svg>'}
@@ -1011,14 +1011,14 @@ function renderPult(){
  $('#period').innerHTML=Object.entries(PER).map(([k,v])=>'<button type="button" class="fl'+(pst.per===k?' on':'')+'" data-per="'+k+'">'+v.lab+'</button>').join('');
  $('#period').querySelectorAll('[data-per]').forEach(b=>b.onclick=()=>{pst.per=b.dataset.per;renderPult()});
  $('#periodHint').textContent=P0.hint;
- const selCo=state.co==='all'?Object.keys(CO):[state.co];const rev=selCo.reduce((s,k)=>s+P0.co[k][0],0);const mg=selCo.reduce((s,k)=>s+P0.co[k][0]*P0.co[k][1],0)/rev;const grpRev=Object.values(P0.co).reduce((s,c)=>s+c[0],0);const SIDE={cash:{auto:9.1,prom:2.4,pnev:1.2,him:5.5},debt:{auto:[17.9,5.2],prom:[3.1,.5],pnev:[1.4,.2],him:[2.2,.2]},liq:{auto:7.6,prom:1.2,pnev:.5,him:0}};const sum=f=>selCo.reduce((s,k)=>s+f(k),0);
+ const selCo=state.co==='all'?Object.keys(CO):[state.co];const rev=selCo.reduce((s,k)=>s+P0.co[k][0],0);const mg=selCo.reduce((s,k)=>s+P0.co[k][0]*P0.co[k][1],0)/rev;const grpRev=Object.values(P0.co).reduce((s,c)=>s+c[0],0);const SIDE={cash:{auto:9.1,prom:2.4,pnev:1.2,him:5.5},debt:{auto:[13.1,5.2],prom:[3.1,.5],pnev:[1.4,.2],him:[2.2,.2]},liq:{auto:7.6,prom:1.2,pnev:.5,him:0}};const sum=f=>selCo.reduce((s,k)=>s+f(k),0);
  const dr=state.co==='all'?(rev/P0.revPrev-1)*100:({auto:-8.7,prom:3.0,pnev:6.7,him:3.8}[state.co]),dm=state.co==='all'?mg-P0.mgPrev:({auto:-2.2,prom:-.2,pnev:.2,him:.5}[state.co]);
  $('#kpis').innerHTML=[
   [state.co==='all'?'Выручка группы':'Выручка · '+CO[state.co].nm,ru(rev)+' млн ₽',(dr>=0?'▲ ':'▼ ')+ru(Math.abs(dr),0)+'% '+P0.prev,dr>=0?'up':'dn'],
   ['Валовая маржа',ru(mg)+'%',(dm>=0?'▲ ':'▼ ')+ru(Math.abs(dm))+' п.п. '+P0.prev,dm>=0?'up':'dn'],
   ['Деньги на счетах',ru(sum(k=>SIDE.cash[k]))+' млн ₽',state.co==='all'?'4 компании, на сегодня':'на сегодня','mu'],
   ['Долги клиентов',ru(sum(k=>SIDE.debt[k][0]))+' млн ₽','из них '+ru(sum(k=>SIDE.debt[k][1]))+' млн просрочено','dn'],
-  ['Неликвид старше 180 дней',sum(k=>SIDE.liq[k])?ru(sum(k=>SIDE.liq[k]))+' млн ₽':'нет',sum(k=>SIDE.liq[k])?'3 склада':'склад чистый',sum(k=>SIDE.liq[k])?'dn':'up']
+  ['Неликвид старше 180 дней',sum(k=>SIDE.liq[k])?ru(sum(k=>SIDE.liq[k]))+' млн ₽':'нет',sum(k=>SIDE.liq[k])?({all:'3 склада',auto:'3 склада',prom:'2 склада',pnev:'1 склад'}[state.co]||'3 склада'):'склад чистый',sum(k=>SIDE.liq[k])?'dn':'up']
  ].map((k,i)=>'<div class="card kpi"><small>'+k[0]+'</small><div class="v num">'+k[1]+'</div><div class="dl '+k[3]+'">'+k[2]+'</div>'+srcl(['1С: продажи · '+(state.co==='all'?'4 базы':'1 база'),'1С: себестоимость','банк-клиент','1С: взаиморасчёты','склады: остатки и движения'][i])+'</div>').join('');
  $('#cos').innerHTML=Object.entries(CO).map(([k,c])=>{const d=P0.co[k];return '<button type="button" class="co'+(pst.co===k?' on':'')+'" data-co="'+k+'" aria-pressed="'+(pst.co===k)+'"><span class="nm"><i style="background:'+c.c+'"></i>'+c.nm+'</span><span class="lg">'+c.lg+'</span><span class="v num">'+ru(d[0])+' млн ₽</span><span class="mg">маржа <b class="num">'+ru(d[1])+'%</b> · '+Math.round(d[0]/grpRev*100)+'% выручки группы</span>'+srcl('1С · '+c.lg)+sparkSVG(d[2],c.c)+'<span class="ax">'+P0.ax.map(a=>'<span>'+a+'</span>').join('')+'</span></button>'}).join('');
  $('#cos').querySelectorAll('[data-co]').forEach(b=>b.onclick=()=>{pst.co=b.dataset.co;renderPult()});
@@ -1030,11 +1030,11 @@ function renderPult(){
  $('#alCnt').textContent=visAlerts().length||'';
  bindDo($('#alerts'));
  // margin chart
- const MGC={auto:[11.2,10.9,11.4,10.8,10.6,8.4],prom:[14.0,14.3,14.2,14.5,14.3,14.1],pnev:[12.1,12.4,12.2,12.6,12.5,12.7],him:[25.8,26.2,26.0,26.5,26.8,27.3]};const SER=state.co==='all'?MG6:MG6.map((m,i)=>[m[0],MGC[state.co][i]]);const vv=SER.map(x=>x[1]);const W=520,H=150,pl=34,pr=12,pt=12,pb=24,mn=Math.floor(Math.min(...vv))-1,mx=Math.ceil(Math.max(...vv))+1;const xs=i=>pl+i*(W-pl-pr)/(MG6.length-1),ys=v=>pt+(mx-v)/(mx-mn)*(H-pt-pb);
+ const MGC={auto:[25.2,24.9,25.4,24.8,24.6,22.4],prom:[26.0,26.3,26.2,26.5,26.3,26.1],pnev:[24.1,24.4,24.2,24.6,24.5,24.7],him:[39.8,40.2,40.0,40.5,40.8,41.3]};const SER=state.co==='all'?MG6:MG6.map((m,i)=>[m[0],MGC[state.co][i]]);const vv=SER.map(x=>x[1]);const W=520,H=150,pl=34,pr=12,pt=12,pb=24,mn=Math.floor(Math.min(...vv))-1,mx=Math.ceil(Math.max(...vv))+1;const xs=i=>pl+i*(W-pl-pr)/(MG6.length-1),ys=v=>pt+(mx-v)/(mx-mn)*(H-pt-pb);
  const pts=SER.map((m,i)=>xs(i)+','+ys(m[1])).join(' ');const ticks=[];for(let v=mn;v<=mx;v+=Math.max(1,Math.round((mx-mn)/4)))ticks.push(v);
- $('#mgChart').innerHTML='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Маржа группы снизилась с 14,2% в апреле до 12,5% в сентябре">'+ticks.map(v=>'<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+ys(v)+'" y2="'+ys(v)+'" stroke="var(--line)"/><text x="'+(pl-6)+'" y="'+(ys(v)+4)+'" text-anchor="end">'+v+'%</text>').join('')+'<polygon points="'+xs(0)+','+ys(mn)+' '+pts+' '+xs(MG6.length-1)+','+ys(mn)+'" fill="var(--accent)" opacity=".1"/><polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>'+MG6.map((m,i)=>'<text x="'+xs(i)+'" y="'+(H-6)+'" text-anchor="middle">'+m[0]+'</text>').join('')+'<circle cx="'+xs(5)+'" cy="'+ys(vv[5])+'" r="4.5" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/></svg>';
+ $('#mgChart').innerHTML='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Маржа группы снизилась с 28,2% в апреле до 26,2% в сентябре">'+ticks.map(v=>'<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+ys(v)+'" y2="'+ys(v)+'" stroke="var(--line)"/><text x="'+(pl-6)+'" y="'+(ys(v)+4)+'" text-anchor="end">'+v+'%</text>').join('')+'<polygon points="'+xs(0)+','+ys(mn)+' '+pts+' '+xs(MG6.length-1)+','+ys(mn)+'" fill="var(--accent)" opacity=".1"/><polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>'+MG6.map((m,i)=>'<text x="'+xs(i)+'" y="'+(H-6)+'" text-anchor="middle">'+m[0]+'</text>').join('')+'<circle cx="'+xs(5)+'" cy="'+ys(vv[5])+'" r="4.5" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/></svg>';
  $('#mgNow').textContent='сентябрь '+ru(vv[5])+'%';$('#mgChart').closest('.pcard').querySelector('h3 span').textContent='Валовая маржа '+(state.co==='all'?'группы':'· '+CO[state.co].nm)+', 6 месяцев';$('#mgChart svg polyline').setAttribute('stroke',state.co==='all'?'var(--accent)':CO[state.co].c);
- enhancePult();renderBrief();$('#dlog').innerHTML=DLOG.map(l=>'<div class="li"><time>'+esc(l[0])+'</time><div><b>'+esc(l[1])+'</b> — '+esc(l[2])+'</div></div>').join('');
+ enhancePult();renderBrief();$('#dlog').innerHTML=DLOG.filter(l=>state.co==='all'||!l[3]||l[3]===state.co).map(l=>'<div class="li"><time>'+esc(l[0])+'</time><div><b>'+esc(l[1])+'</b> '+esc(l[2])+'</div></div>').join('');
  updateBadges();
 }
 function bindDo(root){root.querySelectorAll('[data-do]').forEach(b=>b.onclick=()=>{const v=b.dataset.do;const al=b.dataset.al;
@@ -1045,12 +1045,12 @@ function bindDo(root){root.querySelectorAll('[data-do]').forEach(b=>b.onclick=()
 
 /* ===== предоплаты ===== */
 let PP=[
- {c:'Заправочная станция для кондиционеров, Краснодар',co:'auto',sum:146000,dt:d(10,6),days:6,mv:'нет: заказ поставщику не создан'},
+ {c:'Стенд диагностики подвески, Краснодар',co:'auto',sum:146000,dt:d(10,5),days:7,mv:'нет: заказ поставщику не создан'},
  {c:'ООО «Агромаш»',co:'prom',sum:412000,dt:d(10,7),days:5,mv:'нет: товар не зарезервирован'},
- {c:'Шиномонтаж «Протектор», Светлоград',co:'auto',sum:88000,dt:d(10,9),days:3,mv:'менеджер не отвечал клиенту'},
+ {c:'Шиномонтаж «Протектор», Светлоград',co:'auto',sum:88000,dt:d(10,7),days:5,mv:'нет: ждём поставщика, клиенту не назвали срок'},
  {c:'СТО «Мотор», Пятигорск',co:'auto',sum:800000,dt:d(9,29),days:0,mv:'есть: заказ поставщику 30.09, отгрузка до 20.10'},
- {c:'Мебельная фабрика «Эко»',co:'prom',sum:230000,dt:d(10,11),days:1,mv:'есть: собирается на складе'},
- {c:'Дилер «Колор-Дон», Ростов',co:'him',sum:540000,dt:d(10,12),days:0,mv:'есть: счёт оплачен, отгрузка завтра'}
+ {c:'Мебельная фабрика «Эко»',co:'prom',sum:230000,dt:d(10,9),days:1,mv:'есть: собирается на складе'},
+ {c:'Дилер «Колор-Дон», Ростов',co:'him',sum:540000,dt:d(10,9),days:0,mv:'есть: счёт оплачен, отгрузка завтра'}
 ];
 function renderPP(){
  const st=p=>p.done?['ok','поручено']:p.days>=5?['bad',p.days+' дн. без движения']:p.days>=3?['warn',p.days+' дн.']:['ok','в работе'];
@@ -1062,20 +1062,20 @@ function renderPP(){
 /* ===== поручения ===== */
 const COLS=[['new','Новые'],['work','В работе'],['check','Проверка по факту'],['done','Сделано']];
 let TK=[
- {id:1,t:'Предложение заводу «Агромаш» по складской программе абразива',who:'prom',due:d(10,17),col:'new',src:'голосом · 09:12'},
+ {id:1,t:'Предложение заводу «Металлоформ» по складской программе абразива',who:'prom',due:d(10,17),col:'new',src:'голосом · 09:12'},
  {id:2,t:'Ответить на отзыв 1 ★ про предоплату и вернуть клиента',who:'auto',due:d(10,13),col:'new',src:'агент: черновик ответа готов'},
  {id:3,t:'Дозаказать шиномонтажные станки под сезон, 12 шт.',who:'auto',due:d(10,14),col:'work',src:'из пульта'},
  {id:4,t:'Распродать неликвид: стенды старше 180 дней на 2,4 млн ₽',who:'auto',due:d(10,31),col:'work',src:'голосом · пт'},
- {id:5,t:'Проверить договоры с дилерами на территориальное закрепление',who:'him',due:d(10,10),col:'work',src:'голосом · 06.10'},
- {id:6,t:'Отгрузить фрезы мебельной фабрике «Эко»',who:'prom',due:d(10,11),col:'check',src:'исполнитель: «сделано» вчера',fact:['ok','в учёте отгрузка есть']},
- {id:7,t:'Выставить счёт СТО «Гранд» на финальную оплату',who:'auto',due:d(10,12),col:'check',src:'исполнитель: «сделано» сегодня',fact:['warn','счёт есть, оплаты пока нет']},
- {id:8,t:'Запустить акцию для дилеров Ростова',who:'him',due:d(10,10),col:'done',src:'10.10',fact:['ok','3 заказа по акции']},
+ {id:5,t:'Проверить договоры с дилерами на территориальное закрепление',who:'him',due:d(10,9),col:'work',src:'голосом · 06.10'},
+ {id:6,t:'Отгрузить фрезы мебельной фабрике «Эко»',who:'prom',due:d(10,9),col:'check',src:'исполнитель: «сделано» 09.10',fact:['ok','в учёте отгрузка есть']},
+ {id:7,t:'Отгрузить расходники «Шинному двору» только после частичной оплаты',who:'auto',due:d(10,12),col:'check',src:'исполнитель: «сделано» сегодня',fact:['warn','отгрузка есть, оплаты в учёте нет']},
+ {id:8,t:'Запустить акцию для дилеров Ростова',who:'him',due:d(10,2),col:'done',src:'02.10',fact:['ok','3 заказа по акции']},
  {id:9,t:'Сверка остатков склада Краснодар',who:'prom',due:d(10,8),col:'done',src:'08.10',fact:['ok','расхождение 0,3%']}
 ];
 let tkId=20,newly=null,kcol='new';
 function addTask(t,who,due,src){const id=++tkId;TK.unshift({id,t,who,due,col:'new',src:src+' · сейчас'});newly=id;kcol='new';renderTasks()}
 function renderTasks(){
- const exec={auto:'78%',prom:'92%',pnev:'85%',him:'100%'};
+ const exec={auto:'79%',prom:'92%',pnev:'85%',him:'90%'};
  $('#kseg').innerHTML=COLS.map(([k,l])=>'<button type="button" class="'+(kcol===k?'on':'')+'" data-kc="'+k+'">'+l+' · '+TK.filter(x=>x.col===k&&(state.co==='all'||x.who===state.co)).length+'</button>').join('');$('#kseg').querySelectorAll('[data-kc]').forEach(b=>b.onclick=()=>{kcol=b.dataset.kc;renderTasks()});
  $('#exec').innerHTML='Исполнение в срок за месяц: '+Object.entries(CO).map(([k,c])=>'<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:'+c.c+';margin-right:5px"></i>'+c.nm+' <b class="num">'+exec[k]+'</b></span>').join('');
  $('#kanban').innerHTML=COLS.map(([k,l])=>{const items=TK.filter(x=>x.col===k&&(state.co==='all'||x.who===state.co));return '<div class="kcol'+(kcol===k?' on':'')+'"><h4>'+l+' <span>'+items.length+'</span></h4>'+(items.length?items.map(x=>{const over=x.col!=='done'&&x.due<TODAY;const nx={new:['В работу →','work'],work:['Сделано → проверить','check'],check:['Принять ✓','done']}[k];return '<div class="tk'+(x.id===newly?' newly':'')+'" style="--cc:'+CO[x.who].c+'"><span>'+esc(x.t)+'</span><div class="tm"><span class="chip mute">'+CO[x.who].nm+'</span><span class="num'+(over?' dn':'')+'" style="'+(over?'font-weight:700':'')+'">'+(over?'просрочено · ':'до ')+fmtS(x.due)+'</span></div><div class="tm"><span>'+esc(x.src)+'</span></div>'+(x.fact?'<span class="chip '+x.fact[0]+'">'+(x.fact[0]==='ok'?'✓ ':'⚠ ')+esc(x.fact[1])+'</span>':'')+(x.checking?'<span class="chip info">агент сверяет с учётом…</span>':'')+(nx?'<div class="ctl"><button type="button" data-mv="'+x.id+'" data-to="'+nx[1]+'">'+nx[0]+'</button></div>':'')+'</div>'}).join(''):'<div class="empty">Пусто</div>')+'</div>'}).join('');
@@ -1124,28 +1124,29 @@ $('#ntOpen').onclick=()=>{const f=$('#ntForm');f.classList.toggle('open');if(f.c
 $('#tabAgent').onclick=()=>openDrawer();
 
 /* ===== приветствие ===== */
-function welcome(){modal('<div class="welcome"><div class="brandline">ALFA<span>CORE</span> · штаб собственника</div><h4 style="font-size:20px">Как может выглядеть управление группой через ИИ-агента</h4><p class="lead" style="margin:0">Демонстрация на условных данных. В рабочей версии цифры, проекты и поручения приходят из учёта, CRM и календаря четырёх компаний через MCP. Всё можно нажимать — ничего никуда не отправляется.</p><div class="steps"><div class="stp"><span>☀</span><div><b>Сегодня</b>Утренняя сводка агента и решения на одну кнопку.</div></div><div class="stp"><span>₽</span><div><b>Деньги</b>Пульт четырёх компаний и контроль предоплат.</div></div><div class="stp"><span>▦</span><div><b>Проекты</b>Монтажи, бригады, ТО — как приложение для событий.</div></div><div class="stp"><span>✓</span><div><b>Поручения</b>Задачи директорам с проверкой по факту.</div></div></div><div class="rolepick"><span>Смотреть как — права у каждой роли свои</span><div class="switch" role="radiogroup" aria-label="Роль"><button type="button" data-role="owner">Собственник</button><button type="button" data-role="director">Директор Авто</button><button type="button" data-role="manager">Менеджер Авто</button></div></div><div class="row" style="justify-content:space-between"><button class="btn ghost s" type="button" id="resetDemo">Начать заново</button><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" data-close>Смотреть самому</button><button class="btn p" type="button" data-tour>Показать за минуту</button></span></div></div>',()=>{const mk=()=>document.querySelectorAll('#modalRoot [data-role]').forEach(x=>{const on=x.dataset.role===(state.role||'owner');x.classList.toggle('on',on);x.setAttribute('aria-checked',on)});mk();document.querySelectorAll('#modalRoot [data-role]').forEach(x=>x.onclick=()=>{setRole(x.dataset.role);mk()});$('#modalRoot [data-tour]').onclick=()=>{$('#modalRoot').innerHTML='';tourStep(0)};$('#resetDemo').onclick=()=>{try{localStorage.removeItem('alfa-demo-ui')}catch(e){}location.reload()}})}
+function welcome(){modal('<div class="welcome"><div class="brandline">ALFA<span>CORE</span> · штаб собственника</div><h4 style="font-size:20px">Как может выглядеть управление группой через ИИ-агента</h4><p class="lead" style="margin:0">Демонстрация на условных данных. В рабочей версии цифры, проекты и поручения приходят из учёта, CRM и календаря четырёх компаний через MCP. Всё можно нажимать — ничего никуда не отправляется.</p><div class="steps"><div class="stp"><span>☀</span><div><b>Сегодня</b>Утренняя сводка агента и решения на одну кнопку.</div></div><div class="stp"><span>₽</span><div><b>Деньги</b>Пульт четырёх компаний и контроль предоплат.</div></div><div class="stp"><span>▦</span><div><b>Проекты</b>Монтажи, бригады и ТО — как календарь проектов.</div></div><div class="stp"><span>✓</span><div><b>Поручения</b>Задачи директорам с проверкой по факту.</div></div></div><div class="rolepick"><span>Смотреть как — права у каждой роли свои</span><div class="switch" role="radiogroup" aria-label="Роль"><button type="button" data-role="owner">Собственник</button><button type="button" data-role="director">Директор Авто</button><button type="button" data-role="manager">Менеджер Авто</button></div></div><div class="row" style="justify-content:space-between"><button class="btn ghost s" type="button" id="resetDemo">Начать заново</button><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" data-close>Смотреть самому</button><button class="btn p" type="button" data-tour>Показать за минуту</button></span></div></div>',()=>{const mk=()=>document.querySelectorAll('#modalRoot [data-role]').forEach(x=>{const on=x.dataset.role===(state.role||'owner');x.classList.toggle('on',on);x.setAttribute('aria-checked',on)});mk();document.querySelectorAll('#modalRoot [data-role]').forEach(x=>x.onclick=()=>{setRole(x.dataset.role);mk()});$('#modalRoot [data-tour]').onclick=()=>{$('#modalRoot').innerHTML='';tourStep(0)};$('#resetDemo').onclick=()=>{try{localStorage.removeItem('alfa-demo-ui')}catch(e){}location.reload()}})}
 document.querySelectorAll('[data-help]').forEach(b=>b.onclick=welcome);
 
 /* ===== агент ===== */
-const SUGGS={brief:['Что сегодня важного?','Хватит ли денег в октябре?','Что будет, если ограничить скидку 10%?','Где группа теряет деньги?','Сколько денег придёт на этой неделе?','Какие проекты под риском?'],pult:['Хватит ли денег в октябре?','Кто нам больше всех должен?','Где группа теряет деньги?','Почему маржа Авто ниже, чем в августе?','Сколько денег придёт на этой неделе?','Какие предоплаты зависли?'],tasks:['Кто из директоров срывает сроки?','Что поручено на этой неделе?','Где группа теряет деньги?'],projects:['Какие проекты под риском?','Сколько денег ждём по проектам?','Распредели монтажи следующей недели по бригадам','Что лежит на складе под клиентов?','Кому пора на ТО?']};
+const SUGGS={brief:['Что сегодня важного?','Хватит ли денег в октябре?','Что будет, если ограничить скидку 10%?','Где группа теряет деньги?','Сколько денег придёт на этой неделе?','Какие проекты под риском?'],pult:['Хватит ли денег в октябре?','У кого больше всего просрочено?','Где группа теряет деньги?','Почему маржа Авто ниже, чем в августе?','Сколько денег придёт на этой неделе?','Какие предоплаты зависли?'],tasks:['Кто из директоров срывает сроки?','Что поручено на этой неделе?','Где группа теряет деньги?'],projects:['Какие проекты под риском?','Сколько денег ждём по проектам?','Распредели монтажи следующей недели по бригадам','Что лежит на складе под клиентов?','Кому пора на ТО?']};
 function curSugg(){return SUGGS[SWMAP[state.view]]||SUGGS.projects}
-function openDrawer(){$('#drawer').classList.add('open');if(!$('#msgs').children.length){addMsg('ai','Здравствуйте. Я вижу деньги, проекты, предоплаты и поручения всех четырёх компаний. Спросите что-нибудь или выберите вопрос ниже.')}renderSugg();setTimeout(()=>$('#drInput').focus(),250)}
+function openDrawer(){$('#drawer').classList.add('open');if(!$('#msgs').children.length){addMsg('ai','Здравствуйте. Я вижу деньги, проекты, предоплаты и поручения четырёх компаний группы. Спросите что-нибудь или выберите вопрос ниже.')}renderSugg();setTimeout(()=>$('#drInput').focus(),250)}
 $('#drClose').onclick=()=>$('#drawer').classList.remove('open');
 document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#drawer').classList.remove('open')});
 function renderSugg(){$('#sugg').innerHTML=curSugg().map(s=>'<button type="button">'+s+'</button>').join('');$('#sugg').querySelectorAll('button').forEach(b=>b.onclick=()=>ask(b.textContent))}
 function addMsg(who,html){const m=document.createElement('div');m.className='m '+who;m.innerHTML=html;$('#msgs').appendChild(m);$('#msgs').scrollTop=1e6;return m}
 function answer(q,p){
  const t=q.toLowerCase();
- if(/хватит ли денег|кассов|разрыв/.test(t)){const cs=cashSeries();const mn=cs.days.reduce((m,x)=>x.bal<m.bal?x:m,cs.days[0]);return mn.bal<CASH_MIN?'Не совсем. По платёжному календарю <b>'+fmt(mn.dt)+'</b> на счетах останется <b>'+ru(mn.bal)+' млн ₽</b> при неснижаемом остатке 5 млн. Совпали оплата Sivik (4,6 млн), зарплата (3,6 млн) и налоги (3,4 млн).<br><br>Проще всего перенести оплату Sivik на 3 ноября — договор это позволяет. <button class="btn s p" type="button" data-do="go:cash">Открыть прогноз</button>':'Да. Минимальный остаток за 30 дней — <b>'+ru(mn.bal)+' млн ₽</b> '+fmt(mn.dt)+', это выше порога 5 млн.'}
- if(/скидк.*10|ограничить скидку|что будет, если/.test(t))return 'Если скидка без согласования — до 10%: маржа Авто вырастет с 8,4% до <b>9,5%</b>, это <b>+2,8 млн ₽</b> валовой прибыли в год. <button class="btn s p" type="button" data-do="go:whatif">Открыть сценарии</button>';
- if(/должен|должник|дебитор/.test(t))return 'Больше всего просрочено у трёх клиентов:<table><tr><th>Клиент</th><th class="num">Просрочено</th><th class="num">Дней</th></tr><tr><td>СТО «Гранд»</td><td class="num">1,20</td><td class="num">34</td></tr><tr><td>Техцентр «Кавказ»</td><td class="num">1,10</td><td class="num">47</td></tr><tr><td>«Шинный двор»</td><td class="num">0,90</td><td class="num">41</td></tr></table><br>Всего просрочено 6,1 млн ₽ у 11 клиентов. Акты сверки готовы.';
- if(/сегодня важн|что важного/.test(t))return 'Главное на сегодня:<br><b>1.</b> '+(ALERTS.length?ALERTS.length+' решения ждут вас на экране «Сегодня».':'решений от вас не ждём.')+'<br><b>2.</b> Монтаж в «Гранде» 15.10 под угрозой — нет фото помещения, я напомнил менеджеру.<br><b>3.</b> Предоплата 146 тыс. ₽ без движения 6 дней — клиент уже писал жалобу.<br><br>Остальное идёт по плану: 14 отгрузок, 2 ТО, бригады загружены.';
+ if(/хватит ли денег|кассов|разрыв/.test(t)){const cs=cashSeries();const mn=cs.days.reduce((m,x)=>x.bal<m.bal?x:m,cs.days[0]);return mn.bal<CASH_MIN?'Не совсем. По платёжному календарю <b>'+fmt(mn.dt)+'</b> на счетах останется <b>'+ru(mn.bal)+' млн ₽</b> при неснижаемом остатке 5 млн. За одну неделю уходят Sivik (4,6 млн), аванс (2,4 млн), предоплата Launch (2,3 млн) и налоги со взносами (3,1 млн).<br><br>Проще всего перенести оплату Sivik на 3 ноября — договор это позволяет. <button class="btn s p" type="button" data-do="go:cash">Открыть прогноз</button>':'Да. Минимальный остаток за 30 дней — <b>'+ru(mn.bal)+' млн ₽</b> '+fmt(mn.dt)+', это выше порога 5 млн.'}
+ if(/скидк.*10|ограничить скидку|что будет, если/.test(t))return 'Если скидка без согласования — до 10%: маржа Авто вырастет с 22,4% до <b>23,5%</b>, это <b>+2,8 млн ₽</b> валовой прибыли в год. <button class="btn s p" type="button" data-do="go:whatif">Открыть сценарии</button>';
+ if(/должен|должник|дебитор|просрочено\?/.test(t))return 'Больше всего просрочено у трёх клиентов:<table><tr><th>Клиент</th><th class="num">Просрочено</th><th class="num">Дней</th></tr><tr><td>СТО «Гранд»</td><td class="num">1,20</td><td class="num">34</td></tr><tr><td>Техцентр «Кавказ»</td><td class="num">1,10</td><td class="num">47</td></tr><tr><td>«Шинный двор»</td><td class="num">0,90</td><td class="num">41</td></tr></table><br>Всего просрочено 6,1 млн ₽ у 11 клиентов. Акты сверки готовы.';
+ if(/сегодня важн|что важного/.test(t))return 'Главное на сегодня:<br><b>1.</b> '+(ALERTS.length?ALERTS.length+' '+(ALERTS.length===1?'решение ждёт':ALERTS.length<5?'решения ждут':'решений ждут')+' вас на экране «Сегодня».':'решений от вас не ждём.')+'<br><b>2.</b> Монтаж в «Гранде» 15.10 под угрозой — нет фото помещения, я напомнил менеджеру.<br><b>3.</b> Предоплата 146 тыс. ₽ без движения 7 дней — в июне похожая история закончилась отзывом на 1 ★.<br><br>Остальное идёт по плану: 14 отгрузок, 2 ТО, бригады загружены.';
  if(/теряет|потер/.test(t))return 'Три главные утечки за сентябрь:<table><tr><th>Где</th><th>Сколько</th></tr><tr><td>Скидки менеджеров Авто выше 12%</td><td>~290 тыс. ₽ маржи</td></tr><tr><td>Неликвид старше 180 дней на складах</td><td>9,3 млн ₽ заморожено</td></tr><tr><td>Просроченные долги клиентов</td><td>6,1 млн ₽</td></tr></table><br>Быстрее всего вернуть деньги через неликвид: стенды на 2,4 млн ₽ можно предложить клиентам с проектами под ключ. Поставить поручение директору Авто?';
- if(/маржа авто|почему маржа/.test(t))return 'Маржа Авто в сентябре — <b>8,4%</b> против 10,6% в августе. Причины по данным учёта:<br><b>1.</b> Пять сделок по подъёмникам со скидкой 12–18% — минус 1,4 п.п.<br><b>2.</b> Бесплатная доставка в 4 города дальше 250 км — минус 0,5 п.п.<br><b>3.</b> Доля расходников упала с 22% до 17% выручки — минус 0,3 п.п.<br><br>Предлагаю: скидка выше 10% — только с согласования директора, доставка дальше 200 км — платная.';
- if(/придёт|поступ|на этой неделе/.test(t))return 'Ожидаемые поступления на 12–16 октября — <b>~4,9 млн ₽</b>:<table><tr><th>Откуда</th><th class="num">Сумма</th></tr><tr><td>Оплаты по графику (12 клиентов)</td><td class="num">2,7 млн ₽</td></tr><tr><td>СТО «Гранд» после акта</td><td class="num">1,44 млн ₽</td></tr><tr><td>Дилеры MIRADA</td><td class="num">0,8 млн ₽</td></tr></table><br>Под риском — «Гранд»: монтаж может сдвинуться, тогда и оплата уедет на следующую неделю.';
- if(/предоплат/.test(t)){const r=PP.filter(x=>!x.done&&x.days>=3);return r.length?'Без движения <b>'+r.length+'</b>:<table><tr><th>Клиент</th><th class="num">Дней</th></tr>'+r.map(x=>'<tr><td>'+esc(x.c)+'</td><td class="num">'+x.days+'</td></tr>').join('')+'</table><br>Откройте раздел «Предоплаты», чтобы поручить директорам.':'Зависших предоплат нет — все поручены директорам.'}
- if(/срыва|сроки|директор/.test(t)){const ov=TK.filter(x=>x.col!=='done'&&x.due<TODAY);return 'Просрочено <b>'+ov.length+'</b>'+(ov.length?':<table><tr><th>Поручение</th><th>Кто</th></tr>'+ov.map(x=>'<tr><td>'+esc(x.t)+'</td><td>'+CO[x.who].nm+'</td></tr>').join('')+'</table>':'.')+'<br>За месяц в срок: Химтех 100%, Пром 92%, Пневмо 85%, Авто 78%. У Авто больше всего поручений — 14 за месяц.'}
+ if(/маржа авто|почему маржа/.test(t))return 'Маржа Авто в сентябре — <b>22,4%</b> против 24,6% в августе. Причины по данным учёта:<br><b>1.</b> Пять сделок по подъёмникам со скидкой 12–18% — минус 1,4 п.п.<br><b>2.</b> Бесплатная доставка в 4 города дальше 250 км — минус 0,5 п.п.<br><b>3.</b> Доля расходников упала с 22% до 17% выручки — минус 0,3 п.п.<br><br>Предлагаю: скидка выше 10% — только по согласованию с директором директора, доставка дальше 250 км — платная.';
+ if(/придёт|поступ|на этой неделе/.test(t))return 'Ожидаемые поступления на 12–16 октября — <b>7,7 млн ₽</b>:<table><tr><th>Откуда</th><th class="num">Сумма</th></tr><tr><td>Оплаты клиентов по графику</td><td class="num">5,5 млн ₽</td></tr><tr><td>СТО «Гранд» после акта</td><td class="num">1,44 млн ₽</td></tr><tr><td>Дилеры MIRADA</td><td class="num">0,8 млн ₽</td></tr></table><br>Под риском — «Гранд»: монтаж может сдвинуться, тогда и оплата уедет на следующую неделю.';
+ if(/предоплат/.test(t)){const r=PP.filter(x=>!x.done&&x.days>=3);return r.length?'Зависли <b>'+r.length+'</b> '+(r.length===1?'предоплата':r.length<5?'предоплаты':'предоплат')+':<table><tr><th>Клиент</th><th class="num">Дней</th></tr>'+r.map(x=>'<tr><td>'+esc(x.c)+'</td><td class="num">'+x.days+'</td></tr>').join('')+'</table><br>Откройте раздел «Предоплаты», чтобы поручить директорам.':'Зависших предоплат нет — все поручены директорам.'}
+ if(/поручено/.test(t)){const w=TK.filter(x=>x.col!=='done');return 'В работе <b>'+w.length+'</b> поручений:<table><tr><th>Что</th><th>Срок</th></tr>'+w.slice(0,6).map(x=>'<tr><td>'+esc(x.t)+'</td><td class="num">'+fmtS(x.due)+'</td></tr>').join('')+'</table>'}
+ if(/срыва|сроки|директор/.test(t)){const ov=TK.filter(x=>x.col!=='done'&&x.due<TODAY);return 'Просрочено поручений: <b>'+ov.length+'</b>'+(ov.length?':<table><tr><th>Поручение</th><th>Кто</th></tr>'+ov.map(x=>'<tr><td>'+esc(x.t)+'</td><td>'+CO[x.who].nm+'</td></tr>').join('')+'</table>':'.')+'<br>За месяц в срок: Пром 92%, Химтех 90%, Пневмо 85%, Авто 79%. У Авто больше всего поручений — 14 за месяц.'}
  if(/поручено|на этой неделе/.test(t)){const w=TK.filter(x=>x.col!=='done');return 'В работе <b>'+w.length+'</b> поручений:<table><tr><th>Что</th><th>Срок</th></tr>'+w.slice(0,6).map(x=>'<tr><td>'+esc(x.t)+'</td><td class="num">'+fmtS(x.due)+'</td></tr>').join('')+'</table>'}
  return answerProj(q,p);
 }
@@ -1156,28 +1157,28 @@ $('#drForm').onsubmit=e=>{e.preventDefault();const v=$('#drInput').value.trim();
 /* ===== сводка «Сегодня» ===== */
 function visAlerts(){return ALERTS.filter(a=>!state.co||state.co==='all'||a.co===state.co)}
 const NIGHT=[
- ['02:10','сверил поступления по 4 банковским счетам — 23 оплаты разнесены по счетам'],
+ ['02:10','сверил поступления по 5 расчётным счетам группы — 23 оплаты разнесены'],
  ['03:00','обновил статусы 14 отгрузок у транспортных компаний'],
  ['06:30','напомнил 3 клиентам о плановом ТО — двое подтвердили дату'],
  ['07:45','нашёл 5 позиций, которые закончатся за 10 дней, — черновик заказа готов'],
  ['08:50','собрал эту сводку']
 ];
 function srcl(t){return '<span class="srcl">⛁ '+t+'</span>'}
-function renderBrief(){
+function renderBrief(){const sc=document.querySelector('.seasoncard');if(sc)sc.hidden=!(state.co==='all'||state.co==='auto'||!state.co);
  const mgr=state.role==='manager';
  const VA=visAlerts();const n=VA.length;const co=state.co||'all';const one=co!=='all';
  const word=n===1?'вопрос':n<5?'вопроса':'вопросов';
  const names=VA.slice(0,3).map(a=>({cash:'риск кассового разрыва 28 октября',grand:'долг «Гранда»',pp:'предоплата 146 тыс. ₽',mirada:'закупка сырья MIRADA',disc:'скидки менеджеров Авто'}[a.id])).filter(Boolean);
- $('#bHero').innerHTML='<div class="bh-top"><span class="bh-av">✦</span><div><small>Сводка агента · 9:00</small><h2>Доброе утро</h2></div></div><p>'+(mgr?'Сегодня у бригад 3 выезда и 2 ТО. Под угрозой монтаж в «Гранде»: нет фото помещения. ':one?'Сводка по направлению '+CO[co].nm+'. В пятницу выручка <b>'+ru({auto:.8,prom:.15,pnev:.07,him:.3}[co],2)+' млн ₽</b>. ':'В пятницу выручка группы — <b>1,62 млн ₽</b>, на 9% больше средней пятницы, валовая прибыль — <b>0,2 млн ₽</b>. ')+(n?'Вашего решения '+(n===1?'ждёт ':'ждут ')+n+' '+word+(names.length?': '+names.join(', '):'')+(n>names.length?' и ещё '+(n-names.length):'')+'. Остальное идёт по плану.':'Решений от вас сегодня не требуется — всё идёт по плану.')+'</p>';
+ $('#bHero').innerHTML='<div class="bh-top"><span class="bh-av">✦</span><div><small>Сводка агента · 9:00</small><h2>Доброе утро</h2></div></div><p>'+(mgr?'Сегодня у бригад 3 выезда и 2 ТО. Под угрозой монтаж в «Гранде»: нет фото помещения. ':one?'Сводка по направлению '+CO[co].nm+'. В пятницу выручка <b>'+ru({auto:1.04,prom:.21,pnev:.09,him:.28}[co],2)+' млн ₽</b>. ':'В пятницу выручка группы — <b>1,62 млн ₽</b>, на 9% больше средней пятницы, валовая прибыль — <b>0,4 млн ₽</b>. ')+(n?'Вашего решения '+(n===1?'ждёт ':'ждут ')+n+' '+word+(names.length?': '+names.join(', '):'')+(n>names.length?' и ещё '+(n-names.length):'')+'. Остальное идёт по плану.':'Решений от вас сегодня не требуется — всё идёт по плану.')+'</p>';
  const K=mgr?[['Выезды сегодня','5','3 монтажа · 2 ТО','Календарь бригад'],['Проекты под риском',String(P.filter(attn).length),'из 6 активных','CRM'],['Деньги группы','нет доступа','раздел скрыт для роли','права на MCP-сервере'],['Мои поручения',String(TK.filter(x=>x.who==='auto'&&x.col!=='done').length),'в работе','доска поручений']]
-  :one?[['Выручка в пятницу',ru({auto:.8,prom:.15,pnev:.07,him:.3}[co],2)+' млн ₽',CO[co].nm,'1С · '+CO[co].lg],['Деньги на счетах',ru({auto:9.1,prom:2.4,pnev:1.2,him:5.5}[co])+' млн ₽','на 9:00','банк-клиент'],['Придёт на этой неделе',ru({auto:3.1,prom:.6,pnev:.3,him:.9}[co])+' млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами',ru({auto:5.2,prom:.5,pnev:.2,him:.2}[co])+' млн ₽',{auto:'7 клиентов',prom:'2 клиента',pnev:'1 клиент',him:'1 дилер'}[co],'1С · взаиморасчёты']]:[['Выручка в пятницу','1,62 млн ₽','▲ 9% к средней пятнице','1С · 4 компании'],['Деньги на счетах','18,2 млн ₽','на 9:00','банк-клиент · 4 счёта'],['Придёт на этой неделе','4,9 млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами','6,1 млн ₽','11 клиентов','1С · взаиморасчёты']];
+  :one?[['Выручка в пятницу',ru({auto:1.04,prom:.21,pnev:.09,him:.28}[co],2)+' млн ₽',CO[co].nm,'1С · '+CO[co].lg],['Деньги на счетах',ru({auto:9.1,prom:2.4,pnev:1.2,him:5.5}[co])+' млн ₽','на 9:00','банк-клиент'],['Придёт на этой неделе',ru({auto:4.9,prom:1.0,pnev:.5,him:1.3}[co])+' млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами',ru({auto:5.2,prom:.5,pnev:.2,him:.2}[co])+' млн ₽',{auto:'7 клиентов',prom:'2 клиента',pnev:'1 клиент',him:'1 дилер'}[co],'1С · взаиморасчёты']]:[['Выручка в пятницу','1,62 млн ₽','▲ 9% к средней пятнице','1С · 4 компании'],['Деньги на счетах','18,2 млн ₽','на 9:00','банк-клиент · 4 счёта'],['Придёт на этой неделе','7,7 млн ₽','по графику оплат','1С + договоры'],['Просрочено клиентами','6,1 млн ₽','11 клиентов','1С · взаиморасчёты']];
  $('#bKpi').innerHTML=K.map(k=>'<div class="card kpi"><small>'+k[0]+'</small><div class="v num">'+k[1]+'</div><div class="dl mu">'+k[2]+'</div>'+srcl(k[3])+'</div>').join('');
  $('#bAlerts').innerHTML=mgr?'<div class="empty">Решения по деньгам принимает собственник. Для вас — поручения на доске.</div>':(visAlerts().length?visAlerts().map(a=>'<div class="alert"><span class="ic" style="background:var(--'+(a.sev==='bad'?'bad':'warn')+')">'+(a.sev==='bad'?'!':'↓')+'</span><div class="tx"><b>'+a.t+'</b>'+a.s+'<div class="acts">'+a.a.map((x,i)=>'<button class="btn s'+(i===0?' p':'')+'" type="button" data-al="'+a.id+'" data-do="'+esc(x[1])+'">'+x[0]+'</button>').join('')+'</div></div></div>').join(''):'<div class="empty done-all">✓ Все решения приняты. Агент передал их исполнителям и проследит.</div>');
  bindDo($('#bAlerts'));
  const today=EV.filter(e=>same(e.dt,TODAY));
- $('#bToday').innerHTML='<div class="tstats"><div><b>14</b>отгрузок</div><div><b>3</b>монтажа на неделе</div><div><b>'+today.length+'</b>выезда сегодня</div><div><b>9</b>новых сделок</div></div>'+(one&&co!=='auto'?'<div class="empty">Выездов у направления '+CO[co].nm+' сегодня нет. Монтажи и ТО — у Авто.</div>':'')+(one&&co!=='auto'?[]:today).map(e=>'<div class="ev"><i style="background:'+TYPECOL[e.type]+'"></i><div><b>'+esc(e.t)+'</b> · '+esc(e.c)+'<br><small>'+(e.brig?BRIG[e.brig].name:'склад и логистика')+'</small></div></div>').join('')+'<button class="lnkb" type="button" data-do="go:projects">Вся лента монтажей →</button>';
+ $('#bToday').innerHTML=(one&&co!=='auto'?'<div class="tstats"><div><b>'+{prom:3,pnev:1,him:4}[co]+'</b>отгрузки</div><div><b>0</b>монтажей</div><div><b>0</b>выездов сегодня</div><div><b>'+{prom:2,pnev:1,him:3}[co]+'</b>новые сделки</div></div>':'<div class="tstats"><div><b>14</b>отгрузок</div><div><b>1</b>монтаж на неделе</div><div><b>'+today.length+'</b>выезда сегодня</div><div><b>9</b>новых сделок</div></div>')+(one&&co!=='auto'?'<div class="empty">Монтажи и ТО ведёт направление Авто.</div>':'')+(one&&co!=='auto'?[]:today).map(e=>'<div class="ev"><i style="background:'+TYPECOL[e.type]+'"></i><div><b>'+esc(e.t)+'</b> · '+esc(e.c)+'<br><small>'+(e.brig?BRIG[e.brig].name:'склад и логистика')+'</small></div></div>').join('')+'<button class="lnkb" type="button" data-do="go:projects">Вся лента монтажей →</button>';
  bindDo($('#bToday'));
- $('#bNight').innerHTML=NIGHT.map(x=>'<div class="li"><time>'+x[0]+'</time><div><span class="okc">✓</span> '+x[1]+'</div></div>').join('');
+ $('#bNight').innerHTML=(one?NIGHT.filter(x=>!/ТО|отгруз/.test(x[1])||co==='auto'):NIGHT).map(x=>'<div class="li"><time>'+x[0]+'</time><div><span class="okc">✓</span> '+x[1]+'</div></div>').join('');
 }
 
 /* ===== голосовой ввод (имитация) ===== */
@@ -1229,8 +1230,8 @@ function renderCoSw(){const cur=state.co||'all';document.querySelectorAll('[data
 const DEBT=[
  ['СТО «Гранд»','Михайловск','auto',1.20,1.20,34],['«Шинный двор»','Армавир','auto',2.40,0.90,41],['Техцентр «Кавказ»','Нальчик','auto',1.90,1.10,47],
  ['Грузовой сервис «Магистраль»','Кропоткин','auto',2.10,0.86,36],['Автоцентр «Восток»','Невинномысск','auto',1.85,0.65,38],['Шиномонтаж «Протектор»','Светлоград','auto',0.31,0.31,52],
- ['Экспресс-сервис','Черкесск','auto',0.68,0.18,33],['Кузовной центр «Профи»','Краснодар','auto',3.72,0,0],['СТО «Авангард»','Ставрополь','auto',1.15,0,0],
- ['СТО «Мотор»','Пятигорск','auto',0.80,0,0],['«Колесо-24»','Невинномысск','auto',0.29,0,0],['Ещё 11 автосервисов','СКФО и Кубань','auto',1.50,0,0],
+ ['Экспресс-сервис','Черкесск','auto',0.68,0.18,33],['СТО «Авангард»','Ставрополь','auto',1.15,0,0],
+ ['Ещё 11 автосервисов','СКФО и Кубань','auto',1.50,0,0],
  ['ООО «Агромаш»','Ставрополь','prom',1.20,0.30,31],['«Металлоформ»','Невинномысск','prom',0.95,0.20,39],['Мебельная фабрика «Эко»','Михайловск','prom',0.95,0,0],
  ['«Пищепром-Юг»','Краснодар','pnev',0.90,0.20,35],['«СтеклоТара»','Минеральные Воды','pnev',0.50,0,0],
  ['Дилер «Автокраски Юг»','Пятигорск','him',0.80,0.20,33],['Дилер «Колор-Дон»','Ростов-на-Дону','him',0.90,0,0],['Дилер «Эмаль-Маркет»','Краснодар','him',0.50,0,0]
@@ -1247,30 +1248,29 @@ const LIQ=[
  ['Фрезы по дереву снятой серии','prom','Краснодар',205,0.46,'Распродажа мебельным фабрикам, 9 адресатов'],
  ['Осушитель воздуха, 2 шт.','pnev','Ставрополь',221,0.50,'Предложить «Пищепром-Юг» к модернизации линии']
 ];
-const FLOW=[ // [месяц,день,сумма млн (+ приход / − расход),кто,тип,id]
- [10,12,0.90,'Оплаты клиентов по графику','in'],[10,12,-0.35,'ГСМ и логистика','out'],[10,13,0.80,'Дилеры MIRADA','in'],
- [10,14,-2.90,'Nordberg — станки под сезон','sup'],[10,15,0.60,'Оплаты клиентов','in'],[10,15,-3.10,'Зарплата, аванс','pay'],
- [10,16,1.44,'СТО «Гранд» — финальная оплата','in','grand'],[10,19,0.29,'«Колесо-24» — финальная оплата','in'],[10,20,0.70,'Оплаты клиентов','in'],
- [10,20,-1.20,'Аренда складов и офисов','out'],[10,21,-0.62,'Лизинг грузовиков','out'],[10,22,0.80,'СТО «Мотор» — вторая часть','in'],
- [10,22,-4.60,'Sivik — оборудование под проекты','sup','sivik'],[10,23,0.41,'ООО «Агромаш»','in'],[10,24,-1.10,'Сырьё для MIRADA','sup','mirada'],
- [10,25,-3.60,'Зарплата','pay'],[10,26,1.10,'Оплаты клиентов','in'],[10,28,-3.40,'Налоги: НДС и налог на прибыль','tax'],
- [10,29,1.20,'Дилеры MIRADA','in'],[10,30,2.20,'Оплаты клиентов','in'],[10,31,-1.80,'Техновектор — стенды','sup'],
- [11,2,1.50,'Оплаты клиентов','in'],[11,3,1.20,'«Профи» — оплата этапа','in'],[11,5,1.30,'Оплаты клиентов','in'],
- [11,6,1.90,'Оплаты клиентов','in'],[11,9,1.60,'Оплаты клиентов','in'],[11,9,-1.50,'Hunter — стенд 3D','sup'],[11,10,-3.10,'Зарплата, аванс','pay']
+const FLOW=[ // [месяц,день,сумма млн,операция,тип,id] — крупные операции; ежедневные оплаты и закупки добавляются ниже
+ [10,13,0.80,'Дилеры MIRADA','in'],[10,16,1.44,'СТО «Гранд» — финальная оплата после акта','in','grand'],[10,19,0.29,'«Колесо-24» — финальная оплата','in'],
+ [10,22,0.80,'СТО «Мотор» — вторая часть','in'],[10,23,0.41,'ООО «Агромаш»','in'],[10,29,1.20,'Дилеры MIRADA','in'],[11,3,1.20,'«Профи» — оплата этапа','in'],[11,6,1.50,'Оптовый заказ «Металлоформ»','in'],
+ [10,14,-2.90,'Nordberg — станки под сезон','sup'],[10,15,-2.80,'Зарплата за сентябрь, окончательный расчёт','pay'],[10,16,-1.10,'Сырьё для MIRADA','sup','mirada'],
+ [10,20,-1.20,'Аренда складов и офисов','out'],[10,21,-0.62,'Лизинг грузовиков','out'],[10,22,-4.60,'Sivik — оборудование под проекты','sup','sivik'],
+ [10,23,-2.40,'Аванс за октябрь','pay'],[10,27,-2.30,'Launch — предоплата под сезон','sup'],[10,28,-3.10,'Налоги и страховые взносы','tax'],
+ [10,30,-1.80,'Техновектор — стенды','sup'],[11,9,-1.50,'Hunter — стенд 3D','sup'],
+ [10,12,-0.35,'ГСМ и логистика','out'],[10,19,-0.35,'ГСМ и логистика','out'],[10,26,-0.35,'ГСМ и логистика','out'],[11,2,-0.35,'ГСМ и логистика','out'],[11,9,-0.35,'ГСМ и логистика','out']
 ];
+(()=>{for(let i=0;i<30;i++){const dt=new Date(2026,9,12+i);const w=dt.getDay();if(w===0||w===6)continue;FLOW.push([dt.getMonth()+1,dt.getDate(),1.10,'Оплаты клиентов по графику','in','reg']);FLOW.push([dt.getMonth()+1,dt.getDate(),-0.75,'Закупки товара у поставщиков','sup','reg'])}})();
 const CASH_MIN=5.0, CASH_START=18.2;
 let cashSc={sivik:false,collect:false,mirada:false};
 const COMMENTS={auto:[['Директор Авто','08.10','Скидки по подъёмникам давали под конкурента в Краснодаре — там демпинг. Согласен ограничить 10%.'],['Финансист','09.10','Доставку дальше 250 км предлагаю включить в цену с 1 ноября.']],prom:[['Директор Пром','07.10','Сентябрь в 1С закроем до 15.10 — ждём акты от «Агромаша».']],pnev:[],him:[['Директор Химтех','10.10','«Автокраски Юг» обещали вернуться к рекомендованной цене до 20.10.']]};
-const PLANR={auto:.91,prom:.97,pnev:1.07,him:1.06};
-const MGR=[['Сергей','6,8 млн ₽','7,1%','13,4%'],['Ирина','5,2 млн ₽','9,6%','8,2%'],['Олеся','4,1 млн ₽','9,9%','7,5%'],['Тимур','2,9 млн ₽','8,0%','11,0%'],['Наталья','1,9 млн ₽','10,8%','6,1%']];
+const PLANRS={week:{auto:.93,prom:.95,pnev:1.04,him:1.08},month:{auto:.91,prom:.97,pnev:1.07,him:1.06},quarter:{auto:.94,prom:.99,pnev:1.05,him:1.07}};const PLANR=new Proxy({},{get:(o,k)=>PLANRS[pst.per][k]});
+const MGR=[['Сергей','6,8 млн ₽','19,8%','13,4%'],['Ирина','5,2 млн ₽','23,8%','8,2%'],['Олеся','4,1 млн ₽','24,1%','7,5%'],['Тимур','2,9 млн ₽','21,9%','11,0%'],['Наталья','1,9 млн ₽','25,0%','6,1%']];
 
 /* ===== улучшения пульта: план/факт, качество данных, переход к документам, комментарии ===== */
-function enhancePult(){
+function enhancePult(){$('#cos').classList.toggle('one',state.co!=='all');$('#cos').querySelectorAll('.co').forEach(c=>c.hidden=state.co!=='all'&&c.dataset.co!==state.co);
  const P0=PER[pst.per];const sel=state.co==='all'?Object.keys(CO):[state.co];
  const rev=sel.reduce((s,k)=>s+P0.co[k][0],0);const plan=sel.reduce((s,k)=>s+P0.co[k][0]/PLANR[k],0);const pct=Math.round(rev/plan*100);
  const tiles=$('#kpis').querySelectorAll('.kpi');
  if(tiles[0])tiles[0].insertAdjacentHTML('beforeend','<div class="plan"><span>план '+ru(plan)+' млн · <b class="'+(pct>=100?'up':'dn')+'">'+pct+'%</b></span><i><b style="width:'+Math.min(100,pct)+'%"></b></i></div>');
- if(tiles[1]){const mp=state.co==='all'?13.5:{auto:10.5,prom:14.0,pnev:12.5,him:26.0}[state.co];tiles[1].insertAdjacentHTML('beforeend','<div class="plan"><span>план '+ru(mp)+'%</span></div>')}
+ if(tiles[1]){const mp=state.co==='all'?27.5:{auto:24.5,prom:26.0,pnev:24.5,him:40.0}[state.co];tiles[1].insertAdjacentHTML('beforeend','<div class="plan"><span>план '+ru(mp)+'%</span></div>')}
  [[2,'cash','Прогноз на 30 дней →'],[3,'debt','Кто должен →'],[4,'liq','Что лежит →']].forEach(([i,k,l])=>{const t=tiles[i];if(!t)return;t.classList.add('click');t.setAttribute('role','button');t.tabIndex=0;t.insertAdjacentHTML('beforeend','<span class="more">'+l+'</span>');const f=()=>k==='cash'?go('cash'):k==='debt'?drillDebt():drillLiq();t.onclick=f;t.onkeydown=e=>{if(e.key==='Enter')f()}});
  // качество данных
  const q=$('#dq');if(q)q.innerHTML=(state.co==='all'||state.co==='prom')&&pst.per!=='week'?'<span class="dqchip" title="Агент проверяет данные перед показом">⚠ Пром: сентябрь в 1С не закрыт — цифры предварительные</span>':'';
@@ -1301,8 +1301,8 @@ function openComments(k){
 
 /* ===== прогноз денег ===== */
 function cashSeries(){
- const ev=FLOW.map(f=>({dt:new Date(2026,f[0]-1,f[1]),a:f[2],w:f[3],t:f[4],id:f[5]})).map(e=>{const x={...e};if(cashSc.sivik&&e.id==='sivik')x.dt=new Date(2026,10,3);if(cashSc.mirada&&e.id==='mirada')x.dt=new Date(2026,10,7);return x});
- if(cashSc.collect)ev.push({dt:new Date(2026,9,20),a:2.1,w:'Взыскание просрочки: «Шинный двор», «Кавказ», «Магистраль»',t:'in',id:'col'});
+ const ev=FLOW.map(f=>({dt:new Date(2026,f[0]-1,f[1]),a:f[2],w:f[3],t:f[4],id:f[5]})).map(e=>{const x={...e};if(cashSc.sivik&&e.id==='sivik')x.dt=new Date(2026,10,3);if(cashSc.mirada&&e.id==='mirada')x.dt=new Date(2026,10,6);return x});
+ if(cashSc.collect)ev.push({dt:new Date(2026,9,20),a:2.86,w:'Взыскание просрочки: «Шинный двор», «Кавказ», «Магистраль»',t:'in',id:'col'});
  const days=[];let bal=CASH_START;for(let i=0;i<30;i++){const dt=new Date(2026,9,12+i);ev.filter(e=>same(e.dt,dt)).forEach(e=>bal+=e.a);days.push({dt,bal:Math.round(bal*100)/100})}
  return {days,ev:ev.sort((a,b)=>a.dt-b.dt)};
 }
@@ -1320,24 +1320,25 @@ function renderCash(){
  days.forEach((d,i)=>{if(mob?(i%7===0):(i%3===0))g+='<text x="'+xs(i)+'" y="'+(H-8)+'" text-anchor="middle">'+fmtS(d.dt)+'</text>'});
  const mi=days.indexOf(mn);g+='<circle cx="'+xs(mi)+'" cy="'+ys(mn.bal)+'" r="5" fill="'+(gap?'var(--bad)':'var(--ok)')+'" stroke="var(--panel)" stroke-width="2"/><text x="'+xs(mi)+'" y="'+(ys(mn.bal)+(gap?18:-10))+'" text-anchor="middle" class="'+(gap?'tbad':'tok')+'">'+ru(mn.bal)+' млн · '+fmtS(mn.dt)+'</text>';
  g+='</svg>';$('#cashChart').innerHTML=g;
- $('#cashSay').innerHTML=gap?'<b>Агент:</b> '+fmt(mn.dt)+' на счетах может остаться <b>'+ru(mn.bal)+' млн ₽</b> — ниже неснижаемого остатка. Причина: в одну неделю совпали оплата Sivik (4,6 млн), зарплата (3,6 млн) и налоги (3,4 млн). Ниже — три способа закрыть разрыв, их можно включать и смотреть, как меняется график.':'<b>Агент:</b> разрыв закрыт. Минимальный остаток — <b>'+ru(mn.bal)+' млн ₽</b> '+fmt(mn.dt)+'. Можно оформить выбранные действия поручениями.';
- $('#cashSc').innerHTML=[['sivik','Перенести оплату Sivik на 3 ноября','По договору допустима отсрочка 14 дней. Агент подготовил письмо поставщику.','+4,6 млн на 28.10'],['collect','Взыскать просрочку у трёх крупных должников','«Шинный двор», «Кавказ», «Магистраль» — 2,1 млн просрочено больше 35 дней.','+2,1 млн к 20.10'],['mirada','Сдвинуть закупку сырья MIRADA на 7 ноября','Остатка базы хватит на 9 дней производства — до 21.10, нужна частичная закупка.','+1,1 млн, но риск простоя']].map(s=>'<label class="sc'+(cashSc[s[0]]?' on':'')+'"><input type="checkbox" data-sc="'+s[0]+'"'+(cashSc[s[0]]?' checked':'')+'><span><b>'+s[1]+'</b><small>'+s[2]+'</small></span><em>'+s[3]+'</em></label>').join('')+'<button class="btn p" type="button" id="cashTask"'+(Object.values(cashSc).some(Boolean)?'':' disabled')+'>Оформить выбранное поручениями</button>';
+ $('#cashSay').innerHTML=gap?'<b>Агент:</b> '+fmt(mn.dt)+' на счетах может остаться <b>'+ru(mn.bal)+' млн ₽</b> — ниже неснижаемого остатка. Причина: за одну неделю уходят оплата Sivik (4,6 млн), аванс (2,4 млн), предоплата Launch под сезон (2,3 млн) и налоги со взносами (3,1 млн). Ниже — три способа закрыть разрыв, их можно включать и смотреть, как меняется график.':'<b>Агент:</b> разрыв закрыт. Минимальный остаток — <b>'+ru(mn.bal)+' млн ₽</b> '+fmt(mn.dt)+'. Можно оформить выбранные действия поручениями.';
+ $('#cashSc').innerHTML=[['sivik','Перенести оплату Sivik на 3 ноября','По договору допустима отсрочка 14 дней. Агент подготовил письмо поставщику.','+4,6 млн на 28.10'],['collect','Взыскать просрочку у трёх крупных должников','«Шинный двор», «Кавказ», «Магистраль» — 2,9 млн просрочено больше 35 дней.','+2,9 млн к 20.10'],['mirada','Сдвинуть закупку сырья MIRADA на 6 ноября','Остатка базы хватит до 21.10 — без частичной закупки возможен простой производства.','+1,1 млн, но риск простоя']].map(s=>'<label class="sc'+(cashSc[s[0]]?' on':'')+'"><input type="checkbox" data-sc="'+s[0]+'"'+(cashSc[s[0]]?' checked':'')+'><span><b>'+s[1]+'</b><small>'+s[2]+'</small></span><em>'+s[3]+'</em></label>').join('')+'<button class="btn p" type="button" id="cashTask"'+(Object.values(cashSc).some(Boolean)?'':' disabled')+'>Оформить выбранное поручениями</button>';
  $('#cashSc').querySelectorAll('[data-sc]').forEach(c=>c.onchange=()=>{cashSc[c.dataset.sc]=c.checked;renderCash();updateBadges()});
- $('#cashTask').onclick=()=>{const m={sivik:['Согласовать с Sivik перенос оплаты 4,6 млн ₽ на 03.11','auto'],collect:['Взыскать 2,1 млн ₽ просрочки у трёх клиентов','auto'],mirada:['Частичная закупка сырья MIRADA, остальное — 07.11','him']};Object.keys(cashSc).filter(k=>cashSc[k]).forEach(k=>addTask(m[k][0],m[k][1],d(10,16),'из прогноза денег'));toast('Поручения поставлены. Агент проследит и пересчитает прогноз.')};
- $('#cashTbl').innerHTML='<tr><th>Дата</th><th>Операция</th><th class="num">Сумма</th></tr>'+ev.map(e=>'<tr><td class="num">'+fmtS(e.dt)+'</td><td>'+esc(e.w)+'<br><small class="mu">'+({in:'поступление',sup:'поставщик',pay:'зарплата',tax:'налоги',out:'расходы'}[e.t])+'</small></td><td class="num '+(e.a>0?'up':'')+'">'+(e.a>0?'+':'−')+ru(Math.abs(e.a),2)+'</td></tr>').join('');
+ $('#cashTask').onclick=()=>{const m={sivik:['Согласовать с Sivik перенос оплаты 4,6 млн ₽ на 03.11','auto'],collect:['Взыскать 2,9 млн ₽ просрочки у трёх клиентов','auto'],mirada:['Частичная закупка сырья MIRADA, остальное — 06.11','him']};Object.keys(cashSc).filter(k=>cashSc[k]).forEach(k=>addTask(m[k][0],m[k][1],d(10,16),'из прогноза денег'));toast('Поручения поставлены. Агент проследит и пересчитает прогноз.')};
+ const agg=[];const wk={};ev.forEach(e=>{if(e.id!=='reg'){agg.push(e);return}const m=new Date(e.dt);m.setDate(m.getDate()-((m.getDay()+6)%7));const key=m.getTime()+(e.a>0?'i':'o');if(!wk[key]){wk[key]={dt:m,a:0,w:(e.a>0?'Оплаты клиентов по графику':'Закупки товара у поставщиков')+', неделя с '+fmtS(m),t:e.t,id:'regw'};agg.push(wk[key])}wk[key].a+=e.a});agg.sort((a,b)=>a.dt-b.dt);
+ $('#cashTbl').innerHTML='<tr><th>Дата</th><th>Операция</th><th class="num">Сумма</th></tr>'+agg.map(e=>'<tr><td class="num">'+fmtS(e.dt)+'</td><td>'+esc(e.w)+'<br><small class="mu">'+({in:'поступление',sup:'поставщик',pay:'зарплата',tax:'налоги',out:'расходы'}[e.t])+'</small></td><td class="num '+(e.a>0?'up':'')+'">'+(e.a>0?'+':'−')+ru(Math.abs(e.a),2)+'</td></tr>').join('');
 }
 
 /* ===== сценарии «что будет, если» ===== */
 let wi={disc:18,del:500,mix:17};
 function renderWhatif(){
- const base=8.4,rev=20.9;
+ const base=22.4,rev=20.9;
  const gD=1.4*Math.max(0,Math.min(1,(18-wi.disc)/10));const gL=0.5*Math.max(0,Math.min(1,(500-wi.del)/300));const gM=(wi.mix-17)*0.22;
  const risk=wi.disc<8?2:wi.disc<10?1:0;const rv=rev*(1-risk*0.02);
  const m=base+gD+gL+gM;const p0=rev*base/100,p1=rv*m/100;const dy=(p1-p0)*12;
  $('#wiCtl').innerHTML=[['disc','Скидка без согласования директора',5,20,1,v=>v>=18?'как сейчас, до 18%':'до '+v+'%'],['del','Бесплатная доставка',150,500,50,v=>v>=500?'без ограничений, как сейчас':'до '+v+' км'],['mix','Доля расходников в выручке',15,25,1,v=>v+'%'+(v===17?', как сейчас':'')]].map(c=>'<label class="wis"><span><b>'+c[1]+'</b><em>'+c[5](wi[c[0]])+'</em></span><input type="range" min="'+c[2]+'" max="'+c[3]+'" step="'+c[4]+'" value="'+wi[c[0]]+'" data-wi="'+c[0]+'" aria-label="'+c[1]+'"></label>').join('');
  $('#wiCtl').querySelectorAll('[data-wi]').forEach(r=>r.oninput=()=>{wi[r.dataset.wi]=+r.value;renderWhatif();const el=$('#wiCtl [data-wi="'+r.dataset.wi+'"]');el&&el.focus()});
  const bar=(v,mx,c)=>'<i style="width:'+Math.max(4,v/mx*100)+'%;background:'+c+'"></i>';
- $('#wiRes').innerHTML='<div class="wicmp"><div><small>Маржа Авто</small><div class="wrow"><span>сейчас</span><span class="wb">'+bar(base,16,'var(--line)')+'</span><b class="num">'+ru(base)+'%</b></div><div class="wrow"><span>сценарий</span><span class="wb">'+bar(m,16,'var(--c-mont)')+'</span><b class="num '+(m>base?'up':m<base?'dn':'')+'">'+ru(m)+'%</b></div></div><div><small>Валовая прибыль Авто в месяц</small><div class="wrow"><span>сейчас</span><span class="wb">'+bar(p0,3,'var(--line)')+'</span><b class="num">'+ru(p0,2)+' млн</b></div><div class="wrow"><span>сценарий</span><span class="wb">'+bar(p1,3,'var(--c-mont)')+'</span><b class="num '+(p1>p0?'up':p1<p0?'dn':'')+'">'+ru(p1,2)+' млн</b></div></div></div><div class="wibig '+(dy>=0?'up':'dn')+'">'+(dy>=0?'+':'−')+ru(Math.abs(dy),1)+' млн ₽ <small>в год к валовой прибыли</small></div><p class="wisay"><b>Агент:</b> '+(Math.abs(dy)<0.05?'передвиньте ползунки — я пересчитаю маржу и прибыль на данных сентября.':'основной эффект даёт '+(gD>=gL&&gD>=gM?'ограничение скидки':gL>=gM?'платная дальняя доставка':'рост доли расходников')+'. '+(risk?'При скидке ниже 10% по истории сделок можно потерять 1–2 сделки в месяц — я учёл это в расчёте. ':'')+'Расчёт по 214 сделкам Авто за сентябрь.')+'</p><button class="btn p" type="button" id="wiTask"'+(Math.abs(dy)<0.05?' disabled':'')+'>Сделать это правилами для менеджеров</button>';
+ $('#wiRes').innerHTML='<div class="wicmp"><div><small>Маржа Авто</small><div class="wrow"><span>сейчас</span><span class="wb">'+bar(base,30,'var(--line)')+'</span><b class="num">'+ru(base)+'%</b></div><div class="wrow"><span>сценарий</span><span class="wb">'+bar(m,30,'var(--c-mont)')+'</span><b class="num '+(m>base?'up':m<base?'dn':'')+'">'+ru(m)+'%</b></div></div><div><small>Валовая прибыль Авто в месяц</small><div class="wrow"><span>сейчас</span><span class="wb">'+bar(p0,7,'var(--line)')+'</span><b class="num">'+ru(p0,2)+' млн</b></div><div class="wrow"><span>сценарий</span><span class="wb">'+bar(p1,7,'var(--c-mont)')+'</span><b class="num '+(p1>p0?'up':p1<p0?'dn':'')+'">'+ru(p1,2)+' млн</b></div></div></div><div class="wibig '+(dy>=0?'up':'dn')+'">'+(dy>=0?'+':'−')+ru(Math.abs(dy),1)+' млн ₽ <small>в год к валовой прибыли</small></div><p class="wisay"><b>Агент:</b> '+(Math.abs(dy)<0.05?'передвиньте ползунки — я пересчитаю маржу и прибыль на данных сентября.':'основной эффект даёт '+(gD>=gL&&gD>=gM?'ограничение скидки':gL>=gM?'платная дальняя доставка':'рост доли расходников')+'. '+(risk?'При скидке ниже 10% по истории сделок можно потерять 1–2 сделки в месяц — я учёл это в расчёте. ':'')+'Расчёт по 214 сделкам Авто за сентябрь.')+'</p><button class="btn p" type="button" id="wiTask"'+(Math.abs(dy)<0.05?' disabled':'')+'>Сделать это правилами для менеджеров</button>';
  const t=$('#wiTask');if(t)t.onclick=()=>{addTask('Ввести правила: скидка до '+wi.disc+'%, бесплатная доставка до '+(wi.del>=500?'∞':wi.del+' км')+', цель по расходникам '+wi.mix+'%','auto',d(10,19),'из сценария');toast('Поручение директору Авто поставлено. Агент начнёт следить за правилами в каждой сделке.')};
 }
 
@@ -1345,8 +1346,8 @@ function renderWhatif(){
 let RULES=[
  {id:1,on:true,t:'Деньги на счетах группы меньше 5 млн ₽',now:'по прогнозу сработает 28 октября',st:'warn',ch:'Telegram + звонок'},
  {id:2,on:true,t:'Клиент просрочил оплату больше 30 дней',now:'сейчас: 11 клиентов, 6,1 млн ₽',st:'bad',ch:'сводка'},
- {id:3,on:true,t:'Маржа направления ниже 9%',now:'сработало: Авто — 8,4%',st:'bad',ch:'Telegram'},
- {id:4,on:true,t:'Предоплата без движения больше 5 дней',now:'сейчас: 2 предоплаты',st:'bad',ch:'директору направления'},
+ {id:3,on:true,t:'Маржа направления ниже 23%',now:'сработало: Авто — 22,4%',st:'bad',ch:'Telegram'},
+ {id:4,on:true,t:'Предоплата без движения 5 дней и больше',now:'сейчас: 3 предоплаты',st:'bad',ch:'директору направления'},
  {id:5,on:true,t:'Отгрузка в долг клиенту с просрочкой',now:'только с вашего «да»',st:'ok',ch:'запрос решения'},
  {id:6,on:true,t:'Новый отзыв на картах ниже 4 звёзд',now:'за неделю: 0',st:'ok',ch:'Telegram'},
  {id:7,on:false,t:'Неликвид старше 180 дней больше 8 млн ₽',now:'сейчас: 9,3 млн ₽',st:'bad',ch:'еженедельный отчёт'}
@@ -1356,7 +1357,7 @@ function renderRules(){
  $('#rulesList').querySelectorAll('[data-rl]').forEach(c=>c.onchange=()=>{RULES.find(r=>r.id==c.dataset.rl).on=c.checked;renderRules();updateBadges()});
 }
 function rulesForm(){
- const M=[['Деньги на счетах меньше','млн ₽','5'],['Долг клиента больше','дней','45'],['Маржа направления ниже','%','10'],['Выручка за неделю ниже плана на','%','15'],['Сделка висит без движения больше','дней','10']];
+ const M=[['Деньги на счетах меньше','млн ₽','5'],['Долг клиента больше','дней','45'],['Маржа направления ниже','%','23'],['Выручка за неделю ниже плана на','%','15'],['Сделка висит без движения больше','дней','10']];
  $('#rulesAdd').innerHTML='<div class="chips" role="radiogroup" aria-label="Что отслеживать">'+M.map((m,i)=>'<button type="button" class="fl'+(i===0?' on':'')+'" data-rm="'+i+'">'+m[0]+'…</button>').join('')+'</div><div class="radd"><span id="rmLab">'+M[0][0]+'</span><input id="rmVal" type="number" value="'+M[0][2]+'" aria-label="Порог"><span id="rmUnit">'+M[0][1]+'</span><div class="chips"><button type="button" class="fl on" data-ch="Telegram">Telegram</button><button type="button" class="fl" data-ch="сводка">в сводку</button><button type="button" class="fl" data-ch="звонок">звонок</button></div><button class="btn p" type="button" id="rmAdd">Добавить правило</button></div>';
  let mi=0,ch='Telegram';
  $('#rulesAdd').querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{mi=+b.dataset.rm;$('#rulesAdd').querySelectorAll('[data-rm]').forEach(x=>x.classList.toggle('on',x===b));$('#rmLab').textContent=M[mi][0];$('#rmUnit').textContent=M[mi][1];$('#rmVal').value=M[mi][2]});
@@ -1366,9 +1367,9 @@ function rulesForm(){
 function notify(list){let box=$('#notifs');if(!box){box=document.createElement('div');box.id='notifs';box.className='notifs';box.setAttribute('aria-live','polite');document.body.appendChild(box)}
  list.forEach((n,i)=>setTimeout(()=>{const el=document.createElement('div');el.className='notif';el.innerHTML='<div class="nh"><span class="na">✦</span>ALFACORE · агент<time>сейчас</time></div><b>'+n[0]+'</b><div>'+n[1]+'</div>';box.appendChild(el);setTimeout(()=>{el.classList.add('out');setTimeout(()=>el.remove(),400)},7000)},i*900))}
 function checkRules(){const on=RULES.filter(r=>r.on);const out=[];
- if(on.find(r=>r.id===3))out.push(['Маржа Авто 8,4% — ниже порога 9%','Главная причина — скидки выше 12% в 5 сделках. Открыть сценарий?']);
- if(on.find(r=>r.id===1))out.push(['Риск кассового разрыва 28 октября','Прогноз: 4,4 млн ₽ при минимуме 5 млн. Есть 3 способа закрыть.']);
- if(on.find(r=>r.id===4))out.push(['2 предоплаты без движения','146 тыс. ₽ и 412 тыс. ₽ — директорам ушли напоминания.']);
+ if(on.find(r=>r.id===3))out.push(['Маржа Авто 22,4% — ниже порога 23%','Главная причина — скидки выше 12% в 5 сделках. Открыть сценарий?']);
+ if(on.find(r=>r.id===1))out.push(['Риск кассового разрыва 28 октября','Прогноз: 4,4 млн ₽ при неснижаемом остатке 5 млн. Есть 3 способа закрыть.']);
+ if(on.find(r=>r.id===4))out.push(['3 предоплаты без движения','146, 412 и 88 тыс. ₽ — директорам ушли напоминания.']);
  if(!out.length)out.push(['Все правила в норме','Агент продолжит следить и напишет, если что-то изменится.']);
  notify(out);}
 
@@ -1383,14 +1384,14 @@ function renderSeason(){
  g+=line(LY,'var(--mute)')+line(FC,'var(--c-mont)',true)+line(TY,'var(--c-mont)');
  L.forEach((l,i)=>{if(i%2===0)g+='<text x="'+xs(i)+'" y="'+(H-7)+'" text-anchor="middle">'+l+'</text>'});
  g+='<circle cx="'+xs(1)+'" cy="'+ys(.66)+'" r="4" fill="var(--c-mont)"/></svg>';
- $('#season').innerHTML='<div class="lg2"><span><i style="background:var(--mute)"></i>2025</span><span><i style="background:var(--c-mont)"></i>2026</span><span><i class="dash"></i>прогноз агента</span><span class="mu">млн ₽ в неделю, расходники для шиномонтажа</span></div>'+g+'<p class="wisay"><b>Агент:</b> пик переобувки по прошлому году — <b>26 октября – 8 ноября</b>, спрос вырастет в 2 раза. Текущих остатков грузиков и жгутов хватит до 22 октября. Рекомендую дозаказать: грузики 1 200 уп., жгуты 800 уп., вентили 3 000 шт. — на 1,9 млн ₽ по закупке.</p><button class="btn p s" type="button" id="seaTask">Сформировать заказ поставщику</button>';
+ $('#season').innerHTML='<div class="lg2"><span><i style="background:var(--mute)"></i>2025</span><span><i style="background:var(--c-mont)"></i>2026</span><span><i class="dash"></i>прогноз агента</span><span class="mu">млн ₽ в неделю, расходники для шиномонтажа</span></div>'+g+'<p class="wisay"><b>Агент:</b> пик переобувки по прошлому году — <b>26 октября – 8 ноября</b>, спрос вырастет в 2 раза. Текущих остатков грузиков и жгутов хватит до 22 октября. Рекомендую дозаказать: грузики 1 200 уп., жгуты 800 уп., вентили 3 000 шт. — на 1,9 млн ₽ по закупке. Оплату лучше поставить на 29 октября, после кассового провала 28-го.</p><button class="btn p s" type="button" id="seaTask">Сформировать заказ поставщику</button>';
  $('#seaTask').onclick=()=>{addTask('Заказ расходников под сезон переобувки на 1,9 млн ₽ — черновик готов','auto',d(10,15),'из прогноза сезона');toast('Черновик заказа готов, директору Авто — поручение утвердить.')};
 }
 
 /* ===== отчёт недели ===== */
 function weekReport(){
- const txt='Отчёт агента за неделю 5–9 октября\n\nГруппа: выручка 7,15 млн ₽ (план 7,4 — 97%), валовая маржа 12,9%.\nАвто 4,6 млн · Пром 0,8 млн · Пневмо 0,4 млн · Химтех 1,35 млн.\n\nГлавное:\n— маржа Авто снижается третью неделю из-за скидок выше 12%;\n— 28 октября риск кассового разрыва: 4,4 млн ₽ при минимуме 5 млн;\n— Химтех лучше плана на 6%, акция в Ростове дала 3 заказа;\n— 2 предоплаты без движения, 11 клиентов с просрочкой на 6,1 млн ₽.\n\nРешения недели: 7 принято, 2 ждут вас.\nПоручения: 14 выполнено в срок, 2 просрочено (Пром, Химтех).';
- modal('<h4>Отчёт за неделю 5–9 октября</h4><p class="lead">Агент собирает его сам каждую пятницу в 18:00 и присылает в Telegram.</p><div class="rep"><div class="repk"><div><small>Выручка</small><b>7,15 млн ₽</b><span class="dn">97% плана</span></div><div><small>Маржа</small><b>12,9%</b><span class="dn">−0,4 п.п.</span></div><div><small>Решений</small><b>7 из 9</b><span class="mu">2 ждут вас</span></div><div><small>Поручений в срок</small><b>88%</b><span class="up">+5 п.п.</span></div></div><h5>По компаниям</h5><table><tr><th>Компания</th><th class="num">Выручка</th><th class="num">План</th><th class="num">Маржа</th></tr><tr><td>Авто</td><td class="num">4,60</td><td class="num dn">91%</td><td class="num dn">7,9%</td></tr><tr><td>Пром</td><td class="num">0,80</td><td class="num dn">97%</td><td class="num">13,6%</td></tr><tr><td>Пневмо</td><td class="num">0,40</td><td class="num up">107%</td><td class="num">12,1%</td></tr><tr><td>Химтех</td><td class="num">1,35</td><td class="num up">106%</td><td class="num up">28,0%</td></tr></table><h5>Главное</h5><ul><li>Маржа Авто снижается третью неделю: скидки выше 12% в сделках по подъёмникам.</li><li>28 октября — риск кассового разрыва, способы закрыть — в «Прогнозе денег».</li><li>Химтех выше плана на 6%: акция для дилеров Ростова сработала.</li><li>Сезон переобувки начнётся через 2 недели — нужен заказ расходников.</li></ul></div><div class="row"><button class="btn" type="button" data-close>Закрыть</button><button class="btn p" type="button" id="repCopy">Скопировать текстом</button></div>',()=>{$('#repCopy').onclick=()=>{const done=()=>toast('Текст отчёта скопирован.');try{navigator.clipboard.writeText(txt).then(done,()=>toast('Не удалось скопировать — браузер запретил доступ к буферу.'))}catch(e){toast('Не удалось скопировать — браузер запретил доступ к буферу.')}}});
+ const txt='Отчёт агента за неделю 5–9 октября\n\nГруппа: выручка 7,15 млн ₽ (план 7,4 — 96%), валовая маржа 26,3%.\nАвто 4,6 млн · Пром 0,8 млн · Пневмо 0,4 млн · Химтех 1,35 млн.\n\nГлавное:\n— маржа Авто снижается третью неделю из-за скидок выше 12%;\n— 28 октября риск кассового разрыва: 4,4 млн ₽ при минимуме 5 млн;\n— Химтех лучше плана на 8%, акция для дилеров Ростова дала 3 заказа;\n— 2 предоплаты без движения, 11 клиентов с просрочкой на 6,1 млн ₽.\n\nРешения недели: 7 принято, 2 ждут вас.\nПоручения: 14 выполнено в срок, 1 просрочено (Химтех).';
+ modal('<h4>Отчёт за неделю 5–9 октября</h4><p class="lead">Агент собирает его сам каждую пятницу в 18:00 и присылает в Telegram.</p><div class="rep"><div class="repk"><div><small>Выручка</small><b>7,15 млн ₽</b><span class="dn">96% плана</span></div><div><small>Маржа</small><b>26,3%</b><span class="dn">−0,3 п.п.</span></div><div><small>Решений</small><b>7 из 9</b><span class="mu">2 ждут вас</span></div><div><small>Поручений в срок</small><b>88%</b><span class="up">+5 п.п.</span></div></div><h5>По компаниям</h5><table><tr><th>Компания</th><th class="num">Выручка</th><th class="num">План</th><th class="num">Маржа</th></tr><tr><td>Авто</td><td class="num">4,60</td><td class="num dn">93%</td><td class="num dn">22,0%</td></tr><tr><td>Пром</td><td class="num">0,80</td><td class="num dn">95%</td><td class="num">25,6%</td></tr><tr><td>Пневмо</td><td class="num">0,40</td><td class="num up">104%</td><td class="num">24,1%</td></tr><tr><td>Химтех</td><td class="num">1,35</td><td class="num up">108%</td><td class="num up">42,0%</td></tr></table><h5>Главное</h5><ul><li>Маржа Авто снижается третью неделю: скидки выше 12% в сделках по подъёмникам.</li><li>28 октября — риск кассового разрыва, способы закрыть — в «Прогнозе денег».</li><li>Химтех выше плана на 8%: акция для дилеров Ростова, запущенная 2 октября, дала 3 заказа.</li><li>Сезон переобувки начнётся через 2 недели — нужен заказ расходников.</li></ul></div><div class="row"><button class="btn" type="button" data-close>Закрыть</button><button class="btn p" type="button" id="repCopy">Скопировать текстом</button></div>',()=>{$('#repCopy').onclick=()=>{const done=()=>toast('Текст отчёта скопирован.');try{navigator.clipboard.writeText(txt).then(done,()=>toast('Не удалось скопировать — браузер запретил доступ к буферу.'))}catch(e){toast('Не удалось скопировать — браузер запретил доступ к буферу.')}}});
 }
 
 /* ===== старт ===== */
@@ -1404,6 +1405,8 @@ $('#rulesCheck').onclick=checkRules;rulesForm();renderSeason();$('#repBtn').oncl
 document.querySelectorAll('[data-qask]').forEach(b=>b.onclick=()=>{openDrawer();ask(b.textContent)});
 let seen=false;try{seen=JSON.parse(localStorage.getItem('alfa-demo-ui')||'{}').seen}catch(e){}
 if(!seen){welcome();try{const s=JSON.parse(localStorage.getItem('alfa-demo-ui')||'{}');s.seen=1;localStorage.setItem('alfa-demo-ui',JSON.stringify(s))}catch(e){}}
+
+window.__demo={go,ask,openDrawer,renderDetail,state,TOUR};
 
 })();
 </script>
